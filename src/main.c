@@ -127,24 +127,33 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    GBA gba;
-    gba_init(&gba);
+    /* GBA holds the full ROM buffer (up to 32 MB); keep it off the stack.
+       Windows default stack is 1 MB, so a stack-allocated GBA dies instantly. */
+    GBA *gp = (GBA *)calloc(1, sizeof(GBA));
+    if (!gp) {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "BoycottAdvance Reborn",
+            "Not enough memory to allocate the emulator core.", NULL);
+        SDL_Quit();
+        return 1;
+    }
+    GBA *g = gp;
+    gba_init(g);
 
     /* try to load bundled bios */
-    gba_load_bios(&gba, "gba_bios.bin");
+    gba_load_bios(g, "gba_bios.bin");
     FILE *bf = fopen("gba_bios.bin", "rb");
     if (bf) { fclose(bf); }
     else { /* fallback zero bios */ }
 
     if (g_rom_path) {
-        if (!gba_load_rom(&gba, g_rom_path)) {
+        if (!gba_load_rom(g, g_rom_path)) {
             fprintf(stderr, "cannot load ROM: %s\n", g_rom_path);
             SDL_Quit();
             return 1;
         }
-        gba_reset(&gba);
+        gba_reset(g);
     } else {
-        gba_reset(&gba);
+        gba_reset(g);
     }
 
     /* window */
@@ -166,12 +175,13 @@ int main(int argc, char **argv) {
     want.channels = AUDIO_CHANNELS;
     want.samples = 1024;
     want.callback = audio_cb;
-    want.userdata = &gba;
+    want.userdata = g;
     SDL_AudioDeviceID adev = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     if (adev) SDL_PauseAudioDevice(adev, 0);
 
     SDL_SetWindowTitle(win, GBA_TITLE " - " GBA_NAME);
-    uint32_t pixels[240*160];
+    uint32_t *pixels = (uint32_t *)malloc(sizeof(uint32_t)*240*160);
+    if (!pixels) { SDL_DestroyWindow(win); SDL_Quit(); free(gp); return 1; }
     SDL_PixelFormat *fmt = SDL_AllocFormat(SDL_PIXELFORMAT_ARGB8888);
 
     int running = 1, paused = 0;
@@ -186,9 +196,9 @@ int main(int argc, char **argv) {
             case SDL_KEYDOWN:
                 if (ev.key.keysym.sym == SDLK_ESCAPE) running = 0;
                 if (ev.key.keysym.sym == SDLK_p) paused = !paused;
-                if (ev.key.keysym.sym == SDLK_F2) gba_save_state(&gba, "state.sav");
-                if (ev.key.keysym.sym == SDLK_F3) gba_load_state(&gba, "state.sav");
-                if (ev.key.keysym.sym == SDLK_F5) save_screenshot(&gba, "shot.ppm");
+                if (ev.key.keysym.sym == SDLK_F2) gba_save_state(g, "state.sav");
+                if (ev.key.keysym.sym == SDLK_F3) gba_load_state(g, "state.sav");
+                if (ev.key.keysym.sym == SDLK_F5) save_screenshot(g, "shot.ppm");
                 if (ev.key.keysym.sym == SDLK_F1) show_about();
                 if (ev.key.keysym.sym == SDLK_F9) show_history();
                 break;
@@ -198,14 +208,14 @@ int main(int argc, char **argv) {
 
         /* run one frame if not paused */
         if (!paused) {
-            gba_update_keypad(&gba, key_state());
-            gba_run_frame(&gba);
-            gba_apply_cheats(&gba);
+            gba_update_keypad(g, key_state());
+            gba_run_frame(g);
+            gba_apply_cheats(g);
         }
 
         /* blit */
         for (int i = 0; i < 240*160; i++) {
-            uint16_t c = gba.ppu.frame[i];
+            uint16_t c = g->ppu.frame[i];
             int r = (c & 0x1F) << 3, g2 = ((c>>5)&0x1F) << 3, b = ((c>>10)&0x1F) << 3;
             pixels[i] = 0xFF000000u | (r<<16) | (g2<<8) | b;
         }
@@ -224,6 +234,8 @@ int main(int argc, char **argv) {
     }
 
     if (adev) SDL_CloseAudioDevice(adev);
+    free(pixels);
+    free(gp);
     SDL_FreeFormat(fmt);
     SDL_DestroyTexture(tex);
     SDL_DestroyRenderer(ren);
