@@ -1,0 +1,2 @@
+# BoycottAdvance-Reborn
+GBA Emulator
