@@ -32,6 +32,29 @@ The original 0.2.8 build has two well-known problems on modern systems:
 - Save states, cheats, BIOS fast-boot, screenshots.
 - SDL2 video and audio frontend (works on Windows 11, Linux, macOS).
 
+## GUI
+
+BoycottAdvance Reborn reproduces the original 0.2.8 menu bar (the CPU
+debugger is intentionally omitted). Settings are stored in
+`BoycottAdvance.ini`.
+
+- **File** — Load ROM..., ROM Information..., Auto Run, Run/Pause
+  Emulation, Reset Emulation, Choose State Slot, Load State, Save State, Exit
+- **Window** — Zoom x1..x4, Select FLASHROM ID, Scanline (TV Mode),
+  Stretch Fit To Screen, Fullscreen
+- **Options** — Frameskip (0..5), Auto Frame Skip, Smooth Emulation,
+  Auto Speed Throttle, Show FPS, Show FPS in percent, Sound Enable,
+  Enable DSound A/B, Enable GBC Sound, Reverse Sound Stereo,
+  Select BIOS File, BIOS Enable, Skip BIOS Boot, Skip Intro Hacks,
+  Controllers Configuration
+- **Debug** (no CPU debugger) — Status Window, Show BG Palette,
+  Show OBJ Palette, Screen/BG/OBJ layer toggles
+- **Help** — History..., Command Line Options..., About...
+
+Keyboard: `A`=A, `S`=B, `F`=L, `D`=R, `Enter`=Start, `Backspace`=Select,
+arrows = D-Pad, `F1`=About, `F2`/`F3`=save/load state, `F5`=screenshot,
+`F9`=History, `F11`=fullscreen, `Esc`=quit.
+
 ## Building
 
 Requirements: a C99 compiler, SDL2 development files, `make`.

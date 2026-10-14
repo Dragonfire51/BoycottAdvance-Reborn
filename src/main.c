@@ -248,13 +248,23 @@ static void show_about(void) {
 static void show_history(void) {
     dlg_text("History",
       "BoycottAdvance 0.2.8 (2003) - Julien Frelat and team.\n\n"
-      "BoycottAdvance Reborn v1.0.0\n"
+      "BoycottAdvance Reborn v1.1.0\n"
       "  - Clean-room ARM7TDMI core (ARM + Thumb)\n"
       "  - Correct BIOS SWI (CpuSet, VBlankIntrWait...)\n"
       "  - Fixed VBlank/HBlank/IRQ (boots Pokemon)\n"
       "  - SDL2 audio (Windows 11 compatible)\n"
-      "  - Original menu GUI, CPU debugger removed\n"
-      "  - Windows x86/x64 builds");
+      "  - Original menu GUI, CPU debugger removed\n\n"
+      "v1.1.0 changes:\n"
+      "  - Assembler-free multi-architecture builds\n"
+      "    for Windows x86 and x64\n"
+      "  - Fixed executable entry-point error on systems\n"
+      "    with an older SDL2.dll (SDL_GetTicks64)\n"
+      "  - Fixed instant startup crash (heap-allocated core\n"
+      "    instead of the 1 MB Windows stack)\n"
+      "  - Menu bar with every original option\n"
+      "    (File / Window / Options / Debug / Help)\n"
+      "  - ROM browser and BoycottAdvance.ini support\n\n"
+      "v1.0.0: first public clean-room release.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",
