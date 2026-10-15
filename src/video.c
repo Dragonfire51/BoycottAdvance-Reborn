@@ -257,7 +257,6 @@ Video *vid_init(SDL_Window *win, VidBackend backend) {
         if (sdl_backend_init(v, VID_AUTO) != 0) { free(v); return NULL; }
         break;
     }
-    fprintf(stderr, "video backend: %s\n", vid_name(v->backend));
     return v;
 }
 
