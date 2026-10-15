@@ -26,11 +26,30 @@ The original 0.2.8 build has two well-known problems on modern systems:
   `CpuSet`, `CpuFastSet`, `RegisterRamReset`, `SoftReset`.
 - PPU: text modes 0-2, bitmap modes 3-5, affine backgrounds, OBJ sprites
   (4bpp/8bpp, 1D/2D mapping, flips, palettes), window/blend registers.
-- APU: 4 PSG channels (square, wave, noise) + DMA sound FIFOs.
+- APU: 4 PSG channels (square, wave, noise) + DMA Direct Sound FIFOs.
 - Memory map: BIOS, EWRAM, IWRAM, I/O, palette, VRAM, OAM, ROM (+ open bus).
 - Timers, DMA (all 4 channels), keypad with IRQ.
 - Save states, cheats, BIOS fast-boot, screenshots.
-- SDL2 video and audio frontend (works on Windows 11, Linux, macOS).
+- Selectable frame-buffer backends (see below) and SDL2 audio.
+
+## Frame buffer backends
+
+The whole UI (scaled image, menu bar, dialogs, FPS overlay) is composed in
+software and presented through one backend, chosen from
+**Options > Frame Buffer**:
+
+| Backend | Platform | Notes |
+|---|---|---|
+| Auto (SDL) | all | SDL accelerated renderer, software fallback |
+| Software (SDL) | all | CPU renderer, no GPU needed |
+| OpenGL (SDL) | all | SDL OpenGL renderer |
+| Vulkan | Linux/macOS builds | native swapchain; falls back to SDL Software if unavailable |
+| GDI (Windows) | Windows | native `StretchDIBits` blit, no extra runtime files |
+| Direct3D 9 (Windows) | Windows | native textured blit via `d3d9` |
+
+The chosen backend is stored in `BoycottAdvance.ini` (`VideoBackend`), and
+falls back to SDL Software when the selected backend cannot initialise.
+
 
 ## GUI
 
@@ -81,19 +100,31 @@ without it the emulator uses a built-in fast-boot stub.
 
 ### Controls
 
+Key mappings are configurable from **Options > Controls** and stored in
+`BoycottAdvance.ini` (one `Key_<button>` entry per button). Defaults:
+
 | GBA | Key |
 |---|---|
 | D-Pad | Arrow keys |
 | A / B | `A` / `S` |
 | L / R | `F` / `D` |
 | Start / Select | `Enter` / `Backspace` |
-| Save state | `F2` |
-| Load state | `F3` |
-| Screenshot | `F5` |
-| Pause | `P` |
-| About | `F1` |
-| History | `F9` |
-| Quit | `Esc` |
+
+Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
+`P` pause, `F1` about, `F9` history, `F11` fullscreen, `Esc` quit.
+
+## Version history
+
+- **v1.3.0** — fixed the `MLA`/`MUL` destination-register decode (the
+  multiply result landed in the wrong register, so address maths — and
+  therefore almost every game — rendered wrong or nothing at all); fixed
+  the APU envelope clock and square/noise/wave mixing, and added DMA
+  Direct Sound FIFOs; configurable key mappings saved to the `.ini`;
+  new **Options > Frame Buffer** backends (SDL Software/OpenGL, Windows
+  GDI and Direct3D 9, Vulkan).
+- **v1.2.0** — ARM `LDR`/`LDM` with PC, PPU bitmap gating, built-in ROM
+  browser.
+- **v1.0.0** — first public clean-room release.
 
 ## Credits and license
 

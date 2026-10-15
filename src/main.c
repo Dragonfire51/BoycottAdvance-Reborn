@@ -1,16 +1,18 @@
 /*
- * main.c - SDL2 frontend for BoycottAdvance Reborn.
+ * main.c - BoycottAdvance Reborn frontend.
  *
- * Reproduces the original BoycottAdvance 0.2.8 GUI (menu bar + options)
- * with the CPU Debugger removed. Audio is SDL2 (no obsolete WINMM waveOut), so
- * sound works on Windows 11. Uses only SDL2 symbols available since 2.0.0,
- * so the executable runs against any reasonably recent system SDL2.dll.
+ * The whole UI is composed in software (fb.c) and presented through one of
+ * several backends (video.c): SDL Software/OpenGL, native Windows GDI or
+ * Direct3D 9, or Vulkan. Boot ROMs are chosen from an in-window browser.
+ * Audio is SDL2. Key mappings are configurable and stored in
+ * BoycottAdvance.ini.
  */
 #define _DEFAULT_SOURCE
 #include "gba.h"
 #include "mem.h"
 #include "arm.h"
-#include "font8x8.h"
+#include "fb.h"
+#include "video.h"
 #include "icon.h"
 #include <SDL2/SDL.h>
 #include <stdio.h>
@@ -23,11 +25,23 @@
 #else
 #  include <dirent.h>
 #  include <sys/stat.h>
+#include <limits.h>
 #endif
 
 #define AUDIO_FREQ     44100
 #define AUDIO_CHANNELS 2
 #define MENUBAR_H      18
+#define MAX_KEYS       12
+
+/* keypad bit order: A B Select Start Right Left Up Down R L (active low) */
+enum { KP_A, KP_B, KP_SELECT, KP_START, KP_RIGHT, KP_LEFT, KP_UP, KP_DOWN, KP_R, KP_L, KP_COUNT };
+static const char *KP_NAME[KP_COUNT] = {
+    "A", "B", "Select", "Start", "Right", "Left", "Up", "Down", "R", "L" };
+/* SDL default scancodes for each keypad button */
+static const int KP_DEFAULT[KP_COUNT] = {
+    SDL_SCANCODE_A, SDL_SCANCODE_S, SDL_SCANCODE_BACKSPACE, SDL_SCANCODE_RETURN,
+    SDL_SCANCODE_RIGHT, SDL_SCANCODE_LEFT, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN,
+    SDL_SCANCODE_D, SDL_SCANCODE_F };
 
 /* ------------------------------------------------------------------ config */
 typedef struct {
@@ -35,6 +49,8 @@ typedef struct {
     int  showfps, showfps_pct, frameskip, autoframeskip, sound_enable;
     int  dsound_a, dsound_b, gbc_sound, reverse_stereo;
     int  biosenable, biosfastboot, skipintros, autorun, flashid, state_slot;
+    int  video_backend;
+    int  keymap[KP_COUNT];        /* SDL_Scancode per keypad button */
     char lastdir[512], rompath[512];
 } Config;
 static Config cfg;
@@ -78,8 +94,13 @@ static void cfg_load(const char *path) {
     cfg.skipintros   = ini_geti(path, "SkipIntros", 0);
     cfg.autorun      = ini_geti(path, "AutoRun", 1);
     cfg.flashid      = ini_geti(path, "FlashROMId", 0);
+    cfg.video_backend= ini_geti(path, "VideoBackend", VID_AUTO);
     ini_get(path, "RomPath", cfg.lastdir, sizeof cfg.lastdir);
     if (!cfg.lastdir[0]) snprintf(cfg.lastdir, sizeof cfg.lastdir, ".");
+    for (int i = 0; i < KP_COUNT; i++) {
+        char key[32]; snprintf(key, sizeof key, "Key_%s", KP_NAME[i]);
+        cfg.keymap[i] = ini_geti(path, key, KP_DEFAULT[i]);
+    }
 }
 static void cfg_save(const char *path) {
     FILE *f = fopen(path, "wt"); if (!f) return;
@@ -87,11 +108,13 @@ static void cfg_save(const char *path) {
       "ScreenZoom %d\nScanline %d\nAutoThrottle %d\nShowFPS %d\nShowFPSPercent %d\n"
       "FrameSkip %d\nAutoFrameSkip %d\nSoundEnable %d\nGameboySoundEnable %d\n"
       "DirectSoundAEnable %d\nDirectSoundBEnable %d\nBIOSEnable %d\nBIOSFastBoot %d\n"
-      "SkipIntros %d\nAutoRun %d\nFlashROMId %d\nRomPath %s\n",
+      "SkipIntros %d\nAutoRun %d\nFlashROMId %d\nVideoBackend %d\nRomPath %s\n",
       cfg.zoom, cfg.scanline, cfg.autothrottle, cfg.showfps, cfg.showfps_pct,
       cfg.frameskip, cfg.autoframeskip, cfg.sound_enable, cfg.gbc_sound,
       cfg.dsound_a, cfg.dsound_b, cfg.biosenable, cfg.biosfastboot,
-      cfg.skipintros, cfg.autorun, cfg.flashid, cfg.lastdir);
+      cfg.skipintros, cfg.autorun, cfg.flashid, cfg.video_backend, cfg.lastdir);
+    for (int i = 0; i < KP_COUNT; i++)
+        fprintf(f, "Key_%s %d\n", KP_NAME[i], cfg.keymap[i]);
     fclose(f);
 }
 
@@ -106,30 +129,12 @@ static void audio_cb(void *ud, Uint8 *stream, int len) {
         for (int i = 0; i < n; i++) { int16_t l = out[i*2]; out[i*2] = out[i*2+1]; out[i*2+1] = l; }
 }
 
-/* ------------------------------------------------------------------- font */
-static void draw_text(SDL_Renderer *r, int x, int y, const char *s, SDL_Color col) {
-    SDL_SetRenderDrawColor(r, col.r, col.g, col.b, col.a);
-    for (; *s; ++s, x += 8) {
-        unsigned char c = (unsigned char)*s;
-        for (int i = 0; i < 8; i++) { unsigned row = font8x8_basic[c][i];
-            for (int j = 0; j < 8; j++) if (row & (1u<<j)) SDL_RenderDrawPoint(r, x+j, y+i); }
-    }
-}
-static int text_w(const char *s) { return (int)strlen(s) * 8; }
-
 /* --------------------------------------------------------------- key state */
 static uint16_t key_state(void) {
-    uint16_t k = 0x03FF; const Uint8 *s = SDL_GetKeyboardState(NULL);
-    if (s[SDL_SCANCODE_A]) k &= ~0x0001;
-    if (s[SDL_SCANCODE_S]) k &= ~0x0002;
-    if (s[SDL_SCANCODE_BACKSPACE]) k &= ~0x0004;
-    if (s[SDL_SCANCODE_RETURN]) k &= ~0x0008;
-    if (s[SDL_SCANCODE_RIGHT]) k &= ~0x0010;
-    if (s[SDL_SCANCODE_LEFT]) k &= ~0x0020;
-    if (s[SDL_SCANCODE_UP]) k &= ~0x0040;
-    if (s[SDL_SCANCODE_DOWN]) k &= ~0x0080;
-    if (s[SDL_SCANCODE_D]) k &= ~0x0100;
-    if (s[SDL_SCANCODE_F]) k &= ~0x0200;
+    uint16_t k = 0x03FF;
+    const Uint8 *s = SDL_GetKeyboardState(NULL);
+    for (int i = 0; i < KP_COUNT; i++)
+        if (cfg.keymap[i] >= 0 && s[cfg.keymap[i]]) k &= ~(1u << i);
     return k;
 }
 
@@ -141,7 +146,11 @@ enum {
     M_SKIP0, M_SKIP1, M_SKIP2, M_SKIP3, M_SKIP4, M_SKIP5, M_AUTOSKIP, M_SMOOTH,
     M_THROTTLE, M_SHOWFPS, M_SHOWFPSPCT, M_SOUND, M_DSOUNDA, M_DSOUNDB, M_GBCSOUND,
     M_REVSTEREO, M_SELBIOS, M_BIOSEN, M_BIOSBOOT, M_SKIPINTROS, M_CONTROLLERS,
-    M_HISTORY, M_CMDLINE, M_ABOUT
+    M_HISTORY, M_CMDLINE, M_ABOUT,
+    /* Frame Buffer backend items (contiguous) */
+    M_VB_AUTO, M_VB_SOFT, M_VB_GL, M_VB_VK, M_VB_GDI, M_VB_D3D,
+    /* Controls remap items (contiguous, one per keypad button) */
+    M_KEY0, M_KEY0_END = M_KEY0 + KP_COUNT - 1
 };
 typedef struct { const char *label; int id; } MenuItem;
 static MenuItem m_file[] = {
@@ -163,7 +172,14 @@ static MenuItem m_options[] = {
     {"Enable DSound A",M_DSOUNDA},{"Enable DSound B",M_DSOUNDB},{"Enable GBC Sound",M_GBCSOUND},
     {"Reverse Sound Stereo",M_REVSTEREO},{"",0},{"Select BIOS File...",M_SELBIOS},
     {"BIOS Enable",M_BIOSEN},{"Skip BIOS Boot",M_BIOSBOOT},{"Skip Intro Hacks",M_SKIPINTROS},
-    {"",0},{"Controllers Configuration...",M_CONTROLLERS},{NULL,0}};
+    {"",0},{"Frame Buffer",0},
+    {"Auto (SDL)",M_VB_AUTO},{"Software (SDL)",M_VB_SOFT},{"OpenGL (SDL)",M_VB_GL},
+    {"Vulkan",M_VB_VK},{"GDI (Windows)",M_VB_GDI},{"Direct3D 9 (Windows)",M_VB_D3D},
+    {"",0},{"Controls",0},
+    {"Map A",M_KEY0+KP_A},{"Map B",M_KEY0+KP_B},{"Map Select",M_KEY0+KP_SELECT},
+    {"Map Start",M_KEY0+KP_START},{"Map Right",M_KEY0+KP_RIGHT},{"Map Left",M_KEY0+KP_LEFT},
+    {"Map Up",M_KEY0+KP_UP},{"Map Down",M_KEY0+KP_DOWN},{"Map R",M_KEY0+KP_R},{"Map L",M_KEY0+KP_L},
+    {"Reset Key Mappings",M_CONTROLLERS},{NULL,0}};
 static MenuItem m_help[] = {
     {"History...",M_HISTORY},{"Command Line Options...",M_CMDLINE},{"About...",M_ABOUT},{NULL,0}};
 static struct { const char *title; MenuItem *items; } menus[] = {
@@ -171,9 +187,11 @@ static struct { const char *title; MenuItem *items; } menus[] = {
 #define NMENUS ((int)(sizeof menus / sizeof menus[0]))
 
 static int menu_open = -1, menu_hover = -1;
-static int dialog_kind = 0;               /* 0 none, 1 text, 2 rom browser */
+static int dialog_kind = 0;               /* 0 none, 1 text, 2 rom browser, 3 key capture */
 static char dialog_title[64], dialog_body[2048];
+static int  key_capture = -1;             /* keypad index awaiting a key press */
 
+static int text_w(const char *s) { return (int)strlen(s) * 8; }
 static int menu_x(int i) { int x=4; for (int j=0;j<i;j++) x += text_w(menus[j].title)+12; return x; }
 static int menu_width(MenuItem *it) { int w=0; for (MenuItem*m=it;m->label;++m) if(m->label[0]&&text_w(m->label)>w) w=text_w(m->label); return w+24; }
 static int menu_height(MenuItem *it) { int h=4; for (MenuItem*m=it;m->label;++m) h += m->label[0]?16:7; return h; }
@@ -206,19 +224,25 @@ static void rom_add(const char *name, int is_dir) {
     rom_list[rom_count].is_dir = is_dir;
     rom_count++;
 }
-/* Resolve a path relative to the current directory (POSIX realpath / Win32). */
 static void path_abspath(const char *in, char *out, size_t outsz) {
 #ifdef _WIN32
     DWORD n = GetFullPathNameA(in, (DWORD)outsz, out, NULL);
     if (!n || n >= outsz) snprintf(out, outsz, "%s", in);
 #else
-    if (!realpath(in, out)) snprintf(out, outsz, "%s", in);
+    char tmp[PATH_MAX];
+    if (realpath(in, tmp)) snprintf(out, outsz, "%s", tmp);
+    else snprintf(out, outsz, "%s", in);
 #endif
 }
 static void rom_dir_enter(const char *dir) {
     path_abspath(dir, rom_dir, sizeof rom_dir);
     rom_count = 0; rom_sel = 0;
-    if (strcmp(rom_dir, "/")) rom_add("..", 1);                 /* parent */
+#ifdef _WIN32
+    int at_root = (rom_dir[0] && rom_dir[1] == ':' && rom_dir[2] == '\0');
+#else
+    int at_root = !strcmp(rom_dir, "/");
+#endif
+    if (!at_root) rom_add("..", 1);                 /* parent */
 #ifdef _WIN32
     char pat[600]; snprintf(pat, sizeof pat, "%s\\*", rom_dir);
     WIN32_FIND_DATAA fd; HANDLE h = FindFirstFileA(pat, &fd);
@@ -253,11 +277,10 @@ static void rom_activate(int idx) {
     if (idx < 0 || idx >= rom_count) return;
     if (rom_list[idx].is_dir) {                 /* navigate into folder */
         char full[1200];
-        if (!strcmp(rom_list[idx].name, "..")) {
+        if (!strcmp(rom_list[idx].name, ".."))
             snprintf(full, sizeof full, "%s/..", rom_dir);
-        } else {
+        else
             snprintf(full, sizeof full, "%s/%s", rom_dir, rom_list[idx].name);
-        }
         rom_dir_enter(full);
         return;
     }
@@ -270,7 +293,6 @@ static void rom_activate(int idx) {
 static void load_rom(const char *path) {
     if (gba_load_rom(g, path)) {
         snprintf(cfg.rompath, sizeof cfg.rompath, "%s", path);
-        /* remember folder for the browser */
         const char *sl = strrchr(path,'/'); if (!sl) sl = strrchr(path,'\\');
         if (sl) { size_t n = sl-path; if (n<sizeof cfg.lastdir) { memcpy(cfg.lastdir,path,n); cfg.lastdir[n]=0; } }
         gba_reset(g); g_paused = 0;
@@ -289,8 +311,9 @@ static void show_rom_info(void) {
 static void show_about(void) {
     dlg_text("About",
       GBA_TITLE "\nClean-room reconstruction of BoycottAdvance 0.2.8\n"
-      "with a complete ARM7TDMI core and BIOS SWI emulation\n"
-      "and an SDL2 audio/video frontend.\n\n"
+      "with a complete ARM7TDMI core and BIOS SWI emulation.\n"
+      "Frame-buffer backends: SDL Software/OpenGL, Windows GDI,\n"
+      "Direct3D 9 and Vulkan.\n\n"
       "Original authors:\n"
       "  Julien Frelat \"Gollum\" (main emulation, GBA core, GUI,\n"
       "  Win32 port, documentation)\n"
@@ -300,32 +323,17 @@ static void show_about(void) {
       "please send a postcard. Keep crediting the authors.");
 }
 static void show_history(void) {
-    dlg_text("History",
-      "BoycottAdvance 0.2.8 (2003) - Julien Frelat and team.\n\n"
-      "BoycottAdvance Reborn v1.1.0\n"
-      "  - Clean-room ARM7TDMI core (ARM + Thumb)\n"
-      "  - Correct BIOS SWI (CpuSet, VBlankIntrWait...)\n"
-      "  - Fixed VBlank/HBlank/IRQ (boots Pokemon)\n"
-      "  - SDL2 audio (Windows 11 compatible)\n"
-      "  - Original menu GUI, CPU debugger removed\n\n"
-      "v1.1.0 changes:\n"
-      "  - Assembler-free multi-architecture builds\n"
-      "    for Windows x86 and x64\n"
-      "  - Fixed executable entry-point error on systems\n"
-      "    with an older SDL2.dll (SDL_GetTicks64)\n"
-      "  - Fixed instant startup crash (heap-allocated core\n"
-      "    instead of the 1 MB Windows stack)\n"
-      "  - Menu bar with every original option\n"
-      "    (File / Window / Options / Help)\n"
-      "  - Embedded window icon\n"
-      "  - ROM browser and BoycottAdvance.ini support\n\n"
-      "v1.2.0 changes:\n"
-      "  - Fixed ARM LDR/LDM with PC target and PPU bitmap\n"
-      "    layer gating that left Pokemon on a black screen\n"
-      "  - Removed the CPU debugger menu entirely\n"
-      "  - Built-in ROM browser with folder navigation\n"
-      "    (pick ROMs from any directory)\n"
-      "  - Embedded window and executable icon\n\n"
+    dlg_text("History", GBA_TITLE "\n\n"
+      "v1.3.0 changes:\n"
+      "  - Fixed MLA/MUL destination register decode: the multiply\n"
+      "    result went to the wrong register, so address maths (and\n"
+      "    therefore most games) rendered wrong or nothing.\n"
+      "  - Fixed sound: envelope clock no longer freezes, correct\n"
+      "    square/noise/wave mixing and DMA Direct Sound FIFOs.\n"
+      "  - Configurable key mappings, saved in BoycottAdvance.ini.\n"
+      "  - New Options/Frame Buffer backends: SDL Software, OpenGL,\n"
+      "    Windows GDI, Direct3D 9 and Vulkan (when available).\n\n"
+      "v1.2.0: ARM LDR/LDM PC fix, PPU bitmap gating, ROM browser.\n"
       "v1.0.0: first public clean-room release.");
 }
 static void show_cmdline(void) {
@@ -334,11 +342,13 @@ static void show_cmdline(void) {
       "-help        Display this help\n-autosave    Save INI file on exit\n"
       "-sound       Enable sound\n-bios        Enable BIOS\n-fastboot    Skip BIOS boot");
 }
-static void show_controllers(void) {
-    dlg_text("Controllers Configuration",
-      "Keyboard (default):\n  A=A  B=S  L=F  R=D  Start=Enter  Select=Backspace\n"
-      "  D-Pad = arrow keys\n\n"
-      "Joystick: standard SDL2 game controllers are used when present.");
+static void reset_keys(void) {
+    for (int i = 0; i < KP_COUNT; i++) cfg.keymap[i] = KP_DEFAULT[i];
+    dlg_text("Controls", "Key mappings restored to defaults.");
+}
+static void begin_key_capture(int kp) {
+    key_capture = kp; dialog_kind = 3;
+    snprintf(dialog_title, sizeof dialog_title, "Map key: %s", KP_NAME[kp]);
 }
 static void toggle_fullscreen(SDL_Window *w) {
     static int fs = 0; fs = !fs;
@@ -365,7 +375,7 @@ static void do_action(int id, SDL_Window *win) {
     case M_SKIP0: case M_SKIP1: case M_SKIP2: case M_SKIP3: case M_SKIP4: case M_SKIP5:
         cfg.frameskip = id-M_SKIP0; g->frameskip = cfg.frameskip; break;
     case M_AUTOSKIP: cfg.autoframeskip = !cfg.autoframeskip; break;
-    case M_SMOOTH: cfg.smooth = !cfg.smooth; break;
+    case M_SMOOTH: cfg.smooth = !cfg.smooth; SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, cfg.smooth?"1":"0"); break;
     case M_THROTTLE: cfg.autothrottle = !cfg.autothrottle; break;
     case M_SHOWFPS: cfg.showfps = !cfg.showfps; break;
     case M_SHOWFPSPCT: cfg.showfps_pct = !cfg.showfps_pct; break;
@@ -378,11 +388,19 @@ static void do_action(int id, SDL_Window *win) {
     case M_BIOSEN: cfg.biosenable = !cfg.biosenable; g->bios_enabled = cfg.biosenable; break;
     case M_BIOSBOOT: cfg.biosfastboot = !cfg.biosfastboot; g->bios_fastboot = cfg.biosfastboot; break;
     case M_SKIPINTROS: cfg.skipintros = !cfg.skipintros; break;
-    case M_CONTROLLERS: show_controllers(); break;
+    case M_CONTROLLERS: reset_keys(); break;
     case M_HISTORY: show_history(); break;
     case M_CMDLINE: show_cmdline(); break;
     case M_ABOUT: show_about(); break;
-    default: break;
+    case M_VB_AUTO: case M_VB_SOFT: case M_VB_GL: case M_VB_VK: case M_VB_GDI: case M_VB_D3D: {
+        /* request a backend; the render loop re-creates the presenter. */
+        static const VidBackend map[6] = { VID_AUTO, VID_SOFTWARE, VID_OPENGL,
+                                           VID_VULKAN, VID_GDI, VID_DIRECT3D };
+        cfg.video_backend = map[id - M_VB_AUTO];
+        break; }
+    default:
+        if (id >= M_KEY0 && id <= M_KEY0_END) begin_key_capture(id - M_KEY0);
+        break;
     }
 }
 
@@ -416,42 +434,48 @@ static int item_checked(int id) {
     default:
         if (id>=M_ZOOM1 && id<=M_ZOOM4) return cfg.zoom==id-M_ZOOM1+1;
         if (id>=M_SKIP0 && id<=M_SKIP5) return cfg.frameskip==id-M_SKIP0;
+        if (id>=M_VB_AUTO && id<=M_VB_D3D) {
+            static const VidBackend map[6] = { VID_AUTO, VID_SOFTWARE, VID_OPENGL,
+                                               VID_VULKAN, VID_GDI, VID_DIRECT3D };
+            return cfg.video_backend == map[id-M_VB_AUTO];
+        }
         return 0;
     }
 }
 
 /* ------------------------------------------------------------------- draw */
-static void draw_menubar(SDL_Renderer *r) {
-    SDL_SetRenderDrawColor(r,220,220,220,255);
-    SDL_Rect bar = {0,0,10000,MENUBAR_H}; SDL_RenderFillRect(r,&bar);
-    SDL_SetRenderDrawColor(r,120,120,120,255);
-    SDL_RenderDrawLine(r,0,MENUBAR_H-1,10000,MENUBAR_H-1);
+static const char *scancode_name(int sc) {
+    const char *n = SDL_GetScancodeName((SDL_Scancode)sc);
+    return (n && n[0]) ? n : "?";
+}
+static void draw_menubar(FB *fb) {
+    fb_rect(fb,0,0,fb->w,MENUBAR_H,0xFFDCDCDC);
+    fb_hline(fb,0,MENUBAR_H-1,fb->w,0xFF787878);
     for (int i = 0; i < NMENUS; i++) {
         int x = menu_x(i);
-        SDL_Color c = {0,0,0,255};
+        uint32_t c = 0xFF000000;
         if (menu_open == i) {
-            SDL_SetRenderDrawColor(r,90,120,200,255);
-            SDL_Rect hi = {x-2,2,text_w(menus[i].title)+12,MENUBAR_H-4};
-            SDL_RenderFillRect(r,&hi); c = (SDL_Color){255,255,255,255};
+            fb_rect(fb,x-2,2,text_w(menus[i].title)+12,MENUBAR_H-4,0xFF5A78C8); c = 0xFFFFFFFF;
         }
-        draw_text(r, x+4, 5, menus[i].title, c);
+        fb_text(fb,x+4,5,menus[i].title,c);
     }
     if (menu_open < 0) return;
     MenuItem *it = menus[menu_open].items;
     int mw = menu_width(it), mh = menu_height(it), mx = menu_x(menu_open);
-    SDL_SetRenderDrawColor(r,240,240,240,255);
-    SDL_Rect box = {mx,MENUBAR_H,mw,mh}; SDL_RenderFillRect(r,&box);
-    SDL_SetRenderDrawColor(r,80,80,80,255); SDL_RenderDrawRect(r,&box);
+    fb_rect(fb,mx,MENUBAR_H,mw,mh,0xFFF0F0F0);
+    fb_rect_outline(fb,mx,MENUBAR_H,mw,mh,0xFF505050);
     int y = MENUBAR_H+2, idx = 0;
     for (MenuItem *m=it; m->label; ++m, idx++) {
-        if (!m->label[0]) { SDL_SetRenderDrawColor(r,160,160,160,255);
-            SDL_RenderDrawLine(r,mx+2,y+3,mx+mw-2,y+3); y += 7; continue; }
+        if (!m->label[0]) { fb_hline(fb,mx+2,y+3,mw-4,0xFFA0A0A0); y += 7; continue; }
         int sel = (menu_hover==idx), chk = (m->id?item_checked(m->id):0);
-        if (sel) { SDL_SetRenderDrawColor(r,90,120,200,255);
-            SDL_Rect hi={mx+1,y,mw-2,16}; SDL_RenderFillRect(r,&hi); }
-        SDL_Color c = sel?(SDL_Color){255,255,255,255}:(SDL_Color){0,0,0,255};
-        draw_text(r, mx+4, y+4, chk?"*":" ", c);
-        draw_text(r, mx+18, y+4, m->label, c);
+        if (sel) fb_rect(fb,mx+1,y,mw-2,16,0xFF5A78C8);
+        uint32_t c = sel?0xFFFFFFFF:0xFF000000;
+        fb_text(fb,mx+4,y+4,chk?"*":" ",c);
+        fb_text(fb,mx+18,y+4,m->label,c);
+        if (m->id >= M_KEY0 && m->id <= M_KEY0_END) {
+            char kb[32]; snprintf(kb,sizeof kb,"[%s]",scancode_name(cfg.keymap[m->id-M_KEY0]));
+            fb_text(fb,mx+mw-text_w(kb)-6,y+4,kb,c);
+        }
         y += 16;
     }
 }
@@ -492,10 +516,6 @@ int main(int argc, char **argv) {
         if (ico) { SDL_SetWindowIcon(win, ico); SDL_FreeSurface(ico); }
     }
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, cfg.smooth?"1":"0");
-    SDL_Renderer *ren = SDL_CreateRenderer(win,-1,SDL_RENDERER_ACCELERATED);
-    if (!ren) ren = SDL_CreateRenderer(win,-1,SDL_RENDERER_SOFTWARE);
-    SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888,
-        SDL_TEXTUREACCESS_STREAMING, SCREEN_W, SCREEN_H);
 
     SDL_AudioSpec want,hv; SDL_zero(want);
     want.freq=AUDIO_FREQ; want.format=AUDIO_S16SYS; want.channels=AUDIO_CHANNELS;
@@ -503,7 +523,11 @@ int main(int argc, char **argv) {
     SDL_AudioDeviceID adev = SDL_OpenAudioDevice(NULL,0,&want,&hv,0);
     if (adev) SDL_PauseAudioDevice(adev,0);
 
-    uint32_t *pixels = (uint32_t *)malloc(SCREEN_W*SCREEN_H*4);
+    FB  fb;
+    int fb_w = 0, fb_h = 0;
+    Video *video = NULL;
+    int want_backend = cfg.video_backend;
+
     int running = 1; uint32_t last = SDL_GetTicks(), fps_t = last;
     int fps_n = 0; float fps = 0;
 
@@ -511,7 +535,9 @@ int main(int argc, char **argv) {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_QUIT) running = 0;
-            else if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
+            else if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_RESIZED) {
+                fb_w = fb_h = 0;   /* force re-create at the new size */
+            } else if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
                 int mx = ev.button.x, my = ev.button.y;
                 if (dialog_kind == 2) {
                     int list_y = 64;
@@ -519,8 +545,8 @@ int main(int argc, char **argv) {
                         int sel = (my-list_y)/16;
                         if (sel>=0 && sel<rom_count) rom_activate(sel);
                     }
-                } else if (dialog_kind == 1) {
-                    dialog_kind = 0;
+                } else if (dialog_kind) {
+                    dialog_kind = 0; key_capture = -1;
                 } else if (my < MENUBAR_H) {
                     int hit = menubar_hit(mx);
                     menu_open = (hit==menu_open)?-1:hit; menu_hover = -1;
@@ -538,6 +564,11 @@ int main(int argc, char **argv) {
                     else if (k==SDLK_DOWN && rom_sel+1<rom_count) rom_sel++;
                     else if (k==SDLK_UP && rom_sel>0) rom_sel--;
                     else if (k==SDLK_RETURN || k==SDLK_KP_ENTER) rom_activate(rom_sel);
+                    continue;
+                }
+                if (dialog_kind == 3) {           /* capturing a key mapping */
+                    if (k==SDLK_ESCAPE) { key_capture = -1; dialog_kind = 0; }
+                    else { cfg.keymap[key_capture] = ev.key.keysym.scancode; key_capture = -1; dialog_kind = 0; }
                     continue;
                 }
                 if (dialog_kind) { if (k==SDLK_ESCAPE) dialog_kind=0; continue; }
@@ -560,69 +591,78 @@ int main(int argc, char **argv) {
             gba_apply_cheats(g);
         }
 
-        for (int i = 0; i < SCREEN_W*SCREEN_H; i++) {
-            uint16_t c = g->ppu.frame[i];
-            int r=(c&0x1F)<<3, gg=((c>>5)&0x1F)<<3, b=((c>>10)&0x1F)<<3;
-            if (cfg.scanline && ((i/SCREEN_W)&1)) { r>>=1; gg>>=1; b>>=1; }
-            pixels[i] = 0xFF000000u | (r<<16) | (gg<<8) | b;
+        /* (Re)create the framebuffer and, if the backend changed, the presenter. */
+        int dw, dh; SDL_GetWindowSize(win, &dw, &dh);
+        if (dw < 1) dw = 1;
+        if (dh < 1) dh = 1;
+        if (fb_w != dw || fb_h != dh) {
+            if (fb_w) fb_free(&fb);
+            fb_init(&fb, dw, dh);
+            fb_w = dw; fb_h = dh;
         }
-        SDL_UpdateTexture(tex,NULL,pixels,SCREEN_W*4);
+        if (want_backend != cfg.video_backend || !video) {
+            if (video) vid_shutdown(video);
+            video = vid_init(win, (VidBackend)cfg.video_backend);
+            want_backend = cfg.video_backend;
+        }
 
-        SDL_SetRenderDrawColor(ren,0,0,0,255);
-        SDL_RenderClear(ren);
-        int dw=0,dh=0; SDL_GetRendererOutputSize(ren,&dw,&dh);
-        SDL_Rect dst={0,MENUBAR_H,0,0};
-        if (cfg.scalemode==1) {
-            int aw=dw, ah=dh-MENUBAR_H;
+        /* --- compose the frame --- */
+        fb_fill(&fb, 0xFF000000);
+        int aw = fb.w, ah = fb.h - MENUBAR_H;
+        int dstx, dsty, dstw, dsth;
+        if (cfg.scalemode == 1) {                 /* fit to window */
             int s = (aw/SCREEN_W < ah/SCREEN_H) ? aw/SCREEN_W : ah/SCREEN_H;
             if (s<1) s=1;
-            dst.w=SCREEN_W*s; dst.h=SCREEN_H*s;
-            dst.x=(dw-dst.w)/2; dst.y=MENUBAR_H+(ah-dst.h)/2;
+            dstw = SCREEN_W*s; dsth = SCREEN_H*s;
+            dstx = (aw-dstw)/2; dsty = MENUBAR_H+(ah-dsth)/2;
         } else {
-            dst.w=SCREEN_W*cfg.zoom; dst.h=SCREEN_H*cfg.zoom;
-            dst.x=(dw-dst.w)/2; if(dst.x<0) dst.x=0; dst.y=MENUBAR_H;
+            dstw = SCREEN_W*cfg.zoom; dsth = SCREEN_H*cfg.zoom;
+            dstx = (aw-dstw)/2; if (dstx<0) dstx=0;
+            dsty = MENUBAR_H;
         }
-        SDL_RenderCopy(ren,tex,NULL,&dst);
+        fb_blit_frame(&fb, dstx, dsty, dstw, dsth, g->ppu.frame, cfg.scanline);
 
         if (cfg.showfps) {
-            char fb[64];
-            if (cfg.showfps_pct) snprintf(fb,sizeof fb,"%d%%",(int)(fps*100/60));
-            else snprintf(fb,sizeof fb,"%.0f fps",fps);
-            draw_text(ren, dw-text_w(fb)-6, MENUBAR_H+4, fb, (SDL_Color){255,255,0,255});
+            char t[64];
+            if (cfg.showfps_pct) snprintf(t,sizeof t,"%d%%",(int)(fps*100/60));
+            else snprintf(t,sizeof t,"%.0f fps",fps);
+            fb_text(&fb, fb.w-text_w(t)-6, MENUBAR_H+4, t, 0xFFFFFF00);
         }
-        draw_menubar(ren);
+        draw_menubar(&fb);
 
         if (dialog_kind) {
-            SDL_SetRenderDrawColor(ren,30,30,30,220);
-            SDL_Rect cover={0,MENUBAR_H,10000,10000}; SDL_RenderFillRect(ren,&cover);
-            SDL_SetRenderDrawColor(ren,210,210,210,255);
-            SDL_Rect dbox={40,30,560,320}; SDL_RenderFillRect(ren,&dbox);
-            SDL_SetRenderDrawColor(ren,0,0,0,255); SDL_RenderDrawRect(ren,&dbox);
+            fb_rect(&fb,0,MENUBAR_H,fb.w,fb.h-MENUBAR_H,0xDC1E1E1E);
+            fb_rect(&fb,40,30,560,320,0xFFD2D2D2);
+            fb_rect_outline(&fb,40,30,560,320,0xFF000000);
             if (dialog_kind==1) {
-                draw_text(ren,52,60,dialog_title,(SDL_Color){0,0,160,255});
+                fb_text(&fb,52,60,dialog_title,0xFF0000A0);
                 int y=80; char tmp[2048]; snprintf(tmp,sizeof tmp,"%s",dialog_body);
                 char *line=strtok(tmp,"\n");
-                while(line){ draw_text(ren,52,y,line,(SDL_Color){0,0,0,255}); y+=14; line=strtok(NULL,"\n"); }
-                draw_text(ren,52,330,"Click or press ESC to close",(SDL_Color){80,80,80,255});
+                while(line){ fb_text(&fb,52,y,line,0xFF000000); y+=14; line=strtok(NULL,"\n"); }
+                fb_text(&fb,52,330,"Click or press ESC to close",0xFF505050);
             } else if (dialog_kind==2) {
-                draw_text(ren,52,36,"Please choose a ROM file to load...",(SDL_Color){0,0,160,255});
-                draw_text(ren,52,48,rom_dir,(SDL_Color){60,60,60,255});
+                fb_text(&fb,52,36,"Please choose a ROM file to load...",0xFF0000A0);
+                fb_text(&fb,52,48,rom_dir,0xFF3C3C3C);
                 int y=64, shown=0;
                 for (int i=0;i<rom_count && shown<16;i++,y+=16) {
                     int sel = (i==rom_sel);
-                    if (sel) { SDL_SetRenderDrawColor(ren,90,120,200,255);
-                        SDL_Rect hi={52,y-2,540,16}; SDL_RenderFillRect(ren,&hi); }
-                    SDL_Color c = sel?(SDL_Color){255,255,255,255}:(SDL_Color){0,0,0,255};
+                    if (sel) fb_rect(&fb,52,y-2,540,16,0xFF5A78C8);
+                    uint32_t c = sel?0xFFFFFFFF:0xFF000000;
                     char lbl[300];
                     snprintf(lbl,sizeof lbl,"%s%.260s",rom_list[i].is_dir?"[+] ":"    ",rom_list[i].name);
-                    draw_text(ren,56,y,lbl,c);
+                    fb_text(&fb,56,y,lbl,c);
                     shown++;
                 }
-                if (!rom_count) draw_text(ren,56,64,"(no .gba/.agb/.bin in folder)",(SDL_Color){120,0,0,255});
-                draw_text(ren,52,336,"Click or use Up/Down + Enter. ESC to cancel.",(SDL_Color){80,80,80,255});
+                if (!rom_count) fb_text(&fb,56,64,"(no .gba/.agb/.bin in folder)",0xFF780000);
+                fb_text(&fb,52,336,"Click or use Up/Down + Enter. ESC to cancel.",0xFF505050);
+            } else if (dialog_kind==3) {
+                fb_text(&fb,52,60,dialog_title,0xFF0000A0);
+                fb_text(&fb,52,90,"Press the key you want to assign.",0xFF000000);
+                fb_text(&fb,52,120,"ESC cancels.",0xFF000000);
             }
         }
-        SDL_RenderPresent(ren);
+
+        vid_present(video, fb.px, fb.w, fb.h);
 
         uint32_t now = SDL_GetTicks();
         if (cfg.autothrottle && !g_paused) {
@@ -635,8 +675,10 @@ int main(int argc, char **argv) {
 
     cfg_save("BoycottAdvance.ini");
     if (adev) SDL_CloseAudioDevice(adev);
-    free(pixels); free(g);
-    SDL_DestroyTexture(tex); SDL_DestroyRenderer(ren); SDL_DestroyWindow(win);
+    if (video) vid_shutdown(video);
+    if (fb_w) fb_free(&fb);
+    free(g);
+    SDL_DestroyWindow(win);
     SDL_Quit();
     return 0;
 }
