@@ -25,11 +25,11 @@ static HWND         g_hwnd;
 static WNDPROC      g_oldproc;
 static GuiCallbacks g_cb;
 static volatile LONG g_quit;
-/* Win32 file-dialog filters are double-null terminated; keep the literal
- * (with embedded NULs) intact rather than copying it with snprintf. */
-static const char   g_romfilter[] =
-    "Game Boy Advance ROMs (*.gba;*.agb;*.bin)\0*.gba;*.agb;*.bin\0"
-    "All files (*.*)\0*.*\0\0";
+/* Win32 file-dialog filters are double-null terminated UTF-16 strings;
+ * keep the wide literal (with embedded NULs) intact. */
+static const WCHAR   g_romfilter[] =
+    L"Game Boy Advance ROMs (*.gba;*.agb;*.bin)\0*.gba;*.agb;*.bin\0"
+    L"All files (*.*)\0*.*\0\0";
 
 /* --------------------------------------------------------------- helpers */
 static HMENU add_popup(HMENU bar, const char *title) {
@@ -168,23 +168,38 @@ static LRESULT CALLBACK gui_wndproc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         g_quit = 1;
         break;
     }
-    if (g_oldproc) return CallWindowProcA(g_oldproc, h, msg, wp, lp);
-    return DefWindowProcA(h, msg, wp, lp);
+    if (g_oldproc) return CallWindowProcW(g_oldproc, h, msg, wp, lp);
+    return DefWindowProcW(h, msg, wp, lp);
 }
 
 /* ------------------------------------------------------------------ file */
-static int open_file_dialog(const char *title, const char *filter, char *out, size_t outn) {
-    OPENFILENAMEA ofn;
+/* The frontend passes UTF-8; Win32 wants UTF-16. */
+static void utf8_to_wide(const char *s, WCHAR *out, int outn) {
+    out[0] = 0;
+    MultiByteToWideChar(CP_UTF8, 0, s, -1, out, outn);
+}
+static void wide_to_utf8(const WCHAR *s, char *out, int outn) {
+    out[0] = 0;
+    WideCharToMultiByte(CP_UTF8, 0, s, -1, out, outn, NULL, NULL);
+}
+
+static int open_file_dialog(const char *title, const WCHAR *filter, char *out, size_t outn) {
+    OPENFILENAMEW ofn;
+    WCHAR wtitle[256], wfile[MAX_PATH];
     ZeroMemory(&ofn, sizeof ofn);
     out[0] = 0;
+    wfile[0] = 0;
+    utf8_to_wide(title, wtitle, 256);
     ofn.lStructSize = sizeof ofn;
     ofn.hwndOwner   = g_hwnd;
-    ofn.lpstrFilter = filter;
-    ofn.lpstrFile   = out;
-    ofn.nMaxFile    = (DWORD)outn;
-    ofn.lpstrTitle  = title;
+    ofn.lpstrFilter = (const WCHAR *)filter;   /* filter stays UTF-16 literal */
+    ofn.lpstrFile   = wfile;
+    ofn.nMaxFile    = MAX_PATH;
+    ofn.lpstrTitle  = wtitle;
     ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    return GetOpenFileNameA(&ofn) ? 1 : 0;
+    if (!GetOpenFileNameW(&ofn)) return 0;
+    wide_to_utf8(wfile, out, (int)outn);
+    return 1;
 }
 
 void gui_native_open_rom(void) {
@@ -195,13 +210,17 @@ void gui_native_open_rom(void) {
 
 void gui_native_open_bios(void) {
     char path[MAX_PATH];
-    const char *filter = "BIOS files (*.bin;*.rom)\0*.bin;*.rom\0All files (*.*)\0*.*\0\0";
+    static const WCHAR filter[] =
+        L"BIOS files (*.bin;*.rom)\0*.bin;*.rom\0All files (*.*)\0*.*\0\0";
     if (open_file_dialog("Select BIOS File", filter, path, sizeof path))
         if (g_cb.setbios_path) g_cb.setbios_path(path);
 }
 
 void gui_native_message(const char *title, const char *body) {
-    MessageBoxA(g_hwnd, body, title, MB_OK | MB_ICONINFORMATION);
+    WCHAR wt[256], wb[4096];
+    utf8_to_wide(title, wt, 256);
+    utf8_to_wide(body, wb, 4096);
+    MessageBoxW(g_hwnd, wb, wt, MB_OK | MB_ICONINFORMATION);
 }
 
 /* ------------------------------------------------------------------ init */
