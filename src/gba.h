@@ -13,7 +13,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define GBA_VERSION  "v1.2.0"
+#define GBA_VERSION  "v1.3.0"
 #define GBA_NAME     "BoycottAdvance Reborn"
 #define GBA_TITLE    GBA_NAME " " GBA_VERSION
 
@@ -111,7 +111,8 @@ typedef struct {
 
 /* ---- APU state ----------------------------------------------------------- */
 #define SAMPLE_RATE 44100
-#define APU_CYCLES_PER_SAMPLE (16777216 / SAMPLE_RATE)
+#define APU_SR       44100
+#define APU_CYCLES_PER_SAMPLE (16777216 / APU_SR)
 
 typedef struct {
     bool enabled;
@@ -125,22 +126,19 @@ typedef struct {
     uint8_t  wave[16];       /* wave sample RAM 0x4000090..0x9F */
 
     bool ch1_on;
-    uint32_t ch1_freq_cc;
-    uint32_t ch1_duty_pos;
+    uint32_t ch1_phase;      /* 16.16 duty position */
     uint32_t ch1_env_cc;
     int  ch1_vol;
     bool ch1_dir;
 
     bool ch2_on;
-    uint32_t ch2_freq_cc;
-    uint32_t ch2_duty_pos;
+    uint32_t ch2_phase;
     uint32_t ch2_env_cc;
     int  ch2_vol;
     bool ch2_dir;
 
     bool ch3_on;
-    uint32_t ch3_freq_cc;
-    uint32_t ch3_pos;
+    uint32_t ch3_phase;
     uint32_t ch3_len_cc;
 
     bool ch4_on;
@@ -150,11 +148,17 @@ typedef struct {
     uint32_t ch4_lfsr;
     uint32_t ch4_cc;
 
-    int  sound_cnt[2];       /* fifo enable */
+    uint64_t env_cc;         /* envelope clock accumulator (CPU cycles) */
+
+    int  sound_cnt[2];        /* SOUNDCNT_H: DMA A/B enable + volume */
+    int  fifoa_volume, fifob_volume;
     int32_t fifoa[32], fifob[32];
     int fifoa_head, fifoa_len, fifob_head, fifob_len;
+    int32_t fifoa_held, fifob_held;
+    int  fifo_asel, fifo_bsel;        /* timer 0/1 selected per FIFO */
+    uint32_t fifo_acc_a, fifo_acc_b;  /* cycles until next FIFO pop */
 
-    uint64_t sample_cc;      /* cycles until next sample */
+    uint64_t sample_cc;      /* leftover cycles, kept as a fraction */
 } Apu;
 
 /* ---- PPU state ------------------------------------------------------------- */
@@ -289,6 +293,7 @@ void ppu_render_frame(GBA *g);
 void apu_open(void);
 void apu_close(void);
 void apu_mix(GBA *g, int16_t *stream, int nframes);
+void apu_fifo_write(GBA *g, int ch, const uint8_t *bytes, int nbytes);
 
 /* frontend utils */
 uint32_t get_ticks_us(void);

@@ -69,19 +69,32 @@ uint16_t io_read16(GBA *g, uint32_t addr) {
     case 0x052: return g->ppu.bldcnt;
     case 0x054: return g->ppu.blendalpha;
     case 0x056: return g->ppu.blendy;
-    /* ---- sound ---- */
-    case 0x060: return g->apu.nr10; case 0x062: return g->apu.nr11;
-    case 0x064: return g->apu.nr12; case 0x066: return g->apu.nr13;
-    case 0x068: return g->apu.nr14; case 0x06A: return g->apu.nr21;
-    case 0x06C: return g->apu.nr22; case 0x06E: return g->apu.nr23;
-    case 0x070: return g->apu.nr24; case 0x072: return g->apu.nr30;
-    case 0x074: return g->apu.nr31; case 0x076: return g->apu.nr32;
-    case 0x078: return g->apu.nr33; case 0x07A: return g->apu.nr34;
-    case 0x07C: return g->apu.nr41; case 0x07E: return g->apu.nr42;
-    case 0x080: return g->apu.nr43; case 0x082: return g->apu.nr44;
-    case 0x084: return g->apu.nr50; case 0x086: return g->apu.nr51;
-    case 0x088: return g->apu.nr52;
-    case 0x090: { int i = (addr & 0xF) >> 1; return (uint16_t)(g->apu.wave[i*2] | (g->apu.wave[i*2+1] << 8)); }
+    /* ---- sound (GBA 16-bit register layout) ----
+       SOUND1CNT_L 0x060  SOUND1CNT_H 0x062  SOUND1CNT_X 0x064
+       SOUND2CNT_L 0x068  SOUND2CNT_H 0x06C
+       SOUND3CNT_L 0x070  SOUND3CNT_H 0x072  SOUND3CNT_X 0x074
+       SOUND4CNT_L 0x078  SOUND4CNT_H 0x07C
+       SOUNDCNT_L  0x080  SOUNDCNT_H  0x082  SOUNDCNT_X  0x084
+       SOUNDBIAS   0x088  WAVE_RAM    0x090  FIFO_A 0x0A0  FIFO_B 0x0A4 */
+    case 0x060: return g->apu.nr10;
+    case 0x062: return g->apu.nr11;
+    case 0x064: return g->apu.nr14;
+    case 0x068: return g->apu.nr21;
+    case 0x06C: return g->apu.nr24;
+    case 0x070: return g->apu.nr30;
+    case 0x072: return g->apu.nr32;
+    case 0x074: return g->apu.nr34;
+    case 0x078: return g->apu.nr41;
+    case 0x07C: return (uint16_t)(((g->apu.nr42 & 0xFF) << 8) | (g->apu.nr43 & 0xFF));
+    case 0x080: return (uint16_t)((g->apu.nr50 & 0xFF) | ((g->apu.nr51 & 0xFF) << 8));
+    case 0x082: return (uint16_t)g->apu.sound_cnt[0];
+    case 0x084: return (uint16_t)((g->apu.nr52 & 0x80) | 0x80);
+    case 0x088: return 0x0200;
+    case 0x090: case 0x092: case 0x094: case 0x096:
+    case 0x098: case 0x09A: case 0x09C: case 0x09E: {
+        int i = (addr & 0xF) >> 1;
+        return (uint16_t)(g->apu.wave[i*2] | (g->apu.wave[i*2+1] << 8));
+    }
     /* ---- DMA ---- */
     case 0x0B0: case 0x0C0: case 0x0D0: case 0x0E0: { int ch=(reg-0x0B0)>>4; return (uint16_t)g->dma[ch].src; }
     case 0x0B2: case 0x0C2: case 0x0D2: case 0x0E2: return 0;
@@ -157,37 +170,55 @@ void io_write16(GBA *g, uint32_t addr, uint16_t v) {
     case 0x052: g->ppu.bldcnt = v; return;
     case 0x054: g->ppu.blendalpha = v; return;
     case 0x056: g->ppu.blendy = v; return;
-    /* ---- sound ---- */
-    case 0x060: g->apu.nr10 = v; return;
-    case 0x062: g->apu.nr11 = v; return;
-    case 0x064: g->apu.nr12 = v; return;
-    case 0x066: g->apu.nr13 = v; return;
-    case 0x068: g->apu.nr14 = v;
-        if (v & 0x8000) { g->apu.ch1_on = true; g->apu.ch1_vol = (g->apu.nr12 >> 4) & 0xF; g->apu.ch1_dir = (g->apu.nr12 & 0x0800) ? true : false; }
+    /* ---- sound (16-bit register layout) ---- */
+    case 0x060: g->apu.nr10 = v; return;                    /* SOUND1CNT_L sweep */
+    case 0x062:                                             /* SOUND1CNT_H env/duty */
+        g->apu.nr11 = v & 0xC0;      /* duty */
+        g->apu.nr12 = v;             /* env: step(0-2) dir(3) period(4-6) vol(12-15) */
+        g->apu.ch1_dir = (v >> 3) & 1;
         return;
-    case 0x06A: g->apu.nr21 = v; return;
-    case 0x06C: g->apu.nr22 = v; return;
-    case 0x06E: g->apu.nr23 = v; return;
-    case 0x070: g->apu.nr24 = v;
-        if (v & 0x8000) { g->apu.ch2_on = true; g->apu.ch2_vol = (g->apu.nr22 >> 4) & 0xF; g->apu.ch2_dir = (g->apu.nr22 & 0x0800) ? true : false; }
+    case 0x064:                                             /* SOUND1CNT_X freq/restart */
+        g->apu.nr13 = v & 0x7FF; g->apu.nr14 = v;
+        if (v & 0x8000) {
+            g->apu.ch1_on = true; g->apu.ch1_phase = 0;
+            g->apu.ch1_vol = (g->apu.nr12 >> 12) & 0xF;
+        }
         return;
-    case 0x072: g->apu.nr30 = v; if (!(v & 0x80)) g->apu.ch3_on = false; return;
-    case 0x074: g->apu.nr31 = v; return;
-    case 0x076: g->apu.nr32 = v; return;
-    case 0x078: g->apu.nr33 = v; return;
-    case 0x07A: g->apu.nr34 = v; if (v & 0x8000) g->apu.ch3_on = true; return;
-    case 0x07C: g->apu.nr41 = v; return;
-    case 0x07E: g->apu.nr42 = v; return;
-    case 0x080: g->apu.nr43 = v; return;
-    case 0x082: g->apu.nr44 = v; if (v & 0x8000) { g->apu.ch4_on = true; g->apu.ch4_lfsr = 0x7FFF; } return;
-    case 0x084: g->apu.nr50 = v; return;
-    case 0x086: g->apu.nr51 = v; return;
-    case 0x088: g->apu.nr52 = v; return;
-    case 0x090: case 0x092: case 0x094: case 0x096: case 0x098: case 0x09A:
-    case 0x09C: case 0x09E: {
-        int i = (reg - 0x090) >> 1;
+    case 0x068: g->apu.nr21 = v & 0xC0; return;             /* SOUND2CNT_L */
+    case 0x06C:                                             /* SOUND2CNT_H */
+        g->apu.nr22 = v;
+        g->apu.nr23 = v & 0x7FF; g->apu.nr24 = v;
+        g->apu.ch2_dir = (v >> 3) & 1;
+        if (v & 0x8000) { g->apu.ch2_on = true; g->apu.ch2_phase = 0; g->apu.ch2_vol = (v >> 12) & 0xF; }
+        return;
+    case 0x070: g->apu.nr30 = v & 0xE0; if (!(v & 0x80)) g->apu.ch3_on = false; return;
+    case 0x072: g->apu.nr32 = v & 0xE000; return;           /* SOUND3CNT_H volume/length */
+    case 0x074:                                             /* SOUND3CNT_X */
+        g->apu.nr33 = v & 0x7FF; g->apu.nr34 = v;
+        if (v & 0x8000) { g->apu.ch3_on = true; g->apu.ch3_phase = 0; }
+        return;
+    case 0x078: g->apu.nr41 = v & 0xFF; return;             /* SOUND4CNT_L */
+    case 0x07C:                                             /* SOUND4CNT_H */
+        g->apu.nr42 = v & 0xFF; g->apu.nr43 = (v >> 8) & 0xFF;
+        g->apu.ch4_dir = (v >> 3) & 1;
+        if (v & 0x8000) { g->apu.ch4_on = true; g->apu.ch4_vol = v & 7; g->apu.ch4_lfsr = 0x7FFF; }
+        return;
+    case 0x080: g->apu.nr50 = v & 0xFF; g->apu.nr51 = v >> 8; return;   /* SOUNDCNT_L */
+    case 0x082:                                             /* SOUNDCNT_H */
+        g->apu.sound_cnt[0] = v;
+        if (v & 0x0800) { g->apu.fifoa_head = g->apu.fifoa_len = 0; g->apu.fifoa_held = 0; }
+        if (v & 0x8000) { g->apu.fifob_head = g->apu.fifob_len = 0; g->apu.fifob_held = 0; }
+        return;
+    case 0x084: g->apu.nr52 = v & 0x80;                      /* SOUNDCNT_X */
+        if (!(v & 0x80)) g->apu.ch1_on = g->apu.ch2_on = g->apu.ch3_on = g->apu.ch4_on = false;
+        return;
+    case 0x088: return;                                     /* SOUNDBIAS */
+    case 0x090: case 0x092: case 0x094: case 0x096:
+    case 0x098: case 0x09A: case 0x09C: case 0x09E: {
+        int i = (addr & 0xF) >> 1;
         g->apu.wave[i*2] = v & 0xFF; g->apu.wave[i*2+1] = v >> 8; return;
     }
+    case 0x0A0: case 0x0A2: case 0x0A4: case 0x0A6: return;  /* FIFO writes: DMA only */
     /* ---- DMA ---- */
     case 0x0B0: case 0x0C0: case 0x0D0: case 0x0E0: { int ch=(reg-0x0B0)>>4; g->dma[ch].src = (g->dma[ch].src & 0xFFFF0000) | v; return; }
     case 0x0B2: case 0x0C2: case 0x0D2: case 0x0E2: { int ch=(reg-0x0B2)>>4; g->dma[ch].src = (g->dma[ch].src & 0xFFFF) | ((uint32_t)v << 16); return; }
@@ -245,6 +276,25 @@ void dma_run(GBA *g, int ch) {
     uint32_t unit = d->word ? 4 : 2;
     uint32_t count = d->count & 0xFFFF;
     if (count == 0) count = (ch == 3) ? 0x10000 : 0x4000;
+
+    /* Sound FIFO mode (channels 1/2 to 0x040000A0/A4): each 32-bit word
+       contributes its low byte to the corresponding FIFO. */
+    if ((ch == 1 || ch == 2) && (d->dst & 0x0FFFFFFF) >= 0x040000A0 &&
+        (d->dst & 0x0FFFFFFF) <= 0x040000A7 && d->word) {
+        uint8_t bytes[0x10000];
+        uint32_t src = d->src;
+        for (uint32_t i = 0; i < count; i++) {
+            uint32_t w = gba_read32(g, src);
+            bytes[i] = (uint8_t)(w & 0xFF);
+            src += 4;
+        }
+        apu_fifo_write(g, (d->dst & 0x0FFFFFFF) == 0x040000A4, bytes, (int)count);
+        g->apu.fifo_acc_a = 0;   /* transfer is instant */
+        if (d->irq_enable) g->if_reg |= (IF_DMA0 << ch);
+        if (!d->repeat) d->enabled = false;
+        return;
+    }
+
     uint32_t src = d->src, dst = d->dst;
     for (uint32_t i = 0; i < count; i++) {
         uint32_t v = d->word ? gba_read32(g, src) : gba_read16(g, src);
