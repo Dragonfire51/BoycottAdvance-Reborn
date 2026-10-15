@@ -1,0 +1,2 @@
+/* Windows executable icon. Compiled with windres into the binary. */
+1 ICON "assets/icon.ico"
