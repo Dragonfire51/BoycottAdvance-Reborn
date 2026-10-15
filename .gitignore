@@ -1,5 +1,6 @@
 *.o
 boycottadvance-reborn
+boycottadvance-reborn-*.exe
 *.sav
 *.ppm
 BoycottAdvance.ini
