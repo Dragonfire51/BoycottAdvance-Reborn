@@ -40,6 +40,6 @@ src/%.o: src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJ) $(TARGET)
+	rm -f $(OBJ) boycottadvance-reborn-x86_64.exe boycottadvance-reborn-i686.exe
 
 .PHONY: all clean

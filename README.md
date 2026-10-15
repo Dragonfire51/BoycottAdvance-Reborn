@@ -14,7 +14,7 @@ The original 0.2.8 build has two well-known problems on modern systems:
 
 | Problem | Cause in 0.2.8 | Fix in Reborn |
 |---|---|---|
-| No sound on Windows 11 | Used the obsolete `WINMM` (`waveOut*`) API | SDL2 audio backend |
+| No sound on Windows 11 | Used the obsolete `WINMM` (`waveOut*`) API | SDL2 audio backend on Linux/macOS; native WinMM (`waveOut`) on Windows |
 | Pokemon (and other commercial titles) hang on a white screen | Incomplete ARM core (~80% ARM / 95% Thumb) and broken BIOS interrupt chain (`VBlankIntrWait`, `CpuSet`) | Complete ARM7TDMI core + correct SWI/IRQ emulation |
 
 ## Features
@@ -30,7 +30,8 @@ The original 0.2.8 build has two well-known problems on modern systems:
 - Memory map: BIOS, EWRAM, IWRAM, I/O, palette, VRAM, OAM, ROM (+ open bus).
 - Timers, DMA (all 4 channels), keypad with IRQ.
 - Save states, cheats, BIOS fast-boot, screenshots.
-- Selectable frame-buffer backends (see below) and SDL2 audio.
+- Selectable frame-buffer backends (see below) and audio (SDL2 on
+  Linux/macOS, native WinMM on Windows).
 
 ## Frame buffer backends
 
@@ -40,15 +41,18 @@ software and presented through one backend, chosen from
 
 | Backend | Platform | Notes |
 |---|---|---|
-| Auto (SDL) | all | SDL accelerated renderer, software fallback |
-| Software (SDL) | all | CPU renderer, no GPU needed |
-| OpenGL (SDL) | all | SDL OpenGL renderer |
+| Auto (SDL) | Linux/macOS | SDL accelerated renderer, software fallback |
+| Software (SDL) | Linux/macOS | CPU renderer, no GPU needed |
+| OpenGL (SDL) | Linux/macOS | SDL OpenGL renderer |
 | Vulkan | Linux/macOS builds | native swapchain; falls back to SDL Software if unavailable |
-| GDI (Windows) | Windows | native `StretchDIBits` blit, no extra runtime files |
-| Direct3D 9 (Windows) | Windows | native textured blit via `d3d9` |
+| GDI | Windows | native `StretchDIBits` blit, no extra runtime files |
+| Direct3D 9 | Windows | native textured blit via `d3d9` |
 
-The chosen backend is stored in `BoycottAdvance.ini` (`VideoBackend`), and
-falls back to SDL Software when the selected backend cannot initialise.
+On Windows the build links **no SDL at all**: video goes through GDI or
+Direct3D 9, audio through WinMM (`waveOut`) and input through
+`GetAsyncKeyState` plus the WinMM joystick API. The chosen backend is
+stored in `BoycottAdvance.ini` (`VideoBackend`); on Linux/macOS it falls
+back to SDL Software when the selected backend cannot initialise.
 
 
 ## GUI
@@ -86,15 +90,27 @@ arrows = D-Pad, `F1`=About, `F2`/`F3`=save/load state, `F5`=screenshot,
 
 ## Building
 
-Requirements: a C99 compiler, SDL2 development files, `make`.
+Requirements: a C99 compiler and `make`; SDL2 development files are needed
+for the Linux/macOS frontend only (the Windows build is SDL-free).
 
 ```sh
-make            # builds ./boycottadvance-reborn
+make            # Linux/macOS: SDL2 frontend -> ./boycottadvance-reborn
 make clean
 ```
 
 On Debian/Ubuntu: `sudo apt-get install build-essential libsdl2-dev`
-On Windows with MSYS2/MinGW: `pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-SDL2`
+
+### Windows (native, no SDL2)
+
+The Windows build uses a MinGW-w64 cross toolchain and links only native
+libraries (`gdi32`, `d3d9`, `winmm`, `comdlg32`, `user32`):
+
+```sh
+make -f Makefile.win32                 # x86_64 -> boycottadvance-reborn-x86_64.exe
+make -f Makefile.win32 ARCH=i686       # i686   -> boycottadvance-reborn-i686.exe
+```
+
+On Windows with MSYS2/MinGW: `pacman -S mingw-w64-x86_64-gcc`
 
 ### Running
 
@@ -122,6 +138,12 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.0** — the Windows x86/x64 build no longer uses SDL2 at all. It
+  now relies solely on the native APIs the original BoycottAdvance used:
+  a GDI/Direct3D 9 window, WinMM (`waveOut`) audio, `GetAsyncKeyState`
+  input and the full native Win32 menu bar (every original menu command
+  except Debug). The joystick mapping now covers the D-pad/POV hat, so
+  the four directions can be bound to the hat as well as to buttons.
 - **v1.3.2** — the Windows build now uses the original BoycottAdvance
   look: a real Win32 menu bar attached to the window plus native *Open
   ROM* / *Select BIOS* dialogs and message boxes (the software menu bar
