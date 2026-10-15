@@ -10,6 +10,7 @@
 #include "gba.h"
 #include "arm.h"
 #include "mem.h"
+#include <stdio.h>
 
 static inline bool thumb_mode(GBA *g) { return (g->cpu.cpsr & CPSR_T) != 0; }
 
@@ -51,7 +52,6 @@ static void flags_sub3(GBA *g, uint32_t a, uint32_t b, uint32_t r, uint32_t bin)
     uint32_t c = get_cpsr(g) & ~(CPSR_N | CPSR_Z | CPSR_C | CPSR_V);
     if (r & 0x80000000) c |= CPSR_N;
     if (r == 0) c |= CPSR_Z;
-    uint32_t a2 = a + (~b) + bin;
     if ((uint64_t)a + (~b) + bin >= 0x100000000ULL) c |= CPSR_C;
     if ((a ^ b) & (a ^ r) & 0x80000000) c |= CPSR_V;
     set_cpsr(g, c);
@@ -93,7 +93,8 @@ void arm_set_mode(GBA *g, uint32_t mode) {
 static void enter_exception(GBA *g, uint32_t mode, uint32_t lr_val, uint32_t pc_addr) {
     uint32_t old = get_cpsr(g);
     g->cpu.spsr[bank_of(mode)] = old;               /* SPSR_<mode> = CPSR */
-    change_mode(g, (old & ~0x1F) | mode | CPSR_I);  /* force IRQ-disable */
+    /* Vectors run in ARM state; force IRQ-disable and clear the Thumb bit. */
+    change_mode(g, (old & ~0x3Fu) | mode | CPSR_I);
     g->cpu.r[14] = lr_val;                          /* LR_<mode> */
     set_pc(g, pc_addr);
 }
@@ -181,7 +182,7 @@ static bool cond_holds(uint32_t cpsr, uint32_t cond) {
 /* ===================================================================== */
 /* ARM mode interpreter                                                  */
 /* ===================================================================== */
-extern void gba_swi(GBA *g);
+extern void gba_swi(GBA *g, uint32_t comment);
 
 static void arm_exec_at(GBA *g, uint32_t insn) {
     uint32_t cpsr = get_cpsr(g);
@@ -194,12 +195,16 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
     bool     l   = (insn >> 20) & 1;
     int      rn  = (insn >> 16) & 0xF, rd = (insn >> 12) & 0xF;
 
-    /* ---- branch / SWI ---- */
+    /* ---- branch / SWI (bits 27-25 = 101) ---- */
     if (op == 0x5) {
-        if (b) { /* SWI */ gba_swi(g); return; }
+        if ((insn & 0x0F000000u) == 0x0F000000u) {   /* SWI: bits 27-24 = 1111 */
+            uint32_t comment = (insn >> 16) & 0xFF;
+            gba_swi(g, comment);
+            return;
+        }
         uint32_t off = insn & 0x00FFFFFF;
         if (off & 0x00800000) off |= 0xFF000000;
-        if (l) write_reg(g, 14, r15(g) + 4);
+        if (insn & (1u << 24)) write_reg(g, 14, r15(g) + 4);   /* BL */
         set_pc(g, r15(g) + 8 + (int32_t)(off << 2));
         add_cycles(g, 1);
         return;
@@ -267,24 +272,27 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
             if (hw == 1) val = gba_read16(g, addr);
             else if (hw == 2) val = (uint32_t)(int8_t)(gba_read8(g, addr));
             else val = (uint32_t)(int16_t)(gba_read16(g, addr));
-            if (rd == 15) { set_pc(g, (val & ~3) + 4); }  /* +4 after */
-            else write_reg(g, rd, val);
-        } else {
-            if (hw == 1) gba_write16(g, addr, read_reg(g, rd));
-            else gba_write8(g, addr, read_reg(g, rd));
+            if (w || !p) write_reg(g, rn, p ? addr : base + off);
+            if (rd == 15) { set_pc(g, val & ~3); add_cycles(g, 2); return; }
+            write_reg(g, rd, val);
+            set_pc(g, r15(g) + 4);
+            add_cycles(g, 2);
+            return;
         }
-        if (w) write_reg(g, rn, addr);
-        if (!p) write_reg(g, rn, base + off);
+        if (hw == 1) gba_write16(g, addr, read_reg(g, rd));
+        else gba_write8(g, addr, read_reg(g, rd));
+        if (w || !p) write_reg(g, rn, p ? addr : base + off);
         set_pc(g, r15(g) + 4);
         add_cycles(g, 2);
         return;
     }
 
-    /* ---- single data transfer ---- */
-    if (op == 0x1) {
+    /* ---- single data transfer (bits 27-26 = 01) ---- */
+    if (op == 0x2 || op == 0x3) {
         uint32_t offset;
         if (i) {
-            Operand o = get_operand(g, insn);
+            uint32_t rm = insn & 0xF, typ = (insn >> 5) & 3, amt = (insn >> 7) & 0x1F;
+            Operand o; barrel_shift(g, read_reg(g, rm), typ, amt, &o);
             offset = o.value;
         } else offset = insn & 0xFFF;
         if (!u) offset = (uint32_t)(-(int32_t)offset);
@@ -292,9 +300,12 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
         uint32_t addr = p ? base + offset : base;
         if (l) {
             uint32_t val = b ? gba_read8(g, addr) : gba_read32(g, addr);
-            if (rd == 15) set_pc(g, (val & ~3) + 4);
-            else write_reg(g, rd, val);
+            if (w || !p) write_reg(g, rn, p ? addr : base + offset);
+            if (rd == 15) { set_pc(g, val & ~3); add_cycles(g, 2); return; }
+            write_reg(g, rd, val);
             add_cycles(g, 2);
+            set_pc(g, r15(g) + 4);
+            return;
         } else {
             if (b) gba_write8(g, addr, read_reg(g, rd));
             else gba_write32(g, addr, read_reg(g, rd));
@@ -305,21 +316,23 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
         return;
     }
 
-    /* ---- block data transfer ---- */
-    if (op == 0x2) {
+    /* ---- block data transfer (bits 27-25 = 100) ---- */
+    if (op == 0x4) {
         uint32_t reglist = insn & 0xFFFF;
         int nreg = __builtin_popcount(reglist);
         uint32_t base = read_reg(g, rn);
         uint32_t addr;
+        /* IA: base, IB: base+4, DA: base-n*4+4, DB: base-n*4 */
         if (u) addr = p ? base + 4 : base;
-        else   addr = p ? base - (nreg - 1) * 4 : base - nreg * 4;
+        else   addr = p ? base - (uint32_t)nreg * 4 : base - (uint32_t)nreg * 4 + 4;
         if (!l) {
             for (int i = 0; i < 16; i++) if (reglist & (1 << i)) { gba_write32(g, addr, (i == rn && w) ? base : read_reg(g, i)); addr += 4; }
             if (w && !(reglist & (1 << rn))) write_reg(g, rn, u ? base + nreg * 4 : base - nreg * 4);
         } else {
+            bool loaded_pc = false;
             for (int i = 0; i < 16; i++) if (reglist & (1 << i)) {
                 uint32_t val = gba_read32(g, addr);
-                if (i == 15) { set_pc(g, (val & ~3) + 4); }
+                if (i == 15) { set_pc(g, val & ~3); loaded_pc = true; }
                 else write_reg(g, i, val);
                 addr += 4;
             }
@@ -330,16 +343,15 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
                 change_mode(g, (get_cpsr(g) & ~0x1F) | new_mode | (spsr & (CPSR_N|CPSR_Z|CPSR_C|CPSR_V|CPSR_I|CPSR_F|CPSR_T)));
                 set_cpsr(g, spsr);
             }
+            if (loaded_pc) { add_cycles(g, nreg + 1); return; }
         }
         set_pc(g, r15(g) + 4);
         add_cycles(g, nreg + 1);
         return;
     }
 
-    /* ---- data processing ---- */
-    if (op == 0 || op == 3 || op == 4) {   /* op = 009 => data proc; 011 = PSR? handle later */
-        /* actually data processing is op == 0 (bits 27-26=00) */
-        if ((insn >> 26) & 3) { /* undefined / PSR */ set_pc(g, r15(g)+4); add_cycles(g,1); return; }
+    /* ---- data processing (bits 27-26 = 00) ---- */
+    if (((insn >> 26) & 3) == 0) {
         Operand o = get_operand(g, insn);
         uint32_t opc = (insn >> 21) & 0xF;
         bool     s   = (insn >> 20) & 1;
@@ -348,10 +360,28 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
         uint32_t res = 0;
         bool carry = o.carry;
 
-        /* PSR operations (MRS/MSR) */
-        if (opc == 0x2 && (insn & 0x02000000) && !(insn & 0x01000000)) {
-            /* MRS */
+        /* PSR transfers (MRS/MSR) */
+        if ((insn & 0x0FFFF000) == 0x010F0000) {          /* MRS Rd, CPSR */
             write_reg(g, rd, get_cpsr(g));
+            set_pc(g, r15(g) + 4); add_cycles(g, 1); return;
+        }
+        if ((insn & 0x0FFFF000) == 0x014F0000) {          /* MRS Rd, SPSR */
+            write_reg(g, rd, g->cpu.spsr[bank_of(get_cpsr(g))]);
+            set_pc(g, r15(g) + 4); add_cycles(g, 1); return;
+        }
+        if ((insn & 0x0FB0F000) == 0x0120F000) {          /* MSR (CPSR or SPSR) */
+            uint32_t val = o.value;
+            uint32_t mask = 0;
+            if (insn & 0x00010000) mask |= 0x000000FF;    /* control */
+            if (insn & 0x00020000) mask |= 0x0000FF00;    /* extension */
+            if (insn & 0x00040000) mask |= 0x00FF0000;    /* status */
+            if (insn & 0x00080000) mask |= 0xFF000000;    /* flags */
+            if (insn & 0x00400000) {                      /* to SPSR */
+                int b = bank_of(get_cpsr(g));
+                g->cpu.spsr[b] = (g->cpu.spsr[b] & ~mask) | (val & mask);
+            } else {                                      /* to CPSR */
+                set_cpsr(g, (get_cpsr(g) & ~mask) | (val & mask));
+            }
             set_pc(g, r15(g) + 4); add_cycles(g, 1); return;
         }
         switch (opc) {
@@ -395,7 +425,7 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
                 add_cycles(g, 1);
                 return;
             }
-            if (rd == 15) { set_pc(g, res & ~3); }
+            if (rd == 15) { set_pc(g, res & ~3); add_cycles(g, 1); return; }
             else write_reg(g, rd, res);
         }
         set_pc(g, r15(g) + 4);
@@ -414,220 +444,262 @@ void arm_exec(GBA *g) {
 /* ===================================================================== */
 /* Thumb mode interpreter                                                */
 /* ===================================================================== */
+/* ===================================================================== */
+/* Thumb mode interpreter (ARMv4T)                                        */
+/* Decoded by the top nibble (bits 15-12) into the 19 Thumb formats.      */
+/* ===================================================================== */
 static void thumb_exec_at(GBA *g, uint16_t insn) {
     uint32_t cpsr = get_cpsr(g);
-    int rd = insn & 7, rs = (insn >> 3) & 7, rn = (insn >> 6) & 7;
-    uint32_t imm = (insn >> 6) & 0x1F;
+    uint32_t op = insn >> 12;
+    uint32_t rd = insn & 7, rs = (insn >> 3) & 7, rn = (insn >> 6) & 7;
+    uint32_t next = r15(g) + 2;
 
-    /* SWI */
-    if ((insn & 0xFF00) == 0xDF00) { gba_swi(g); return; }
-
-    if ((insn >> 13) <= 3) {   /* LSL, LSR, ASR immediate */
+    /* format 1: move shifted register (0000/0001) */
+    if (op == 0x0 || op == 0x1) {
+        uint32_t sh = (insn >> 6) & 0x1F;
+        uint32_t kind = (insn >> 11) & 3;
         uint32_t v = read_reg(g, rs);
-        uint32_t r = v;
-        uint32_t carry = 0;
-        switch ((insn >> 13) & 3) {
-        case 0:
-            if (imm) { r = v << imm; carry = (v >> (32 - imm)) & 1; }
-            else { r = v; carry = (get_cpsr(g) & CPSR_C) ? 1 : 0; }
-            if (imm == 0) carry = (get_cpsr(g) & CPSR_C) ? 1 : 0;
-            break;
-        case 1:
-            if (imm) { r = v >> imm; carry = (v >> (imm - 1)) & 1; }
+        uint32_t r = v, carry = (cpsr & CPSR_C) ? 1 : 0;
+        if (kind == 0) {                 /* LSL */
+            if (sh) { r = v << sh; carry = (v >> (32 - sh)) & 1; }
+        } else if (kind == 1) {          /* LSR */
+            if (sh) { r = v >> sh; carry = (v >> (sh - 1)) & 1; }
             else { r = 0; carry = (v >> 31) & 1; }
-            break;
-        case 2:
-            if (imm) { r = (uint32_t)((int32_t)v >> imm); carry = (v >> (imm - 1)) & 1; }
-            else { r = (v & 0x80000000) ? 0xFFFFFFFF : 0; carry = (v >> 31) & 1; }
-            break;
+        } else {                         /* ASR */
+            if (sh) { r = (uint32_t)((int32_t)v >> sh); carry = (v >> (sh - 1)) & 1; }
+            else { r = (v & 0x80000000u) ? 0xFFFFFFFFu : 0; carry = v >> 31; }
         }
         flags_logic(g, r, carry);
         write_reg(g, rd, r);
-        set_pc(g, r15(g) + 2); add_cycles(g, 1); return;
+        set_pc(g, next); add_cycles(g, 1); return;
     }
 
-    if ((insn >> 12) == 0x4 || (insn >> 12) == 0x5) {  /* ADD/SUB reg or imm3 */
-        bool sub = (insn >> 9) & 1;
-        if ((insn & 0x1C00) == 0x1C00) {  /* add/sub with 3-bit imm */
-            imm = (insn >> 6) & 7;
-            uint32_t a = read_reg(g, rs);
-            uint32_t r = sub ? a - imm : a + imm;
-            if (sub) flags_sub3(g, a, imm, r, 1); else flags_add3(g, a, imm, r, 0);
-            write_reg(g, rd, r);
-        } else {
-            uint32_t a = read_reg(g, rn), b = read_reg(g, rs);
-            uint32_t r;
-            if ((insn & 0x2000) == 0) { r = a + b; flags_add3(g, a, b, r, 0); }
-            else { r = a - b; flags_sub3(g, a, b, r, 1); }
-            write_reg(g, rd, r);
-        }
-        set_pc(g, r15(g) + 2); add_cycles(g, 1); return;
-    }
-
-    if ((insn >> 12) == 0x6 || (insn >> 12) == 0x7) {  /* MOV/CMP/ADD/SUB 8-bit imm */
+    /* format 3: MOV/CMP/ADD/SUB immediate (0010) */
+    if (op == 0x2) {
         uint32_t imm8 = insn & 0xFF;
-        rd = (insn >> 8) & 7;
-        if ((insn >> 12) == 0x6) {  /* MOV */
-            flags_logic(g, imm8, (get_cpsr(g) & CPSR_C) ? 1 : 0);
-            write_reg(g, rd, imm8);
-        } else {
-            uint32_t a = read_reg(g, rd);
-            if (insn & (1 << 11)) { uint32_t r = a - imm8; flags_sub3(g, a, imm8, r, 1); write_reg(g, rd, r); }
-            else { uint32_t r = a + imm8; flags_add3(g, a, imm8, r, 0); write_reg(g, rd, r); }
-        }
-        set_pc(g, r15(g) + 2); add_cycles(g, 1); return;
+        uint32_t rd8 = (insn >> 8) & 7;
+        uint32_t subop = (insn >> 11) & 3;
+        uint32_t a = read_reg(g, rd8);
+        if (subop == 0) { flags_logic(g, imm8, (cpsr & CPSR_C) ? 1 : 0); write_reg(g, rd8, imm8); }
+        else if (subop == 1) { flags_sub3(g, a, imm8, a - imm8, 1); }
+        else if (subop == 2) { uint32_t r = a + imm8; flags_add3(g, a, imm8, r, 0); write_reg(g, rd8, r); }
+        else { uint32_t r = a - imm8; flags_sub3(g, a, imm8, r, 1); write_reg(g, rd8, r); }
+        set_pc(g, next); add_cycles(g, 1); return;
     }
 
-    if ((insn >> 12) == 0x8 || (insn >> 12) == 0x9) {  /* ALU ops */
-        uint32_t op = (insn >> 6) & 0xF;
-        uint32_t a = read_reg(g, rd), b = read_reg(g, rs);
-        uint32_t r = 0;
-        bool flags = true;
-        switch (op) {
-        case 0x0: r = a & b;   break;
-        case 0x1: r = a ^ b;   break;
-        case 0x2: { int sh = b & 0xFF; r = (sh < 32) ? (a << sh) : 0; flags_logic(g, r, sh ? ((a >> (32 - sh)) & 1) : ((get_cpsr(g) & CPSR_C) ? 1 : 0)); break; }
-        case 0x3: { int sh = b & 0xFF; r = (sh < 32) ? (a >> sh) : 0; flags_logic(g, r, sh ? ((a >> (sh - 1)) & 1) : ((a >> 31) & 1)); break; }
-        case 0x4: { int sh = b & 0xFF; r = (sh < 32) ? (uint32_t)((int32_t)a >> sh) : (((int32_t)a < 0) ? 0xFFFFFFFF : 0); flags_logic(g, r, sh ? ((a >> (sh - 1)) & 1) : ((a >> 31) & 1)); break; }
-        case 0x5: { int c = (get_cpsr(g) & CPSR_C) ? 1 : 0; r = a + b + c; flags_add3(g, a, b, r, c); flags = false; write_reg(g, rd, r); break; }
-        case 0x6: { int c = (get_cpsr(g) & CPSR_C) ? 1 : 0; r = a - b - (1 - c); flags_sub3(g, a, b, r, c); flags = false; write_reg(g, rd, r); break; }
-        case 0x7: { int sh = b & 0xFF; if (!sh) { bool cc = a & 1; r = (a >> 1) | ((get_cpsr(g) & CPSR_C) ? 0x80000000u : 0); flags_logic(g, r, cc); } else { uint32_t cc = (a >> (sh - 1)) & 1; r = (a >> sh) | (a << (32 - sh)); flags_logic(g, r, cc); } flags = false; write_reg(g, rd, r); break; }
-        case 0x8: r = a & b;   flags = false; break;   /* TST */
-        case 0x9: r = 0 - b;   flags_sub3(g, 0, b, r, 1); flags = false; break;  /* NEG */
-        case 0xA: r = a - b;   flags_sub3(g, a, b, r, 1); flags = false; break;  /* CMP */
-        case 0xB: r = a + b;   flags_add3(g, a, b, r, 0); flags = false; break;  /* CMN */
-        case 0xC: r = a | b;   break;
-        case 0xD: write_reg(g, rd, a * b); set_pc(g, r15(g)+2); add_cycles(g, 1); return;  /* MUL */
-        case 0xE: r = a & ~b;  break;
-        case 0xF: r = ~b;      break;
-        }
-        if (flags) flags_logic(g, r, (op == 0x0 || op == 0x1 || op == 0xC || op == 0xE || op == 0xF) ? ((get_cpsr(g) & CPSR_C) ? 1 : 0) : ((get_cpsr(g) & CPSR_C) ? 1 : 0));
-        if (op != 0x8 && op != 0xA && op != 0xB) write_reg(g, rd, r);
-        set_pc(g, r15(g) + 2); add_cycles(g, 1); return;
+    /* format 2: add/subtract (0011) */
+    if (op == 0x3) {
+        bool immf = insn & 0x0400;
+        bool sub  = insn & 0x0200;
+        uint32_t b = immf ? ((insn >> 6) & 7) : read_reg(g, rn);
+        uint32_t a = read_reg(g, rs);
+        uint32_t r = sub ? a - b : a + b;
+        if (sub) flags_sub3(g, a, b, r, 1); else flags_add3(g, a, b, r, 0);
+        write_reg(g, rd, r);
+        set_pc(g, next); add_cycles(g, 1); return;
     }
 
-    /* high register ops / BX / BLX */
-    if ((insn >> 12) == 0xA) {
-        rd = (insn >> 8) & 7;
-        if (insn & 0x0080) rd |= 8;
-        rs = insn & 0xF;
-        switch ((insn >> 8) & 3) {
-        case 0x0: write_reg(g, rd, read_reg(g, rd) + read_reg(g, rs)); break; /* ADD */
-        case 0x1: flags_sub3(g, read_reg(g, rd), read_reg(g, rs), read_reg(g, rd) - read_reg(g, rs), 1); break; /* CMP */
-        case 0x2: write_reg(g, rd, read_reg(g, rs)); break;  /* MOV */
-        case 0x3: {  /* BX/BLX */
-            if (insn & 0x0080) { /* BLX */ write_reg(g, 14, r15(g) + 4); set_cpsr(g, get_cpsr(g) & ~CPSR_T); }
-            uint32_t rm = read_reg(g, rs);
-            if (rm & 1) { set_cpsr(g, get_cpsr(g) | CPSR_T); set_pc(g, rm & ~1); }
-            else { set_cpsr(g, get_cpsr(g) & ~CPSR_T); set_pc(g, rm & ~3); }
-            add_cycles(g, 1); return;
+    /* op == 0100: format 6 (PC-rel load), 5 (hi reg/BX) or 4 (ALU) */
+    if (op == 0x4) {
+        if (insn & 0x0800) {   /* format 6: LDR Rd,[PC,#imm] */
+            uint32_t rd8 = (insn >> 8) & 7;
+            uint32_t addr = ((r15(g) + 4) & ~3u) + ((insn & 0xFF) << 2);
+            write_reg(g, rd8, gba_read32(g, addr));
+            set_pc(g, next); add_cycles(g, 1); return;
         }
-        }
-        set_pc(g, r15(g) + 2); add_cycles(g, 1); return;
-    }
-
-    /* LDR/STR */
-    if ((insn >> 11) == 0x14 || (insn >> 11) == 0x15) {  /* reg offset */
-        rd = insn & 7; rn = (insn >> 3) & 7; rs = (insn >> 6) & 7;
-        uint32_t addr = read_reg(g, rn) + read_reg(g, rs);
-        bool b = insn & 0x10, l = insn & 0x08;
-        if (l) { uint32_t v = b ? gba_read8(g, addr) : gba_read16(g, addr); write_reg(g, rd, v); }
-        else { if (b) gba_write8(g, addr, read_reg(g, rd)); else gba_write16(g, addr, read_reg(g, rd)); }
-        set_pc(g, r15(g) + 2); add_cycles(g, 1); return;
-    }
-    if ((insn >> 11) == 0x12 || (insn >> 11) == 0x13) {  /* imm offset */
-        rd = insn & 7; rn = (insn >> 3) & 7; imm = (insn >> 6) & 0x1F;
-        bool b = insn & 0x10, l = insn & 0x08;
-        uint32_t addr = read_reg(g, rn) + (b ? imm : imm << 2);
-        if (l) { uint32_t v = b ? gba_read8(g, addr) : gba_read16(g, addr); write_reg(g, rd, v); }
-        else { if (b) gba_write8(g, addr, read_reg(g, rd)); else gba_write16(g, addr, read_reg(g, rd)); }
-        set_pc(g, r15(g) + 2); add_cycles(g, 1); return;
-    }
-    if ((insn >> 12) == 0xB) {  /* halfword */
-        rd = insn & 7; rn = (insn >> 3) & 7; imm = (insn >> 6) & 0x1F;
-        uint32_t addr = read_reg(g, rn) + (imm << 1);
-        if (insn & 0x800) { uint32_t v = gba_read16(g, addr); write_reg(g, rd, v); }
-        else gba_write16(g, addr, read_reg(g, rd));
-        set_pc(g, r15(g) + 2); add_cycles(g, 1); return;
-    }
-    if ((insn >> 12) == 0xC) {  /* SP-relative */
-        rd = (insn >> 8) & 7; imm = (insn & 0xFF) << 2;
-        uint32_t addr = read_reg(g, 13) + imm;
-        if (insn & 0x800) { uint32_t v = gba_read16(g, addr); write_reg(g, rd, v); }
-        else gba_write16(g, addr, read_reg(g, rd));
-        set_pc(g, r15(g) + 2); add_cycles(g, 1); return;
-    }
-    if ((insn >> 12) == 0xD) {  /* load address */
-        rd = (insn >> 8) & 7; imm = (insn & 0xFF) << 2;
-        if (insn & 0x800) write_reg(g, rd, read_reg(g, 13) + imm);
-        else write_reg(g, rd, ((r15(g) + 4) & ~3) + imm);
-        set_pc(g, r15(g) + 2); add_cycles(g, 1); return;
-    }
-    if ((insn >> 12) == 0xE) {  /* add offset to SP */
-        imm = (insn & 0x7F) << 2;
-        if (insn & 0x80) write_reg(g, 13, read_reg(g, 13) - imm);
-        else write_reg(g, 13, read_reg(g, 13) + imm);
-        set_pc(g, r15(g) + 2); add_cycles(g, 1); return;
-    }
-    if ((insn >> 12) == 0xF) {
-        uint16_t top = insn >> 8;
-        if ((top & 0x80) == 0x80) {  /* conditional branch */
-            int8_t off = (int8_t)(insn & 0xFF);
-            int cc = (insn >> 8) & 0xF;
-            set_pc(g, cond_holds(cpsr, cc) ? (r15(g) + 4 + off * 2) : (r15(g) + 2));
-            add_cycles(g, 1); return;
-        }
-        if (insn & 0x100) {  /* POP/PUSH/load/store */
-            if (insn & 0x0800) {  /* LDM/STM or POP */
-                if (insn & 0x1000) {  /* LDMIA / POP */
-                    if ((insn & 0xF000) == 0xB000) {  /* POP */
-                        uint32_t sp = read_reg(g, 13);
-                        for (int i = 0; i < 8; i++) if (insn & (1 << i)) { write_reg(g, i, gba_read32(g, sp)); sp += 4; }
-                        if (insn & 0x100) { uint32_t v = gba_read32(g, sp); write_reg(g, 15, v & ~1); sp += 4; }
-                        write_reg(g, 13, sp);
-                    } else {  /* LDMIA */
-                        rn = (insn >> 8) & 7;
-                        uint32_t base = read_reg(g, rn), addr = base;
-                        for (int i = 0; i < 8; i++) if (insn & (1 << i)) { write_reg(g, i, gba_read32(g, addr)); addr += 4; }
-                        if (insn & 0xFF) write_reg(g, rn, base + __builtin_popcount(insn & 0xFF) * 4);
-                    }
-                } else {  /* STMIA / PUSH */
-                    if ((insn & 0xF000) == 0xB000) {  /* PUSH */
-                        int n = __builtin_popcount(insn & 0xFF) + ((insn >> 9) & 1);
-                        uint32_t sp = read_reg(g, 13) - n * 4;
-                        write_reg(g, 13, sp);
-                        for (int i = 0; i < 8; i++) if (insn & (1 << i)) { gba_write32(g, sp, read_reg(g, i)); sp += 4; }
-                        if (insn & 0x200) gba_write32(g, sp, read_reg(g, 14));
-                    } else {  /* STMIA */
-                        rn = (insn >> 8) & 7;
-                        uint32_t base = read_reg(g, rn), addr = base;
-                        for (int i = 0; i < 8; i++) if (insn & (1 << i)) { gba_write32(g, addr, read_reg(g, i)); addr += 4; }
-                        if (insn & 0xFF) write_reg(g, rn, base + __builtin_popcount(insn & 0xFF) * 4);
-                    }
+        if (insn & 0x0400) {   /* format 5: hi register ops / BX / BLX */
+            uint32_t h1 = (insn >> 7) & 1, h2 = (insn >> 6) & 1;
+            uint32_t rd2 = (insn & 7) | (h1 << 3);
+            uint32_t rs2 = ((insn >> 3) & 7) | (h2 << 3);
+            switch ((insn >> 8) & 3) {
+            case 0x0: write_reg(g, rd2, read_reg(g, rd2) + read_reg(g, rs2)); break;
+            case 0x1: flags_sub3(g, read_reg(g, rd2), read_reg(g, rs2), read_reg(g, rd2) - read_reg(g, rs2), 1); break;
+            case 0x2: write_reg(g, rd2, read_reg(g, rs2)); break;
+            case 0x3: {
+                uint32_t target = read_reg(g, rs2);
+                if (insn & 0x0080) {   /* BLX */
+                    write_reg(g, 14, (r15(g) + 2) | 1);
+                    set_cpsr(g, cpsr & ~CPSR_T);
+                    set_pc(g, target & ~3u);
+                } else {
+                    if (target & 1) set_cpsr(g, cpsr | CPSR_T);
+                    else set_cpsr(g, cpsr & ~CPSR_T);
+                    set_pc(g, target & ~1u);
                 }
-                set_pc(g, r15(g) + 2); add_cycles(g, 1); return;
+                add_cycles(g, 2); return;
             }
-            set_pc(g, r15(g) + 2); add_cycles(g, 1); return;
+            }
+            set_pc(g, next); add_cycles(g, 1); return;
         }
-        /* unconditional branch or BL half */
-        if (insn & 0x0200) {  /* BL upper */
-            int32_t off = (int32_t)((insn & 0x7FF) << 21) >> 9;
-            write_reg(g, 14, r15(g) + 4 + off);
-            set_pc(g, r15(g) + 2); add_cycles(g, 1); return;
+        /* format 4: ALU operations */
+        {
+            uint32_t aop = (insn >> 6) & 0xF;
+            uint32_t a = read_reg(g, rd), b = read_reg(g, rs);
+            uint32_t r = 0; bool wr = true;
+            switch (aop) {
+            case 0x0: r = a & b;  flags_logic(g, r, (cpsr & CPSR_C) ? 1 : 0); break;
+            case 0x1: r = a ^ b;  flags_logic(g, r, (cpsr & CPSR_C) ? 1 : 0); break;
+            case 0x2: { uint32_t sh = b & 0xFF;
+                        if (sh == 0) { r = a; flags_logic(g, r, (cpsr & CPSR_C) ? 1 : 0); }
+                        else if (sh < 32) { r = a << sh; flags_logic(g, r, (a >> (32 - sh)) & 1); }
+                        else if (sh == 32) { r = 0; flags_logic(g, r, a & 1); }
+                        else { r = 0; flags_logic(g, r, 0); } break; }
+            case 0x3: { uint32_t sh = b & 0xFF;
+                        if (sh == 0) { r = a; flags_logic(g, r, (cpsr & CPSR_C) ? 1 : 0); }
+                        else if (sh < 32) { r = a >> sh; flags_logic(g, r, (a >> (sh - 1)) & 1); }
+                        else if (sh == 32) { r = 0; flags_logic(g, r, a >> 31); }
+                        else { r = 0; flags_logic(g, r, 0); } break; }
+            case 0x4: { uint32_t sh = b & 0xFF;
+                        if (sh == 0) { r = a; flags_logic(g, r, (cpsr & CPSR_C) ? 1 : 0); }
+                        else if (sh < 32) { r = (uint32_t)((int32_t)a >> sh); flags_logic(g, r, (a >> (sh - 1)) & 1); }
+                        else { r = (a & 0x80000000u) ? 0xFFFFFFFFu : 0; flags_logic(g, r, a >> 31); } break; }
+            case 0x5: { uint32_t c = (cpsr & CPSR_C) ? 1 : 0; r = a + b + c; flags_add3(g, a, b, r, c); break; }
+            case 0x6: { uint32_t c = (cpsr & CPSR_C) ? 1 : 0; r = a - b - (1 - c); flags_sub3(g, a, b, r, c); break; }
+            case 0x7: { uint32_t sh = b & 0xFF;
+                        if (sh == 0) { uint32_t nc = a & 1; r = (a >> 1) | ((cpsr & CPSR_C) ? 0x80000000u : 0); flags_logic(g, r, nc); }
+                        else { uint32_t shm = sh & 31; if (shm == 0) { r = a; flags_logic(g, r, a >> 31); }
+                               else { r = (a >> shm) | (a << (32 - shm)); flags_logic(g, r, (a >> (shm - 1)) & 1); } } break; }
+            case 0x8: flags_logic(g, a & b, (cpsr & CPSR_C) ? 1 : 0); wr = false; break;
+            case 0x9: r = 0 - b; flags_sub3(g, 0, b, r, 1); break;
+            case 0xA: flags_sub3(g, a, b, a - b, 1); wr = false; break;
+            case 0xB: flags_add3(g, a, b, a + b, 0); wr = false; break;
+            case 0xC: r = a | b;  flags_logic(g, r, (cpsr & CPSR_C) ? 1 : 0); break;
+            case 0xD: r = a * b;  flags_logic(g, r, (cpsr & CPSR_C) ? 1 : 0); break;
+            case 0xE: r = a & ~b; flags_logic(g, r, (cpsr & CPSR_C) ? 1 : 0); break;
+            case 0xF: r = ~b;     flags_logic(g, r, (cpsr & CPSR_C) ? 1 : 0); break;
+            }
+            if (wr) write_reg(g, rd, r);
+            set_pc(g, next); add_cycles(g, 1); return;
         }
-        if (insn & 0x0100) { /* BL lower */
-            int32_t off = (insn & 0x7FF) << 1;
-            uint32_t lr = read_reg(g, 14) + off;  /* uses pre-computed upper in r14 */
-            write_reg(g, 14, r15(g) + 2);
-            set_pc(g, lr); add_cycles(g, 1); return;
+    }
+
+    /* format 7/8: load/store with register offset (0101) */
+    if (op == 0x5) {
+        bool l = insn & 0x0800, b = insn & 0x0400;
+        bool sign = insn & 0x0200;
+        uint32_t addr = read_reg(g, rn) + read_reg(g, rs);
+        if (l) {
+            if (sign) write_reg(g, rd, (uint32_t)(int16_t)gba_read16(g, addr));
+            else write_reg(g, rd, b ? gba_read8(g, addr) : gba_read32(g, addr));
+        } else {
+            if (b) gba_write8(g, addr, read_reg(g, rd)); else gba_write32(g, addr, read_reg(g, rd));
         }
-        /* unconditional B */
+        set_pc(g, next); add_cycles(g, 1); return;
+    }
+
+    /* format 9: load/store with immediate offset (0110/0111) */
+    if (op == 0x6 || op == 0x7) {
+        bool b = op == 0x7;
+        bool l = insn & 0x0800;
+        uint32_t off = (insn >> 6) & 0x1F;
+        uint32_t addr = read_reg(g, rn) + (b ? off : (off << 2));
+        if (l) write_reg(g, rd, b ? gba_read8(g, addr) : gba_read32(g, addr));
+        else { if (b) gba_write8(g, addr, read_reg(g, rd)); else gba_write32(g, addr, read_reg(g, rd)); }
+        set_pc(g, next); add_cycles(g, 1); return;
+    }
+
+    /* format 10: load/store halfword (1000) */
+    if (op == 0x8) {
+        bool l = insn & 0x0800;
+        uint32_t addr = read_reg(g, rn) + (((insn >> 6) & 0x1F) << 1);
+        if (l) write_reg(g, rd, gba_read16(g, addr));
+        else gba_write16(g, addr, read_reg(g, rd));
+        set_pc(g, next); add_cycles(g, 1); return;
+    }
+
+    /* format 11: SP-relative load/store (1001) */
+    if (op == 0x9) {
+        uint32_t rd8 = (insn >> 8) & 7;
+        uint32_t addr = read_reg(g, 13) + ((insn & 0xFF) << 2);
+        if (insn & 0x0800) write_reg(g, rd8, gba_read32(g, addr));
+        else gba_write32(g, addr, read_reg(g, rd8));
+        set_pc(g, next); add_cycles(g, 1); return;
+    }
+
+    /* format 12: load address (1010) */
+    if (op == 0xA) {
+        uint32_t rd8 = (insn >> 8) & 7;
+        uint32_t off = (insn & 0xFF) << 2;
+        if (insn & 0x0800) write_reg(g, rd8, read_reg(g, 13) + off);
+        else write_reg(g, rd8, ((r15(g) + 4) & ~3u) + off);
+        set_pc(g, next); add_cycles(g, 1); return;
+    }
+
+    /* op == 1011: format 13 (SP adjust) or format 14 (push/pop) */
+    if (op == 0xB) {
+        if (insn & 0x0400) {   /* format 14 */
+            if (insn & 0x0800) {   /* POP {..,pc} */
+                uint32_t sp = read_reg(g, 13);
+                for (int i = 0; i < 8; i++) if (insn & (1 << i)) { write_reg(g, i, gba_read32(g, sp)); sp += 4; }
+                if (insn & 0x0100) { uint32_t v = gba_read32(g, sp); sp += 4; write_reg(g, 13, sp); set_pc(g, v & ~1u); add_cycles(g, 3); return; }
+                write_reg(g, 13, sp);
+            } else {               /* PUSH {..,lr} */
+                int n = __builtin_popcount(insn & 0xFF) + ((insn >> 8) & 1);
+                uint32_t sp = read_reg(g, 13) - (uint32_t)n * 4;
+                write_reg(g, 13, sp);
+                for (int i = 0; i < 8; i++) if (insn & (1 << i)) { gba_write32(g, sp, read_reg(g, i)); sp += 4; }
+                if (insn & 0x0100) gba_write32(g, sp, read_reg(g, 14));
+            }
+        } else {               /* format 13: add/sub SP */
+            uint32_t off = (insn & 0x7F) << 2;
+            if (insn & 0x0080) write_reg(g, 13, read_reg(g, 13) - off);
+            else write_reg(g, 13, read_reg(g, 13) + off);
+        }
+        set_pc(g, next); add_cycles(g, 1); return;
+    }
+
+    /* format 15: multiple load/store (1100) */
+    if (op == 0xC) {
+        uint32_t rn8 = (insn >> 8) & 7;
+        uint32_t base = read_reg(g, rn8);
+        if (insn & 0x0800) {
+            uint32_t addr = base;
+            for (int i = 0; i < 8; i++) if (insn & (1 << i)) { write_reg(g, i, gba_read32(g, addr)); addr += 4; }
+            if (insn & 0xFF) write_reg(g, rn8, base + (uint32_t)__builtin_popcount(insn & 0xFF) * 4);
+        } else {
+            uint32_t addr = base;
+            for (int i = 0; i < 8; i++) if (insn & (1 << i)) { gba_write32(g, addr, read_reg(g, i)); addr += 4; }
+            if (insn & 0xFF) write_reg(g, rn8, base + (uint32_t)__builtin_popcount(insn & 0xFF) * 4);
+        }
+        set_pc(g, next); add_cycles(g, 1); return;
+    }
+
+    /* op == 1101: format 16 (cond branch) or format 17 (SWI) */
+    if (op == 0xD) {
+        if ((insn & 0x0F00) == 0x0F00) {          /* format 17: SWI */
+            gba_swi(g, insn & 0xFF);
+            return;
+        }
+        int cc = (insn >> 8) & 0xF;
+        if (cc == 0xF) { set_pc(g, next); add_cycles(g, 1); return; }   /* undefined */
+        int32_t off = (int8_t)(insn & 0xFF);
+        set_pc(g, cond_holds(cpsr, (uint32_t)cc) ? (r15(g) + 4 + off * 2) : next);
+        add_cycles(g, 1); return;
+    }
+
+    /* format 18: unconditional branch (1110) */
+    if (op == 0xE) {
         int32_t off = (int32_t)((insn & 0x7FF) << 21) >> 20;
         set_pc(g, r15(g) + 4 + off);
         add_cycles(g, 1); return;
     }
 
-    set_pc(g, r15(g) + 2);
+    /* format 19: long branch with link (1111) */
+    if (op == 0xF) {
+        if (insn & 0x0800) {   /* second half: BL */
+            int32_t off = (insn & 0x7FF) << 1;
+            uint32_t target = read_reg(g, 14) + off;
+            write_reg(g, 14, (r15(g) + 2) | 1);
+            set_pc(g, target & ~1u);
+        } else {               /* first half: set LR */
+            int32_t off = (int32_t)((insn & 0x7FF) << 21) >> 9;
+            write_reg(g, 14, r15(g) + 4 + off);
+            set_pc(g, next);
+        }
+        add_cycles(g, 2); return;
+    }
+
+    set_pc(g, next);
     add_cycles(g, 1);
 }
 
@@ -641,11 +713,16 @@ void thumb_exec(GBA *g) {
 void arm_execute(GBA *g, uint32_t max_cycles) {
     uint32_t start = g->cycle;
     while (g->cycle - start < max_cycles) {
-        if (g->cst.halt) break;
-        /* check IRQ */
-        if (g->ime && (g->if_reg & g->ie & 0x3FFF)) {
-            enter_exception(g, 0x12, r15(g) + 2, 0x18);
+        /* IRQ exception has priority over halt */
+        if (g->ime && (g->if_reg & g->ie & 0x3FFF) && !(g->cpu.cpsr & CPSR_I)) {
+            g->if_reg &= ~(g->if_reg & g->ie & 0x3FFF);   /* acknowledge */
+            enter_exception(g, 0x12, g->cpu.r[15] + (thumb_mode(g) ? 2 : 4), 0x18);
             continue;
+        }
+        if (g->cst.halt) {
+            /* CPU asleep: just burn cycles until the scanline/frame budget ends */
+            g->cycle = start + max_cycles;
+            break;
         }
         if (thumb_mode(g)) thumb_exec(g);
         else arm_exec(g);

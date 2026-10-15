@@ -18,6 +18,6 @@ void io_trigger_keypad(GBA *g, uint32_t cycles);
 void dma_run(GBA *g, int ch);
 
 /* BIOS helpers */
-void gba_swi(GBA *g);
+void gba_swi(GBA *g, uint32_t comment);
 
 #endif

@@ -5,6 +5,8 @@
 #include "gba.h"
 #include "mem.h"
 
+static inline bool thumb_mode_p(GBA *g) { return (g->cpu.cpsr & CPSR_T) != 0; }
+
 static void swi_soft_reset(GBA *g) { (void)g; }
 static void swi_register_ram_reset(GBA *g) { (void)g; }
 static void swi_halt(GBA *g) {
@@ -15,14 +17,15 @@ static void swi_stop(GBA *g) {
     g->cst.stopped = true;
 }
 static void swi_intr_wait(GBA *g) {
-    /* WFI: wait for VBlank or other interrupt */
+    /* SWI 0x04: wait for any of the IRQs in r0; r1=1 discards old flags.
+       We let the frame loop keep running and only halt the CPU here. */
     g->cst.halt = true;
 }
 static void swi_vblank_intr_wait(GBA *g) {
-    /* VBlankIntrWait:  r0=flags r1=?. Wait until vblank flag and IF pending */
-    if (!(g->ppu.dispstat & 0x0002)) {
-        g->cst.halt = true;
-    }
+    /* SWI 0x05: VBlankIntrWait. Equivalent to IntrWait(1,1).
+       Halt until the VBlank IRQ condition is met; the frame loop clears
+       halt as soon as IF_VBLANK is raised. */
+    g->cst.halt = true;
 }
 static void swi_div32(GBA *g) {
     int32_t a = (int32_t)g->cpu.r[0];
@@ -88,16 +91,14 @@ static void swi_cpu_fast_set(GBA *g) {
 }
 static void swi_affine_set(GBA *g) { (void)g; }
 
-void gba_swi(GBA *g) {
-    uint32_t n = (g->cpu.r[6] >> 16) & 0xFF;   /* SWI number in r6 for Thumb; ARM: from opcode */
-    /* On ARM, SWI number in opcode; in this interpreter arm_exec already consumed opcode.
-       We use r7 convention: the caller stores the number in r7 for bios via 'swi 0x123456'? */
-    /* For simplicity: number = (r7 & 0xFF) if set by bios?  The GBA bios uses r12? no */
-    /* Real: number comes from DEBUG {opcode}. We approximate: g->cpu.r[6]>>16 is used by homebrew.
-       Use lowest host convention: value in r[7] for internal; fallback 0. */
-    uint32_t swi_num = g->cpu.r[7] & 0xFF;
-    /* Some titles call via r7 with the number; vba-m uses that. If zero, try r6->16 */
-    if (swi_num == 0) swi_num = (g->cpu.r[6] >> 16) & 0xFF;
+void gba_swi(GBA *g, uint32_t comment) {
+    uint32_t swi_num = comment & 0xFF;
+
+    /* Advance the program counter past the SWI instruction before running
+       the handler. Handlers such as Halt/IntrWait set cst.halt, which the
+       frame loop then uses to sleep the CPU until the next interrupt. */
+    if (thumb_mode_p(g)) g->cpu.r[15] += 2;
+    else                 g->cpu.r[15] += 4;
 
     switch (swi_num) {
     case 0x00: swi_soft_reset(g); break;

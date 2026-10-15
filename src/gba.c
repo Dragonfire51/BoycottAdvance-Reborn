@@ -59,7 +59,6 @@ void gba_init(GBA *g) {
 }
 
 void gba_reset(GBA *g) {
-    uint8_t rombuf[4]; (void)rombuf;
     memset(g->ewram, 0, sizeof(g->ewram));
     memset(g->iwram, 0, sizeof(g->iwram));
     memset(g->vram, 0, sizeof(g->vram));
@@ -76,19 +75,24 @@ void gba_reset(GBA *g) {
     g->cst.stopped = false;
     g->ime = false;
     g->if_reg = 0;
-    g->ppu.dispcnt = 0;
+    g->ie = 0;
     g->ppu.vcount = 0;
 
-    if (g->bios_fastboot && g->bios_enabled) {
-        /* start in ARM mode at 0x00000000, sp set, jump to rom */
-        g->cpu.cpsr = 0x0000001F;
-        g->cpu.r[13] = 0x03007F00;
-        g->cpu.r[15] = 0x08000000;
-        g->cpu.r[0] = 0x00000000;
-    } else {
-        g->cpu.cpsr = 0x0000001F;   /* SVC */
-        g->cpu.r[15] = 0x00000000;
-    }
+    /* Fast-boot: replicate the state the real BIOS leaves after its init,
+       then jump straight into the cartridge. This lets commercial titles
+       run without dumping the copyrighted BIOS. */
+    g->cpu.cpsr = 0x0000001F;            /* system mode, ARM state, IRQ enabled */
+    for (int i = 0; i < 16; i++) g->cpu.r[i] = 0;
+    g->cpu.r[13] = 0x03007F00;           /* SP (USR/SYS) */
+    g->cpu.r[15] = 0x08000000;           /* entry point in ROM */
+    g->cpu.bank[BANK_IRQ][5] = 0x03007FA0;
+    g->cpu.bank[BANK_SVC][5] = 0x03007FE0;
+    g->cpu.bank[0][5] = 0x03007F00;
+    /* default I/O state the BIOS sets up */
+    g->io[0x204] = 0x00; g->io[0x205] = 0x00;
+    g->io[0x130] = 0xFF; g->io[0x131] = 0x03;
+    g->io[0x132] = 0x00; g->io[0x133] = 0x00;
+    g->key_input = 0x03FF;
 }
 
 void gba_load_bios(GBA *g, const char *path) {
@@ -97,6 +101,7 @@ void gba_load_bios(GBA *g, const char *path) {
     size_t got = fread(g->bios, 1, BIOS_SIZE, f);
     if (got < BIOS_SIZE) memset(g->bios + got, 0, BIOS_SIZE - got);
     fclose(f);
+    g->bios_enabled = true;
 }
 
 bool gba_load_rom(GBA *g, const char *path) {
@@ -139,63 +144,43 @@ void gba_update_keypad(GBA *g, uint16_t keys) {
     io_trigger_keypad(g, 0);
 }
 
-/* frame stepper */
+/* Run one video frame: step the PPU line by line, running the CPU for the
+ * cycles each scanline takes, firing HBlank/VBlank/VCount interrupts. */
 static void run_frame_core(GBA *g) {
-    /* one frame = 280896 cycles. We render lazily (whole frame) before VBlank */
-    const uint32_t frame_cycles = 280896;
-    uint32_t start_cycles = g->cycle;
-    /* scanning: vcount goes 0..226 (160 visible, 67 vblank) */
-    bool vblank = false;
-    uint32_t vcount_cycle = 0;
-    const uint32_t line_len = 1232;   /* 240 pixels @ ~4 cyc/pix + hblank */
+    const uint32_t line_cycles = 1232;      /* 240px @ 4 cyc + hblank */
 
-    /* emulate the PPU line-by-line to fire HBlank/VBlank interrupts */
     for (int line = 0; line < 228; line++) {
-        g->ppu.vcount = line;
-        g->ppu.dispstat = (g->ppu.dispstat & ~0x0002) | (line == 0 ? 0x1 : 0);
-        /* VBlank flag */
-        bool in_vblank = line >= 160;
-        if (in_vblank && !vblank) vblank = true;
-        g->ppu.dispstat = (g->ppu.dispstat & ~0x0001) | (in_vblank ? 0x1 : 0);
-        /* HBlank flag set when crossing */
-        int hbl = 1;
-        g->ppu.dispstat = (g->ppu.dispstat & ~0x0002) | (hbl ? 0x2 : 0);
-        /* wait for the line to finish (CPU runs concurrently) */
-        io_update_timers(g, line_len);
-        /* DMA each line? Keep simple: run one DMA per hblank for each channel desired by timing */
-        for (int c = 0; c < 4; c++) if (g->dma[c].enabled && g->dma[c].timing == 2) dma_run(g, c);
-        /* fire events */
-        if (in_vblank && line == 160) {
-            g->if_reg |= IF_VBLANK;
-            /* render frame here (before VBlank wait returns) */
+        g->ppu.vcount = (uint16_t)line;
+
+        /* VBlank: start (line 160) sets IF and wakes the CPU */
+        if (line == 160) {
+            if (g->ppu.dispstat & 0x0008) g->if_reg |= IF_VBLANK;
             ppu_render_frame(g);
             g->frame_count++;
-            g->frame_lines = line;
+            if (g->cst.halt) g->cst.halt = false;   /* VBlankIntrWait satisfied */
         }
-        if (g->ppu.dispstat & (1 << 3)) {
-            /* vcount match */
-            int vmatch = (g->ppu.dispstat >> 8) & 0xFF;
-            if (line == vmatch) g->if_reg |= IF_VCOUNT;
+
+        /* render visible lines lazily (all at VBlank, already done above) */
+
+        /* HBlank IRQ at the start of each line's blanking period */
+        if (g->ppu.dispstat & 0x0010) g->if_reg |= IF_HBLANK;
+
+        /* VCount match IRQ */
+        if (g->ppu.dispstat & 0x0020) {
+            int vm = (g->ppu.dispstat >> 8) & 0xFF;
+            if (line == vm) g->if_reg |= IF_VCOUNT;
         }
-        (void)vcount_cycle;
+
+        io_update_timers(g, line_cycles);
+
+        /* Run the CPU for this scanline's cycles (interrupts handled inside) */
+        arm_execute(g, line_cycles);
     }
-    g->cycle = start_cycles + frame_cycles;
-    (void)vblank;
+    g->ppu.vcount = 0;
 }
 
 void gba_run_frame(GBA *g) {
-    if (g->ime && (g->if_reg & g->ie & 0x3FFF)) {
-        /* IRQ to be taken at next step */
-    }
     run_frame_core(g);
-    /* execute CPU across the VBlank window */
-    /* For simplicity we executed the whole frame in render; actually we should interleave. */
-    uint32_t before = g->cycle;
-    arm_execute(g, 280896 - (before % 280896));
-    /* VBlankIntrWait handled via halt; re-wake if IF VBlank now pending */
-    if (g->cst.halt && (g->if_reg & IF_VBLANK)) {
-        g->cst.halt = false;
-    }
 }
 
 /* cheats */
