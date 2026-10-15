@@ -206,10 +206,17 @@ static void rom_add(const char *name, int is_dir) {
     rom_list[rom_count].is_dir = is_dir;
     rom_count++;
 }
+/* Resolve a path relative to the current directory (POSIX realpath / Win32). */
+static void path_abspath(const char *in, char *out, size_t outsz) {
+#ifdef _WIN32
+    DWORD n = GetFullPathNameA(in, (DWORD)outsz, out, NULL);
+    if (!n || n >= outsz) snprintf(out, outsz, "%s", in);
+#else
+    if (!realpath(in, out)) snprintf(out, outsz, "%s", in);
+#endif
+}
 static void rom_dir_enter(const char *dir) {
-    char resolved[512];
-    if (realpath(dir, resolved)) snprintf(rom_dir, sizeof rom_dir, "%s", resolved);
-    else snprintf(rom_dir, sizeof rom_dir, "%s", dir);
+    path_abspath(dir, rom_dir, sizeof rom_dir);
     rom_count = 0; rom_sel = 0;
     if (strcmp(rom_dir, "/")) rom_add("..", 1);                 /* parent */
 #ifdef _WIN32
