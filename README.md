@@ -47,9 +47,12 @@ debugger is intentionally omitted). Settings are stored in
   Enable DSound A/B, Enable GBC Sound, Reverse Sound Stereo,
   Select BIOS File, BIOS Enable, Skip BIOS Boot, Skip Intro Hacks,
   Controllers Configuration
-- **Debug** (no CPU debugger) — Status Window, Show BG Palette,
-  Show OBJ Palette, Screen/BG/OBJ layer toggles
 - **Help** — History..., Command Line Options..., About...
+
+File > Load ROM... opens a built-in ROM browser: it lists folders and
+`.gba` / `.agb` / `.bin` files, lets you step into directories (including
+outside the executable's folder) with the mouse or the Up/Down/Enter keys,
+and remembers the last folder you loaded a ROM from.
 
 Keyboard: `A`=A, `S`=B, `F`=L, `D`=R, `Enter`=Start, `Backspace`=Select,
 arrows = D-Pad, `F1`=About, `F2`/`F3`=save/load state, `F5`=screenshot,

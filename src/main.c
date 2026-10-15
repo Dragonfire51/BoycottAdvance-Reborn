@@ -2,14 +2,16 @@
  * main.c - SDL2 frontend for BoycottAdvance Reborn.
  *
  * Reproduces the original BoycottAdvance 0.2.8 GUI (menu bar + options)
- * except the CPU Debugger. Audio is SDL2 (no obsolete WINMM waveOut), so
+ * with the CPU Debugger removed. Audio is SDL2 (no obsolete WINMM waveOut), so
  * sound works on Windows 11. Uses only SDL2 symbols available since 2.0.0,
  * so the executable runs against any reasonably recent system SDL2.dll.
  */
+#define _DEFAULT_SOURCE
 #include "gba.h"
 #include "mem.h"
 #include "arm.h"
 #include "font8x8.h"
+#include "icon.h"
 #include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +22,7 @@
 #  include <windows.h>
 #else
 #  include <dirent.h>
+#  include <sys/stat.h>
 #endif
 
 #define AUDIO_FREQ     44100
@@ -32,7 +35,6 @@ typedef struct {
     int  showfps, showfps_pct, frameskip, autoframeskip, sound_enable;
     int  dsound_a, dsound_b, gbc_sound, reverse_stereo;
     int  biosenable, biosfastboot, skipintros, autorun, flashid, state_slot;
-    int  bg_layers, obj_layer;
     char lastdir[512], rompath[512];
 } Config;
 static Config cfg;
@@ -76,7 +78,6 @@ static void cfg_load(const char *path) {
     cfg.skipintros   = ini_geti(path, "SkipIntros", 0);
     cfg.autorun      = ini_geti(path, "AutoRun", 1);
     cfg.flashid      = ini_geti(path, "FlashROMId", 0);
-    cfg.bg_layers = 1; cfg.obj_layer = 1;
     ini_get(path, "RomPath", cfg.lastdir, sizeof cfg.lastdir);
     if (!cfg.lastdir[0]) snprintf(cfg.lastdir, sizeof cfg.lastdir, ".");
 }
@@ -140,7 +141,6 @@ enum {
     M_SKIP0, M_SKIP1, M_SKIP2, M_SKIP3, M_SKIP4, M_SKIP5, M_AUTOSKIP, M_SMOOTH,
     M_THROTTLE, M_SHOWFPS, M_SHOWFPSPCT, M_SOUND, M_DSOUNDA, M_DSOUNDB, M_GBCSOUND,
     M_REVSTEREO, M_SELBIOS, M_BIOSEN, M_BIOSBOOT, M_SKIPINTROS, M_CONTROLLERS,
-    M_STATUSWIN, M_BGPAL, M_OBJPAL, M_LAYERS, M_OBJLAYER, M_BGLAYERS,
     M_HISTORY, M_CMDLINE, M_ABOUT
 };
 typedef struct { const char *label; int id; } MenuItem;
@@ -164,14 +164,10 @@ static MenuItem m_options[] = {
     {"Reverse Sound Stereo",M_REVSTEREO},{"",0},{"Select BIOS File...",M_SELBIOS},
     {"BIOS Enable",M_BIOSEN},{"Skip BIOS Boot",M_BIOSBOOT},{"Skip Intro Hacks",M_SKIPINTROS},
     {"",0},{"Controllers Configuration...",M_CONTROLLERS},{NULL,0}};
-static MenuItem m_debug[] = {
-    {"Status Window...",M_STATUSWIN},{"",0},{"Show BG Palette",M_BGPAL},{"Show OBJ Palette",M_OBJPAL},
-    {"",0},{"Screen Layers / Background Enable",M_LAYERS},{"OBJ Layer",M_OBJLAYER},
-    {"All BG Layers",M_BGLAYERS},{NULL,0}};
 static MenuItem m_help[] = {
     {"History...",M_HISTORY},{"Command Line Options...",M_CMDLINE},{"About...",M_ABOUT},{NULL,0}};
 static struct { const char *title; MenuItem *items; } menus[] = {
-    {"File",m_file},{"Window",m_window},{"Options",m_options},{"Debug",m_debug},{"Help",m_help}};
+    {"File",m_file},{"Window",m_window},{"Options",m_options},{"Help",m_help}};
 #define NMENUS ((int)(sizeof menus / sizeof menus[0]))
 
 static int menu_open = -1, menu_hover = -1;
@@ -187,29 +183,80 @@ static void dlg_text(const char *t, const char *b) {
 }
 
 /* built-in ROM browser (no dependency on newer SDL file-dialog APIs) */
-typedef struct { char name[260]; } DirEnt;
-static DirEnt rom_list[512]; static int rom_count, rom_sel;
-static void rom_browser_open(void) {
-    dialog_kind = 2; rom_count = 0; rom_sel = 0;
-    char dir[512]; snprintf(dir, sizeof dir, "%s", cfg.lastdir[0]?cfg.lastdir:".");
+typedef struct { char name[260]; int is_dir; } DirEnt;
+#define BROWSER_MAX 512
+static DirEnt rom_list[BROWSER_MAX]; static int rom_count, rom_sel;
+static char   rom_dir[512];              /* directory currently listed */
+static void   load_rom(const char *path);
+
+static int has_rom_ext(const char *n) {
+    size_t L = strlen(n);
+    if (L < 5) return 0;
+    const char *e = n + L - 4;
+    return !strcasecmp(e, ".gba") || !strcasecmp(e, ".agb") || !strcasecmp(e, ".bin");
+}
+static int cmp_dir_ent(const void *a, const void *b) {
+    const DirEnt *x = a, *y = b;
+    if (x->is_dir != y->is_dir) return y->is_dir - x->is_dir;   /* dirs first */
+    return strcasecmp(x->name, y->name);
+}
+static void rom_add(const char *name, int is_dir) {
+    if (rom_count >= BROWSER_MAX) return;
+    snprintf(rom_list[rom_count].name, sizeof rom_list[rom_count].name, "%s", name);
+    rom_list[rom_count].is_dir = is_dir;
+    rom_count++;
+}
+static void rom_dir_enter(const char *dir) {
+    char resolved[512];
+    if (realpath(dir, resolved)) snprintf(rom_dir, sizeof rom_dir, "%s", resolved);
+    else snprintf(rom_dir, sizeof rom_dir, "%s", dir);
+    rom_count = 0; rom_sel = 0;
+    if (strcmp(rom_dir, "/")) rom_add("..", 1);                 /* parent */
 #ifdef _WIN32
-    char pat[600]; snprintf(pat, sizeof pat, "%s\\*.gba", dir);
+    char pat[600]; snprintf(pat, sizeof pat, "%s\\*", rom_dir);
     WIN32_FIND_DATAA fd; HANDLE h = FindFirstFileA(pat, &fd);
     if (h != INVALID_HANDLE_VALUE) {
-        do { snprintf(rom_list[rom_count].name,260,"%s",fd.cFileName);
-             if (++rom_count>=512) break; } while (FindNextFileA(h,&fd));
+        do {
+            if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
+            int isdir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            if (isdir || has_rom_ext(fd.cFileName)) rom_add(fd.cFileName, isdir);
+        } while (FindNextFileA(h, &fd));
         FindClose(h);
     }
 #else
-    DIR *d = opendir(dir);
+    DIR *d = opendir(rom_dir);
     if (d) { struct dirent *e;
-        while ((e=readdir(d)) && rom_count<512) {
-            const char *n = e->d_name; size_t L = strlen(n);
-            if (L>4 && (!strcasecmp(n+L-4,".gba")||!strcasecmp(n+L-4,".agb")||!strcasecmp(n+L-4,".bin")))
-                snprintf(rom_list[rom_count++].name,260,"%s",n);
-        } closedir(d);
+        while ((e = readdir(d))) {
+            const char *n = e->d_name;
+            if (!strcmp(n, ".") || !strcmp(n, "..")) continue;
+            char full[1024]; snprintf(full, sizeof full, "%s/%s", rom_dir, n);
+            struct stat st; int isdir = (stat(full, &st) == 0 && S_ISDIR(st.st_mode));
+            if (isdir || has_rom_ext(n)) rom_add(n, isdir);
+        }
+        closedir(d);
     }
 #endif
+    qsort(rom_list, rom_count, sizeof rom_list[0], cmp_dir_ent);
+}
+static void rom_browser_open(void) {
+    dialog_kind = 2;
+    rom_dir_enter(cfg.lastdir[0] ? cfg.lastdir : ".");
+}
+static void rom_activate(int idx) {
+    if (idx < 0 || idx >= rom_count) return;
+    if (rom_list[idx].is_dir) {                 /* navigate into folder */
+        char full[1200];
+        if (!strcmp(rom_list[idx].name, "..")) {
+            snprintf(full, sizeof full, "%s/..", rom_dir);
+        } else {
+            snprintf(full, sizeof full, "%s/%s", rom_dir, rom_list[idx].name);
+        }
+        rom_dir_enter(full);
+        return;
+    }
+    char full[1200]; snprintf(full, sizeof full, "%s/%s", rom_dir, rom_list[idx].name);
+    load_rom(full);
+    if (g->rom_size > 0) { snprintf(cfg.lastdir, sizeof cfg.lastdir, "%s", rom_dir); dialog_kind = 0; }
 }
 
 /* ------------------------------------------------------------------ actions */
@@ -262,8 +309,16 @@ static void show_history(void) {
       "  - Fixed instant startup crash (heap-allocated core\n"
       "    instead of the 1 MB Windows stack)\n"
       "  - Menu bar with every original option\n"
-      "    (File / Window / Options / Debug / Help)\n"
+      "    (File / Window / Options / Help)\n"
+      "  - Embedded window icon\n"
       "  - ROM browser and BoycottAdvance.ini support\n\n"
+      "v1.2.0 changes:\n"
+      "  - Fixed ARM LDR/LDM with PC target and PPU bitmap\n"
+      "    layer gating that left Pokemon on a black screen\n"
+      "  - Removed the CPU debugger menu entirely\n"
+      "  - Built-in ROM browser with folder navigation\n"
+      "    (pick ROMs from any directory)\n"
+      "  - Embedded window and executable icon\n\n"
       "v1.0.0: first public clean-room release.");
 }
 static void show_cmdline(void) {
@@ -277,16 +332,6 @@ static void show_controllers(void) {
       "Keyboard (default):\n  A=A  B=S  L=F  R=D  Start=Enter  Select=Backspace\n"
       "  D-Pad = arrow keys\n\n"
       "Joystick: standard SDL2 game controllers are used when present.");
-}
-static void show_status(void) {
-    char b[512];
-    snprintf(b,sizeof b,
-      "CPU mode : ARM7TDMI\nPC       : 0x%08X\nCPSR     : 0x%08X\nVCOUNT   : %d\n"
-      "Frame    : %llu\nROM size : %u bytes\nSave type: %d\nSound    : %s\n"
-      "Zoom     : x%d",
-      g->cpu.r[15], g->cpu.cpsr, g->ppu.vcount, (unsigned long long)g->frame_count,
-      g->rom_size, g->save_type, cfg.sound_enable?"on":"off", cfg.zoom);
-    dlg_text("Status Window", b);
 }
 static void toggle_fullscreen(SDL_Window *w) {
     static int fs = 0; fs = !fs;
@@ -327,12 +372,6 @@ static void do_action(int id, SDL_Window *win) {
     case M_BIOSBOOT: cfg.biosfastboot = !cfg.biosfastboot; g->bios_fastboot = cfg.biosfastboot; break;
     case M_SKIPINTROS: cfg.skipintros = !cfg.skipintros; break;
     case M_CONTROLLERS: show_controllers(); break;
-    case M_STATUSWIN: show_status(); break;
-    case M_BGPAL: dlg_text("BG Palette","BG palette viewer (256 colors) from PPU palette RAM."); break;
-    case M_OBJPAL: dlg_text("OBJ Palette","OBJ palette viewer (256 colors) from PPU palette RAM."); break;
-    case M_LAYERS: cfg.bg_layers = !cfg.bg_layers; break;
-    case M_OBJLAYER: cfg.obj_layer = !cfg.obj_layer; break;
-    case M_BGLAYERS: cfg.bg_layers = !cfg.bg_layers; break;
     case M_HISTORY: show_history(); break;
     case M_CMDLINE: show_cmdline(); break;
     case M_ABOUT: show_about(); break;
@@ -367,7 +406,6 @@ static int item_checked(int id) {
     case M_DSOUNDB: return cfg.dsound_b; case M_GBCSOUND: return cfg.gbc_sound;
     case M_REVSTEREO: return cfg.reverse_stereo; case M_BIOSEN: return cfg.biosenable;
     case M_BIOSBOOT: return cfg.biosfastboot; case M_SKIPINTROS: return cfg.skipintros;
-    case M_OBJLAYER: return cfg.obj_layer; case M_BGLAYERS: return cfg.bg_layers;
     default:
         if (id>=M_ZOOM1 && id<=M_ZOOM4) return cfg.zoom==id-M_ZOOM1+1;
         if (id>=M_SKIP0 && id<=M_SKIP5) return cfg.frameskip==id-M_SKIP0;
@@ -440,6 +478,12 @@ int main(int argc, char **argv) {
     SDL_Window *win = SDL_CreateWindow(GBA_TITLE, SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED, w, h, SDL_WINDOW_RESIZABLE);
     if (!win) { fprintf(stderr,"no window: %s\n", SDL_GetError()); SDL_Quit(); free(g); return 1; }
+    {
+        SDL_Surface *ico = SDL_CreateRGBSurfaceWithFormatFrom(
+            (void *)gba_icon_argb, GBA_ICON_W, GBA_ICON_H, 32, GBA_ICON_W*4,
+            SDL_PIXELFORMAT_ARGB8888);
+        if (ico) { SDL_SetWindowIcon(win, ico); SDL_FreeSurface(ico); }
+    }
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, cfg.smooth?"1":"0");
     SDL_Renderer *ren = SDL_CreateRenderer(win,-1,SDL_RENDERER_ACCELERATED);
     if (!ren) ren = SDL_CreateRenderer(win,-1,SDL_RENDERER_SOFTWARE);
@@ -463,13 +507,10 @@ int main(int argc, char **argv) {
             else if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
                 int mx = ev.button.x, my = ev.button.y;
                 if (dialog_kind == 2) {
-                    int list_y = 60;
+                    int list_y = 64;
                     if (my>=list_y && my<list_y+16*rom_count) {
                         int sel = (my-list_y)/16;
-                        if (sel>=0 && sel<rom_count) {
-                            char full[900]; snprintf(full,sizeof full,"%s/%s",cfg.lastdir,rom_list[sel].name);
-                            load_rom(full); dialog_kind = 0;
-                        }
+                        if (sel>=0 && sel<rom_count) rom_activate(sel);
                     }
                 } else if (dialog_kind == 1) {
                     dialog_kind = 0;
@@ -485,6 +526,13 @@ int main(int argc, char **argv) {
                 menu_hover = menu_item_hit(menu_open, ev.motion.x, ev.motion.y);
             } else if (ev.type == SDL_KEYDOWN) {
                 SDL_Keycode k = ev.key.keysym.sym;
+                if (dialog_kind == 2) {
+                    if (k==SDLK_ESCAPE) dialog_kind=0;
+                    else if (k==SDLK_DOWN && rom_sel+1<rom_count) rom_sel++;
+                    else if (k==SDLK_UP && rom_sel>0) rom_sel--;
+                    else if (k==SDLK_RETURN || k==SDLK_KP_ENTER) rom_activate(rom_sel);
+                    continue;
+                }
                 if (dialog_kind) { if (k==SDLK_ESCAPE) dialog_kind=0; continue; }
                 if (k==SDLK_ESCAPE) { if (menu_open>=0) menu_open=-1; else running=0; }
                 else if (k==SDLK_F1) show_about();
@@ -541,7 +589,7 @@ int main(int argc, char **argv) {
             SDL_SetRenderDrawColor(ren,30,30,30,220);
             SDL_Rect cover={0,MENUBAR_H,10000,10000}; SDL_RenderFillRect(ren,&cover);
             SDL_SetRenderDrawColor(ren,210,210,210,255);
-            SDL_Rect dbox={40,50,560,300}; SDL_RenderFillRect(ren,&dbox);
+            SDL_Rect dbox={40,30,560,320}; SDL_RenderFillRect(ren,&dbox);
             SDL_SetRenderDrawColor(ren,0,0,0,255); SDL_RenderDrawRect(ren,&dbox);
             if (dialog_kind==1) {
                 draw_text(ren,52,60,dialog_title,(SDL_Color){0,0,160,255});
@@ -550,11 +598,21 @@ int main(int argc, char **argv) {
                 while(line){ draw_text(ren,52,y,line,(SDL_Color){0,0,0,255}); y+=14; line=strtok(NULL,"\n"); }
                 draw_text(ren,52,330,"Click or press ESC to close",(SDL_Color){80,80,80,255});
             } else if (dialog_kind==2) {
-                draw_text(ren,52,40,"Please choose a ROM file to load...",(SDL_Color){0,0,160,255});
-                int y=60;
-                for (int i=0;i<rom_count && i<18;i++,y+=16) draw_text(ren,56,y,rom_list[i].name,(SDL_Color){0,0,0,255});
-                if (!rom_count) draw_text(ren,56,60,"(no .gba/.agb/.bin in folder)",(SDL_Color){120,0,0,255});
-                draw_text(ren,52,330,"Click a file to load. ESC to cancel.",(SDL_Color){80,80,80,255});
+                draw_text(ren,52,36,"Please choose a ROM file to load...",(SDL_Color){0,0,160,255});
+                draw_text(ren,52,48,rom_dir,(SDL_Color){60,60,60,255});
+                int y=64, shown=0;
+                for (int i=0;i<rom_count && shown<16;i++,y+=16) {
+                    int sel = (i==rom_sel);
+                    if (sel) { SDL_SetRenderDrawColor(ren,90,120,200,255);
+                        SDL_Rect hi={52,y-2,540,16}; SDL_RenderFillRect(ren,&hi); }
+                    SDL_Color c = sel?(SDL_Color){255,255,255,255}:(SDL_Color){0,0,0,255};
+                    char lbl[300];
+                    snprintf(lbl,sizeof lbl,"%s%.260s",rom_list[i].is_dir?"[+] ":"    ",rom_list[i].name);
+                    draw_text(ren,56,y,lbl,c);
+                    shown++;
+                }
+                if (!rom_count) draw_text(ren,56,64,"(no .gba/.agb/.bin in folder)",(SDL_Color){120,0,0,255});
+                draw_text(ren,52,336,"Click or use Up/Down + Enter. ESC to cancel.",(SDL_Color){80,80,80,255});
             }
         }
         SDL_RenderPresent(ren);

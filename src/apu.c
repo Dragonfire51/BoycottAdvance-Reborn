@@ -97,7 +97,8 @@ void apu_mix(GBA *g, int16_t *stream, int nframes) {
 
         /* simple mastering: mono mix to both channels */
         s = (s << 2);
-        if (s > 32767) s = 32767; if (s < -32768) s = -32768;
+        if (s > 32767) s = 32767;
+        if (s < -32768) s = -32768;
         stream[i*2] = (int16_t)s;
         stream[i*2+1] = (int16_t)s;
         a->sample_cc &= 0;   /* keep fractional */
