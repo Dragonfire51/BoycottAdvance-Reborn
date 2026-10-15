@@ -33,37 +33,28 @@ jobs:
         arch: [win32, win64]
         include:
           - arch: win32
-            triplet: i686-w64-mingw32
+            make_arch: ARCH=i686
+            arch_name: i686
           - arch: win64
-            triplet: x86_64-w64-mingw32
+            make_arch: ARCH=x86_64
+            arch_name: x86_64
     steps:
       - uses: actions/checkout@v4
       - name: Install mingw and zip
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-i686 gcc-mingw-w64-x86-64 zip curl
-      - name: Fetch SDL2 mingw devel
+          sudo apt-get install -y gcc-mingw-w64-i686 gcc-mingw-w64-x86-64 zip
+      - name: Build ${{ matrix.arch }} (native, no SDL)
         run: |
-          curl -sL -o /tmp/sdl2.tar.gz \
-            https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-devel-2.32.10-mingw.tar.gz
-          tar xzf /tmp/sdl2.tar.gz -C /tmp
-      - name: Build ${{ matrix.arch }}
-        run: |
-          T=${{ matrix.triplet }}
-          S=/tmp/SDL2-2.32.10/$T
-          mkdir -p build
-          $T-windres -i src/icon.rc -o build/icon.res
-          for f in gba mem arm ppu apu bios fb video gui main; do
-            $T-gcc -std=c99 -O2 -Wall -Isrc -I$S/include -c src/$f.c -o build/$f.o
-          done
-          $T-gcc build/*.o -L$S/lib -lmingw32 -lSDL2main -lSDL2 -ld3d9 -lgdi32 -lcomdlg32 -lm -o build/boycottadvance-reborn.exe
+          # The Windows build is SDL-free: native GDI/Direct3D 9 video,
+          # WinMM (waveOut) audio and a full Win32 menu bar.
+          make -f Makefile.win32 ${{ matrix.make_arch }}
           mkdir -p dist
-          cp build/boycottadvance-reborn.exe dist/
+          cp boycottadvance-reborn-${{ matrix.arch_name }}.exe dist/boycottadvance-reborn.exe
           cp README.md gba_bios.bin dist/
-          cp $S/bin/SDL2.dll dist/
       - name: Package zip
         working-directory: dist
-        run: zip -X -r ../boycottadvance-reborn-${{ matrix.arch }}.zip README.md boycottadvance-reborn.exe SDL2.dll gba_bios.bin
+        run: zip -X -r ../boycottadvance-reborn-${{ matrix.arch }}.zip README.md boycottadvance-reborn.exe gba_bios.bin
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.arch }}
@@ -98,7 +89,7 @@ jobs:
       - name: Source tarball
         run: |
           P=boycottadvance-reborn-${GITHUB_REF_NAME}
-          git archive --format=tar --prefix=$P/ HEAD src Makefile README.md .gitignore assets tools \
+          git archive --format=tar --prefix=$P/ HEAD src Makefile Makefile.win32 README.md .gitignore assets tools \
             | gzip -9 > boycottadvance-reborn-${GITHUB_REF_NAME}-src.tar.gz
       - name: Publish release
         uses: softprops/action-gh-release@v2
