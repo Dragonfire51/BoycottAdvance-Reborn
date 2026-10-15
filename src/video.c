@@ -2,45 +2,49 @@
  * video.c - frame-buffer presentation backends (see video.h).
  *
  * The UI is composed into an ARGB8888 image in fb.c; each backend here only
- * presents that image. SDL backends work everywhere; the GDI and Direct3D 9
- * backends are native Windows and need no extra runtime files; Vulkan is used
- * when the build has the SDK.
+ * presents that image.
+ *
+ *  - non-Windows : the SDL Software/OpenGL renderer; and when built with
+ *                  the Vulkan SDK, the raw Vulkan swapchain.
+ *  - Windows     : native GDI blit or Direct3D 9. The window handle is the
+ *                  HWND of the native window; no SDL headers are used.
  */
 #include "video.h"
-#include <SDL2/SDL.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #if defined(_WIN32)
 #  include <windows.h>
-#  include <SDL2/SDL_syswm.h>
+#else
+#  include <SDL2/SDL.h>
 #endif
 
 #ifdef HAVE_VULKAN
-extern void *vk_create(SDL_Window *win);
+extern void *vk_create(void *win);
 extern void  vk_present(void *state, const uint32_t *argb, int w, int h);
 extern void  vk_destroy(void *state);
 #endif
 
 struct Video {
     VidBackend backend;
-    SDL_Window *win;
+    void      *win;     /* ownership keeps living in the frontend */
     int w, h;
 
-    SDL_Renderer *ren;
-    SDL_Texture  *tex;
-
-    void *vk;         /* Vulkan state */
-    void *native;     /* GDI/D3D state */
+    void *sdl;    /* SDL renderer/state (non-Windows) */
+    void *vk;     /* Vulkan state */
+    void *native; /* GDI/D3D state */
 };
 
-static void get_drawable(SDL_Window *win, int *w, int *h) {
+#if !defined(_WIN32)
+typedef struct { void *ren; void *tex; } SdlState;
+static void get_drawable(void *win, int *w, int *h) {
     *w = 0; *h = 0;
-    SDL_GetWindowSize(win, w, h);
+    SDL_GetWindowSize((SDL_Window *)win, w, h);
     if (*w <= 0) *w = 240;
     if (*h <= 0) *h = 160;
 }
+#endif
 
 const char *vid_name(VidBackend b) {
     switch (b) {
@@ -56,15 +60,16 @@ const char *vid_name(VidBackend b) {
 
 int vid_available(VidBackend b) {
     switch (b) {
+#if defined(_WIN32)
+    case VID_AUTO: case VID_GDI: case VID_DIRECT3D:
+        return 1;
+#else
     case VID_AUTO: case VID_SOFTWARE: case VID_OPENGL:
         return 1;
-#if defined(_WIN32)
-    case VID_GDI: case VID_DIRECT3D:
-        return 1;
-#endif
 #ifdef HAVE_VULKAN
     case VID_VULKAN:
         return 1;
+#endif
 #endif
     default:
         return 0;
@@ -72,52 +77,53 @@ int vid_available(VidBackend b) {
 }
 
 /* ============================ SDL-backed backends ========================= */
+/* Non-Windows only: SDL Software / OpenGL. */
 
+#if !defined(_WIN32)
 static int sdl_backend_init(Video *v, VidBackend b) {
+    SdlState *s = (SdlState *)calloc(1, sizeof(SdlState));
     Uint32 flags = SDL_RENDERER_ACCELERATED;
     if (b == VID_SOFTWARE) {
         flags = SDL_RENDERER_SOFTWARE;
     } else if (b == VID_OPENGL) {
         SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");   /* force the GL driver */
     }
-    v->ren = SDL_CreateRenderer(v->win, -1, flags);
+    s->ren = SDL_CreateRenderer((SDL_Window *)v->win, -1, flags);
     if (b == VID_OPENGL) SDL_SetHint(SDL_HINT_RENDER_DRIVER, "");
-    if (!v->ren && b != VID_SOFTWARE)
-        v->ren = SDL_CreateRenderer(v->win, -1, SDL_RENDERER_SOFTWARE);
-    return v->ren ? 0 : -1;
+    if (!s->ren && b != VID_SOFTWARE)
+        s->ren = SDL_CreateRenderer((SDL_Window *)v->win, -1, SDL_RENDERER_SOFTWARE);
+    if (!s->ren) { free(s); return -1; }
+    v->sdl = s;
+    return 0;
 }
 
 static void sdl_present(Video *v, const uint32_t *argb, int w, int h) {
-    if (!v->tex || v->w != w || v->h != h) {
-        if (v->tex) SDL_DestroyTexture(v->tex);
-        v->tex = SDL_CreateTexture(v->ren, SDL_PIXELFORMAT_ARGB8888,
+    SdlState *s = (SdlState *)v->sdl;
+    if (!s->tex || v->w != w || v->h != h) {
+        if (s->tex) SDL_DestroyTexture((SDL_Texture *)s->tex);
+        s->tex = SDL_CreateTexture((SDL_Renderer *)s->ren, SDL_PIXELFORMAT_ARGB8888,
                                    SDL_TEXTUREACCESS_STREAMING, w, h);
         v->w = w; v->h = h;
     }
-    SDL_UpdateTexture(v->tex, NULL, argb, w * 4);
-    SDL_SetRenderDrawColor(v->ren, 0, 0, 0, 255);
-    SDL_RenderClear(v->ren);
-    int dw, dh; SDL_GetRendererOutputSize(v->ren, &dw, &dh);
+    SDL_UpdateTexture((SDL_Texture *)s->tex, NULL, argb, w * 4);
+    SDL_SetRenderDrawColor((SDL_Renderer *)s->ren, 0, 0, 0, 255);
+    SDL_RenderClear((SDL_Renderer *)s->ren);
+    int dw, dh; SDL_GetRendererOutputSize((SDL_Renderer *)s->ren, &dw, &dh);
     SDL_Rect dst = { 0, 0, dw, dh };
-    SDL_RenderCopy(v->ren, v->tex, NULL, &dst);
-    SDL_RenderPresent(v->ren);
+    SDL_RenderCopy((SDL_Renderer *)s->ren, (SDL_Texture *)s->tex, NULL, &dst);
+    SDL_RenderPresent((SDL_Renderer *)s->ren);
 }
+#endif /* !_WIN32 */
 
 /* ================================ GDI ==================================== */
+/* Native Windows: the framebuffer is StretchDIBits'd into the window DC. */
 
 #if defined(_WIN32)
-static HWND win_hwnd(SDL_Window *win) {
-    SDL_SysWMinfo info; SDL_VERSION(&info.version);
-    if (SDL_GetWindowWMInfo(win, &info) && info.subsystem == SDL_SYSWM_WINDOWS)
-        return info.info.win.window;
-    return NULL;
-}
-
 typedef struct { HWND hwnd; HDC hdc; BITMAPINFO bmi; } GdiState;
 
 static int gdi_init(Video *v) {
     GdiState *g = (GdiState *)calloc(1, sizeof(GdiState));
-    g->hwnd = win_hwnd(v->win);
+    g->hwnd = (HWND)v->win;   /* native frontend passes its HWND */
     if (!g->hwnd) { free(g); return -1; }
     g->hdc = GetDC(g->hwnd);
     if (!g->hdc) { free(g); return -1; }
@@ -160,7 +166,7 @@ typedef struct { float x, y, z, rhw; float u, v; } TLVert;
 
 static int d3d_init(Video *v) {
     D3DState *d = (D3DState *)calloc(1, sizeof(D3DState));
-    d->hwnd = win_hwnd(v->win);
+    d->hwnd = (HWND)v->win;   /* native frontend passes its HWND */
     if (!d->hwnd) { free(d); return -1; }
     d->d3d = Direct3DCreate9(D3D_SDK_VERSION);
     if (!d->d3d) { free(d); return -1; }
@@ -222,34 +228,40 @@ static void d3d_shutdown(Video *v) {
 
 /* =============================== dispatch ================================ */
 
-static int fallback_software(Video *v) {
-    if (sdl_backend_init(v, VID_SOFTWARE) != 0) return -1;
-    v->backend = VID_SOFTWARE;
-    return 0;
-}
-
-Video *vid_init(SDL_Window *win, VidBackend backend) {
+Video *vid_init(void *win, VidBackend backend) {
     Video *v = (Video *)calloc(1, sizeof(Video));
     if (!v) return NULL;
     v->win = win; v->backend = backend;
-    get_drawable(win, &v->w, &v->h);
 
+#if defined(_WIN32)
+    /* Native Windows: GDI blit by default, Direct3D 9 when asked. There is
+     * no software fallback inside video.c on Windows: GDI is always there. */
+    switch (backend) {
+    case VID_GDI: case VID_AUTO:
+        if (gdi_init(v) != 0) { free(v); return NULL; }
+        v->backend = VID_GDI;
+        break;
+    case VID_DIRECT3D:
+        if (d3d_init(v) != 0) {
+            if (gdi_init(v) != 0) { free(v); return NULL; }
+            v->backend = VID_GDI;
+        }
+        break;
+    default:
+        if (gdi_init(v) != 0) { free(v); return NULL; }
+        v->backend = VID_GDI;
+        break;
+    }
+#else
+    get_drawable(win, &v->w, &v->h);
     switch (backend) {
     case VID_AUTO: case VID_SOFTWARE: case VID_OPENGL:
         if (sdl_backend_init(v, backend) != 0) { free(v); return NULL; }
         break;
-#if defined(_WIN32)
-    case VID_GDI:
-        if (gdi_init(v) != 0 && fallback_software(v) != 0) { free(v); return NULL; }
-        break;
-    case VID_DIRECT3D:
-        if (d3d_init(v) != 0 && fallback_software(v) != 0) { free(v); return NULL; }
-        break;
-#endif
 #ifdef HAVE_VULKAN
     case VID_VULKAN:
         v->vk = vk_create(win);
-        if (!v->vk && fallback_software(v) != 0) { free(v); return NULL; }
+        if (!v->vk && sdl_backend_init(v, VID_SOFTWARE) != 0) { free(v); return NULL; }
         v->backend = v->vk ? VID_VULKAN : VID_SOFTWARE;
         break;
 #endif
@@ -257,30 +269,43 @@ Video *vid_init(SDL_Window *win, VidBackend backend) {
         if (sdl_backend_init(v, VID_AUTO) != 0) { free(v); return NULL; }
         break;
     }
+#endif
     return v;
 }
 
 void vid_present(Video *v, const uint32_t *argb, int w, int h) {
     if (!v) return;
     switch (v->backend) {
+#if defined(_WIN32)
+    case VID_AUTO: case VID_GDI:
+        gdi_present(v, argb, w, h); break;
+    case VID_DIRECT3D:
+        d3d_present(v, argb, w, h); break;
+#else
     case VID_AUTO: case VID_SOFTWARE: case VID_OPENGL:
         sdl_present(v, argb, w, h); break;
-#if defined(_WIN32)
-    case VID_GDI:      gdi_present(v, argb, w, h); break;
-    case VID_DIRECT3D: d3d_present(v, argb, w, h); break;
-#endif
 #ifdef HAVE_VULKAN
-    case VID_VULKAN:   vk_present(v->vk, argb, w, h); break;
+    case VID_VULKAN:
+        vk_present(v->vk, argb, w, h); break;
 #endif
-    default:           sdl_present(v, argb, w, h); break;
+#endif
+    default:
+        break;
     }
 }
 
 void vid_shutdown(Video *v) {
     if (!v) return;
-    if (v->tex) SDL_DestroyTexture(v->tex);
-    if (v->ren) SDL_DestroyRenderer(v->ren);
-#if defined(_WIN32)
+#if !defined(_WIN32)
+    if (v->backend != VID_VULKAN) {
+        SdlState *s = (SdlState *)v->sdl;
+        if (s) {
+            if (s->tex) SDL_DestroyTexture((SDL_Texture *)s->tex);
+            if (s->ren) SDL_DestroyRenderer((SDL_Renderer *)s->ren);
+            free(s);
+        }
+    }
+#elif defined(_WIN32)
     if (v->backend == VID_GDI) gdi_shutdown(v);
     if (v->backend == VID_DIRECT3D) d3d_shutdown(v);
 #endif

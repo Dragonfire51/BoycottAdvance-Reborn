@@ -5,9 +5,10 @@
  * bar attached to the window, native file-open dialogs for ROMs and the
  * BIOS, and native message boxes for ROM info / history / about.
  *
- * The window is owned by SDL2, so we subclass its window procedure to
- * intercept the menu commands (WM_COMMAND) and refresh the checkmarks
- * (WM_INITMENUPOPUP); every other message is forwarded to SDL untouched.
+ * The window is owned by the native frontend (win32.c). gui.c subclasses
+ * its window procedure to intercept menu commands (WM_COMMAND) and to
+ * refresh the checkmarks (WM_INITMENUPOPUP); every other message goes to
+ * the frontend's procedure untouched. No SDL is involved.
  *
  * Only compiled on Windows (see Makefile / CI). On other platforms the
  * frontend keeps its software-drawn menu.
@@ -18,6 +19,7 @@
 #include "uiactions.h"
 #include <windows.h>
 #include <commdlg.h>
+#include <mmsystem.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -41,6 +43,52 @@ static void item(HMENU m, const char *label, int id) {
     AppendMenuA(m, MF_STRING, (UINT)id, label);
 }
 static void sep(HMENU m) { AppendMenuA(m, MF_SEPARATOR, 0, NULL); }
+
+/* --------------------------------------------------------------- joystick */
+/* Joystick 0 through WinMM (the same API the original BoycottAdvance
+ * used). POV angles are returned centred on the four axes with a
+ * 45-degree acceptance margin (each axis owns a 90-degree quadrant). */
+int ctl_joy_raw(int *buttons, int *pov) {
+    JOYINFOEX ji;
+    if (buttons) *buttons = 0;
+    if (pov)     *pov     = 0;
+
+    memset(&ji, 0, sizeof ji);
+    ji.dwSize  = sizeof ji;
+    ji.dwFlags = JOY_RETURNBUTTONS | JOY_RETURNPOVCTS | JOY_RETURNCENTERED;
+    if (joyGetPosEx(JOYSTICKID1, &ji) != JOYERR_NOERROR)
+        return 0;
+
+    if (buttons)
+        *buttons = (int)(ji.dwButtons & 0xFFFFFFFFu);
+    if (pov) {
+        if (ji.dwPOV == JOY_POVCENTERED) {
+            *pov = 0;
+        } else {
+            /* dwPOV is a continuous angle in 1/100 degree (0..35999). */
+            int ang = (int)(ji.dwPOV / 100);
+            if      (ang >= 315 || ang < 45)  *pov = JOY_POV_UP;
+            else if (ang < 135)               *pov = JOY_POV_RIGHT;
+            else if (ang < 225)               *pov = JOY_POV_DOWN;
+            else                              *pov = JOY_POV_LEFT;
+        }
+    }
+    return 1;
+}
+
+uint16_t ctl_joy_poll(const int *keys) {
+    int buttons = 0, pov = 0;
+    uint16_t mask = 0x03FF;               /* active-low: nothing held */
+    if (!keys || !ctl_joy_raw(&buttons, &pov)) return mask;
+    for (int i = 0; i < 10; i++) {
+        int v = keys[i];
+        int held = 0;
+        if (JOY_IS_POV(v))                       held = (pov == v);
+        else if (v >= 0 && v < JOY_MAX_BUTTONS)  held = (buttons & (1 << v)) != 0;
+        if (held) mask &= (uint16_t)~(1u << i);
+    }
+    return mask;
+}
 
 static void build_menu(void) {
     HMENU bar = CreateMenu();
@@ -100,12 +148,20 @@ static void build_menu(void) {
     item(opt, "Skip Intro Hacks", M_SKIPINTROS);
     sep(opt);
     HMENU fb = add_popup(opt, "Frame Buffer");
+#if defined(_WIN32)
+    /* The Win32 build links directly to GDI / Direct3D 9; there is no SDL.
+     * The original BoycottAdvance used a fixed native blit; keeping the two
+     * native renderers available mirrors the rebuilt set without SDL. */
+    item(fb, "GDI", M_VB_GDI);
+    item(fb, "Direct3D 9", M_VB_D3D);
+#else
     item(fb, "Auto (SDL)", M_VB_AUTO);
     item(fb, "Software (SDL)", M_VB_SOFT);
     item(fb, "OpenGL (SDL)", M_VB_GL);
     item(fb, "Vulkan", M_VB_VK);
     item(fb, "GDI (Windows)", M_VB_GDI);
     item(fb, "Direct3D 9 (Windows)", M_VB_D3D);
+#endif
     sep(opt);
     HMENU ct = add_popup(opt, "Controls");
     item(ct, "Map A", M_KEY0 + 0);
@@ -227,15 +283,15 @@ void gui_native_message(const char *title, const char *body) {
 int gui_native_active(void)   { return g_hwnd != NULL; }
 int gui_native_quit_requested(void) { return g_quit != 0; }
 
-int gui_native_init(void *sdl_hwnd, const uint32_t *icon, int iw, int ih, GuiCallbacks *cb) {
+int gui_native_init(void *hwnd, const uint32_t *icon, int iw, int ih, GuiCallbacks *cb) {
     (void)icon; (void)iw; (void)ih;
-    if (!sdl_hwnd) return 0;
-    g_hwnd = (HWND)sdl_hwnd;
+    if (!hwnd) return 0;
+    g_hwnd = (HWND)hwnd;
     g_cb = *cb;
     g_quit = 0;
 
-    /* Long-lived SDL menus must not be recomputed while a menu is open;
-     * draw the menu bar into the client area only when idle. */
+    /* Long-lived menus must not be recomputed while a menu is open;
+     * checkmarks are refreshed whenever a popup is about to show. */
     g_oldproc = (WNDPROC)SetWindowLongPtrA(g_hwnd, GWLP_WNDPROC, (LONG_PTR)gui_wndproc);
     if (!g_oldproc) { g_hwnd = NULL; return 0; }
 
@@ -269,4 +325,16 @@ void gui_native_open_bios(void) {}
 void gui_native_shutdown(void) {}
 int  gui_native_init(void *h, const uint32_t *i, int w, int hh, GuiCallbacks *cb) {
     (void)h; (void)i; (void)w; (void)hh; (void)cb; return 0; }
+
+/* Joysticks are polled through WinMM (Windows only); on other platforms
+ * the frontend keeps using only the keyboard. */
+int ctl_joy_raw(int *buttons, int *pov) {
+    if (buttons) *buttons = 0;
+    if (pov)     *pov     = 0;
+    return 0;
+}
+uint16_t ctl_joy_poll(const int *keys) {
+    (void)keys;
+    return 0x03FF;
+}
 #endif

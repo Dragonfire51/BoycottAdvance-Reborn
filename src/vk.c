@@ -126,7 +126,8 @@ static int create_swapchain(Vk *v) {
 }
 
 /* one-time full setup */
-void *vk_create(SDL_Window *win) {
+void *vk_create(void *winp) {
+    SDL_Window *win = (SDL_Window *)winp;
     Vk *v = (Vk *)calloc(1, sizeof(Vk));
     v->win = win;
 
