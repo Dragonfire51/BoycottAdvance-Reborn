@@ -228,24 +228,27 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
 
     /* ---- multiply ---- */
     if ((insn & 0x0FC000F0) == 0x00000090) {   /* MUL/MLA */
+        /* Rd = bits 19-16, Rm = 3-0, Rs = 11-8, Rn (addend) = 15-12. */
         uint32_t rm = read_reg(g, insn & 0xF);
         uint32_t rs = read_reg(g, (insn >> 8) & 0xF);
         bool sacc = (insn >> 21) & 1, ss = (insn >> 20) & 1;
+        int mul_rd = (insn >> 16) & 0xF;
         uint32_t r = rm * rs;
         if (sacc) r += read_reg(g, (insn >> 12) & 0xF);
         if (ss) flags_logic(g, r, (get_cpsr(g) & CPSR_C) ? 1 : 0);
-        write_reg(g, rd, r);
+        write_reg(g, mul_rd, r);
         set_pc(g, r15(g) + 4);
         add_cycles(g, 2);
         return;
     }
-    /* long multiply sun */
+    /* long multiply (UMULL/SMULL/UMLAL/SMLAL) */
     if ((insn & 0x0F8000F0) == 0x00800090) {
-        /* UMULL/SMULL/UMLAL/SMLAL - implement basic unsigned multiply */
+        /* RdHi = bits 19-16, RdLo = bits 15-12, bit22 = signed, bit21 = accumulate. */
         uint32_t rm = read_reg(g, insn & 0xF), rs = read_reg(g, (insn >> 8) & 0xF);
-        uint64_t r = (uint64_t)rm * rs;
-        int rshi = (insn >> 12) & 0xF, rlo = (insn >> 16) & 0xF;
-        bool acc = (insn >> 21) & 1;
+        int rshi = (insn >> 16) & 0xF, rlo = (insn >> 12) & 0xF;
+        bool acc = (insn >> 21) & 1, sgn = (insn >> 22) & 1;
+        uint64_t r = sgn ? (uint64_t)((int64_t)(int32_t)rm * (int32_t)rs)
+                         : (uint64_t)rm * rs;
         if (acc) r += ((uint64_t)read_reg(g, rlo)) | ((uint64_t)read_reg(g, rshi) << 32);
         write_reg(g, rlo, (uint32_t)r);
         write_reg(g, rshi, (uint32_t)(r >> 32));
