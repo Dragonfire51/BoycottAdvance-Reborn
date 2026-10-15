@@ -46,7 +46,8 @@ static void sep(HMENU m) { AppendMenuA(m, MF_SEPARATOR, 0, NULL); }
 
 /* --------------------------------------------------------------- joystick */
 /* Joystick 0 through WinMM (the same API the original BoycottAdvance
- * used). POV angles are returned centred on the four axes with a
+ * used). The Controllers Configuration dialog and ctl_joy_poll share the
+ * raw state here; POV angles are returned centred on the four axes with a
  * 45-degree acceptance margin (each axis owns a 90-degree quadrant). */
 int ctl_joy_raw(int *buttons, int *pov) {
     JOYINFOEX ji;
@@ -62,9 +63,9 @@ int ctl_joy_raw(int *buttons, int *pov) {
     if (buttons)
         *buttons = (int)(ji.dwButtons & 0xFFFFFFFFu);
     if (pov) {
-        if (ji.dwPOV == JOY_POVCENTERED) {
+        if (ji.dwPOV == JOY_POVCENTERED)
             *pov = 0;
-        } else {
+        else {
             /* dwPOV is a continuous angle in 1/100 degree (0..35999). */
             int ang = (int)(ji.dwPOV / 100);
             if      (ang >= 315 || ang < 45)  *pov = JOY_POV_UP;
@@ -80,7 +81,7 @@ uint16_t ctl_joy_poll(const int *keys) {
     int buttons = 0, pov = 0;
     uint16_t mask = 0x03FF;               /* active-low: nothing held */
     if (!keys || !ctl_joy_raw(&buttons, &pov)) return mask;
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < JOY_KP_COUNT; i++) {
         int v = keys[i];
         int held = 0;
         if (JOY_IS_POV(v))                       held = (pov == v);

@@ -45,6 +45,12 @@ static const int KP_DEFAULT[KP_COUNT] = {
     SDL_SCANCODE_A, SDL_SCANCODE_S, SDL_SCANCODE_BACKSPACE, SDL_SCANCODE_RETURN,
     SDL_SCANCODE_RIGHT, SDL_SCANCODE_LEFT, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN,
     SDL_SCANCODE_D, SDL_SCANCODE_F };
+/* Default joystick assignments (joystick 0): the four face buttons map to
+ * A/B/Select/Start, the POV hat is the D-pad and R/L ride on buttons 4/5. */
+static const int JOY_DEFAULT[KP_COUNT] = {
+    0, 1, 2, 3,
+    JOY_POV_RIGHT, JOY_POV_LEFT, JOY_POV_UP, JOY_POV_DOWN,
+    4, 5 };
 
 /* ------------------------------------------------------------------ config */
 typedef struct {
@@ -54,6 +60,7 @@ typedef struct {
     int  biosenable, biosfastboot, skipintros, autorun, flashid, state_slot;
     int  video_backend;
     int  keymap[KP_COUNT];        /* SDL_Scancode per keypad button */
+    int  joymap[KP_COUNT];        /* joystick: button index or JOY_POV_*  */
     char lastdir[512], rompath[512];
 } Config;
 static Config cfg;
@@ -107,6 +114,10 @@ static void cfg_load(const char *path) {
         char key[32]; snprintf(key, sizeof key, "Key_%s", KP_NAME[i]);
         cfg.keymap[i] = ini_geti(path, key, KP_DEFAULT[i]);
     }
+    for (int i = 0; i < KP_COUNT; i++) {
+        char key[32]; snprintf(key, sizeof key, "JoyGBA_%s", KP_NAME[i]);
+        cfg.joymap[i] = ini_geti(path, key, JOY_DEFAULT[i]);
+    }
 }
 static void cfg_save(const char *path) {
     FILE *f = fopen(path, "wt"); if (!f) return;
@@ -121,6 +132,8 @@ static void cfg_save(const char *path) {
       cfg.skipintros, cfg.autorun, cfg.flashid, cfg.video_backend, cfg.lastdir);
     for (int i = 0; i < KP_COUNT; i++)
         fprintf(f, "Key_%s %d\n", KP_NAME[i], cfg.keymap[i]);
+    for (int i = 0; i < KP_COUNT; i++)
+        fprintf(f, "JoyGBA_%s %d\n", KP_NAME[i], cfg.joymap[i]);
     fclose(f);
 }
 
@@ -141,6 +154,9 @@ static uint16_t key_state(void) {
     const Uint8 *s = SDL_GetKeyboardState(NULL);
     for (int i = 0; i < KP_COUNT; i++)
         if (cfg.keymap[i] >= 0 && s[cfg.keymap[i]]) k &= ~(1u << i);
+    /* Joystick (WinMM) only exists on Windows; elsewhere ctl_joy_poll is
+     * a no-op that keeps the mask untouched. */
+    k &= ctl_joy_poll(cfg.joymap);
     return k;
 }
 
@@ -422,8 +438,8 @@ static void do_action(int id) {
     case M_ABOUT: show_about(); break;
     case M_VB_AUTO: case M_VB_SOFT: case M_VB_GL: case M_VB_VK: case M_VB_GDI: case M_VB_D3D: {
         /* request a backend; the render loop re-creates the presenter. */
-        static const VidBackend map[6] = { VID_AUTO, VID_SOFTWARE, VID_OPENGL,
-                                           VID_VULKAN, VID_GDI, VID_DIRECT3D };
+        static const int map[6] = { VID_AUTO, VID_SOFTWARE, VID_OPENGL,
+                                    VID_VULKAN, VID_GDI, VID_DIRECT3D };
         cfg.video_backend = map[id - M_VB_AUTO];
         break; }
     default:
@@ -464,8 +480,8 @@ static int item_checked(int id) {
         if (id>=M_ZOOM1 && id<=M_ZOOM4) return cfg.zoom==id-M_ZOOM1+1;
         if (id>=M_SKIP0 && id<=M_SKIP5) return cfg.frameskip==id-M_SKIP0;
         if (id>=M_VB_AUTO && id<=M_VB_D3D) {
-            static const VidBackend map[6] = { VID_AUTO, VID_SOFTWARE, VID_OPENGL,
-                                               VID_VULKAN, VID_GDI, VID_DIRECT3D };
+            static const int map[6] = { VID_AUTO, VID_SOFTWARE, VID_OPENGL,
+                                        VID_VULKAN, VID_GDI, VID_DIRECT3D };
             return cfg.video_backend == map[id-M_VB_AUTO];
         }
         return 0;
@@ -474,8 +490,26 @@ static int item_checked(int id) {
 
 /* ------------------------------------------------------------------- draw */
 static const char *scancode_name(int sc) {
+#ifdef _WIN32
+    /* SDL_GetScancodeName is not console-friendly in the MinGW build and
+     * the native menu has no room for it; fall back to a short label. */
+    (void)sc;
+    return "?";
+#else
     const char *n = SDL_GetScancodeName((SDL_Scancode)sc);
     return (n && n[0]) ? n : "?";
+#endif
+}
+/* Short label for a joystick assignment: a physical button or one of the
+ * JOY_POV_* sentinels ("POV Up/Right/Down/Left"). */
+static void joy_binding_label(int joy, char *out, size_t n) {
+    switch (joy) {
+    case JOY_POV_UP:    snprintf(out, n, "POV Up");    break;
+    case JOY_POV_RIGHT: snprintf(out, n, "POV Right"); break;
+    case JOY_POV_DOWN:  snprintf(out, n, "POV Down");  break;
+    case JOY_POV_LEFT:  snprintf(out, n, "POV Left");  break;
+    default:            snprintf(out, n, "Joy %d", joy); break;
+    }
 }
 static void draw_menubar(FB *fb) {
     fb_rect(fb,0,0,fb->w,MENUBAR_H,0xFFDCDCDC);
@@ -502,8 +536,12 @@ static void draw_menubar(FB *fb) {
         fb_text(fb,mx+4,y+4,chk?"*":" ",c);
         fb_text(fb,mx+18,y+4,m->label,c);
         if (m->id >= M_KEY0 && m->id <= M_KEY0_END) {
-            char kb[32]; snprintf(kb,sizeof kb,"[%s]",scancode_name(cfg.keymap[m->id-M_KEY0]));
-            fb_text(fb,mx+mw-text_w(kb)-6,y+4,kb,c);
+            int kp = m->id - M_KEY0;
+            char keylab[40], joylab[24], whole[96];
+            snprintf(keylab,sizeof keylab,"[%s]",scancode_name(cfg.keymap[kp]));
+            joy_binding_label(cfg.joymap[kp], joylab, sizeof joylab);
+            snprintf(whole,sizeof whole,"%s | %s",keylab,joylab);
+            fb_text(fb,mx+mw-text_w(whole)-6,y+4,whole,c);
         }
         y += 16;
     }
