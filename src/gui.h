@@ -7,6 +7,37 @@
 #define GUI_H
 #include <stdint.h>
 
+/* Joystick configuration shared with the Controllers Configuration
+ * dialog. Physical buttons live in 0..JOY_MAX_BUTTONS-1; the POV (D-pad)
+ * directions use sentinel values that can never collide with a button. */
+#define JOY_MAX_BUTTONS 32
+#define JOY_POV_UP      771
+#define JOY_POV_RIGHT   772
+#define JOY_POV_DOWN    773
+#define JOY_POV_LEFT    774
+#define JOY_IS_POV(v)   (((v) >= JOY_POV_UP) && ((v) <= JOY_POV_LEFT))
+
+/* GBA keypad indices in the order used by the joystick mapping and the
+ * Controllers Configuration dialog. Kept parallel to KP_* in main.c. */
+enum {
+    JOY_KP_A = 0, JOY_KP_B, JOY_KP_SELECT, JOY_KP_START,
+    JOY_KP_RIGHT, JOY_KP_LEFT, JOY_KP_UP, JOY_KP_DOWN,
+    JOY_KP_R, JOY_KP_L,
+    JOY_KP_COUNT
+};
+
+/* Query joystick 0 (WinMM). On success it stores the held-button bitmask
+ * in *buttons and the current POV direction (one of JOY_POV_*, or 0 when
+ * centered / absent) in *pov, then returns 1. Without a joystick it
+ * writes zeros and returns 0. */
+int ctl_joy_raw(int *buttons, int *pov);
+
+/* Poll joystick 0 and fold its buttons + POV hat into an active-low GBA
+ * keypad mask (same convention as the KEYINPUT register). keys[] must
+ * hold JOY_KP_COUNT assignments, each a button index or a JOY_POV_*
+ * sentinel. Returns 0x03FF (nothing pressed) when no joystick exists. */
+uint16_t ctl_joy_poll(const int *keys);
+
 typedef struct {
     void (*action)(int id);                        /* run a menu command     */
     int  (*checked)(int id);                        /* checkmark state 0/1    */

@@ -18,6 +18,7 @@
 #include "uiactions.h"
 #include <windows.h>
 #include <commdlg.h>
+#include <mmsystem.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -41,6 +42,53 @@ static void item(HMENU m, const char *label, int id) {
     AppendMenuA(m, MF_STRING, (UINT)id, label);
 }
 static void sep(HMENU m) { AppendMenuA(m, MF_SEPARATOR, 0, NULL); }
+
+/* --------------------------------------------------------------- joystick */
+/* Joystick 0 through WinMM (the same API the original BoycottAdvance
+ * used). The Controllers Configuration dialog and ctl_joy_poll share the
+ * raw state here; POV angles are returned centred on the four axes with a
+ * 45-degree acceptance margin (each axis owns a 90-degree quadrant). */
+int ctl_joy_raw(int *buttons, int *pov) {
+    JOYINFOEX ji;
+    if (buttons) *buttons = 0;
+    if (pov)     *pov     = 0;
+
+    memset(&ji, 0, sizeof ji);
+    ji.dwSize  = sizeof ji;
+    ji.dwFlags = JOY_RETURNBUTTONS | JOY_RETURNPOVCTS | JOY_RETURNCENTERED;
+    if (joyGetPosEx(JOYSTICKID1, &ji) != JOYERR_NOERROR)
+        return 0;
+
+    if (buttons)
+        *buttons = (int)(ji.dwButtons & 0xFFFFFFFFu);
+    if (pov) {
+        if (ji.dwPOV == JOY_POVCENTERED)
+            *pov = 0;
+        else {
+            /* dwPOV is a continuous angle in 1/100 degree (0..35999). */
+            int ang = (int)(ji.dwPOV / 100);
+            if      (ang >= 315 || ang < 45)  *pov = JOY_POV_UP;
+            else if (ang < 135)               *pov = JOY_POV_RIGHT;
+            else if (ang < 225)               *pov = JOY_POV_DOWN;
+            else                              *pov = JOY_POV_LEFT;
+        }
+    }
+    return 1;
+}
+
+uint16_t ctl_joy_poll(const int *keys) {
+    int buttons = 0, pov = 0;
+    uint16_t mask = 0x03FF;               /* active-low: nothing held */
+    if (!keys || !ctl_joy_raw(&buttons, &pov)) return mask;
+    for (int i = 0; i < JOY_KP_COUNT; i++) {
+        int v = keys[i];
+        int held = 0;
+        if (JOY_IS_POV(v))                       held = (pov == v);
+        else if (v >= 0 && v < JOY_MAX_BUTTONS)  held = (buttons & (1 << v)) != 0;
+        if (held) mask &= (uint16_t)~(1u << i);
+    }
+    return mask;
+}
 
 static void build_menu(void) {
     HMENU bar = CreateMenu();
@@ -269,4 +317,16 @@ void gui_native_open_bios(void) {}
 void gui_native_shutdown(void) {}
 int  gui_native_init(void *h, const uint32_t *i, int w, int hh, GuiCallbacks *cb) {
     (void)h; (void)i; (void)w; (void)hh; (void)cb; return 0; }
+
+/* Joysticks are polled through WinMM (Windows only); on other platforms
+ * the frontend keeps using only the keyboard. */
+int ctl_joy_raw(int *buttons, int *pov) {
+    if (buttons) *buttons = 0;
+    if (pov)     *pov     = 0;
+    return 0;
+}
+uint16_t ctl_joy_poll(const int *keys) {
+    (void)keys;
+    return 0x03FF;
+}
 #endif
