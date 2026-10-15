@@ -596,7 +596,7 @@ static void thumb_exec_at(GBA *g, uint16_t insn) {
         bool b = op == 0x7;
         bool l = insn & 0x0800;
         uint32_t off = (insn >> 6) & 0x1F;
-        uint32_t addr = read_reg(g, rn) + (b ? off : (off << 2));
+        uint32_t addr = read_reg(g, rs) + (b ? off : (off << 2));
         if (l) write_reg(g, rd, b ? gba_read8(g, addr) : gba_read32(g, addr));
         else { if (b) gba_write8(g, addr, read_reg(g, rd)); else gba_write32(g, addr, read_reg(g, rd)); }
         set_pc(g, next); add_cycles(g, 1); return;
@@ -605,7 +605,7 @@ static void thumb_exec_at(GBA *g, uint16_t insn) {
     /* format 10: load/store halfword (1000) */
     if (op == 0x8) {
         bool l = insn & 0x0800;
-        uint32_t addr = read_reg(g, rn) + (((insn >> 6) & 0x1F) << 1);
+        uint32_t addr = read_reg(g, rs) + (((insn >> 6) & 0x1F) << 1);
         if (l) write_reg(g, rd, gba_read16(g, addr));
         else gba_write16(g, addr, read_reg(g, rd));
         set_pc(g, next); add_cycles(g, 1); return;
