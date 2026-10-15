@@ -27,17 +27,17 @@ uint16_t io_read16(GBA *g, uint32_t addr) {
     switch (reg) {
     /* ---- display ---- */
     case 0x000: return g->ppu.dispcnt;
-    case 0x002: {
+    case 0x004: {
         uint16_t v = g->ppu.dispstat & 0xFFF8;
         if (g->ppu.vcount >= 160) v |= 0x0001;               /* VBlank */
         if (g->ppu.vcount == ((g->ppu.dispstat >> 8) & 0xFF)) v |= 0x0004;
         return v;
     }
-    case 0x004: return g->ppu.vcount;
-    case 0x006: return g->ppu.bgcnt[0];
-    case 0x008: return g->ppu.bgcnt[1];
-    case 0x00A: return g->ppu.bgcnt[2];
-    case 0x00C: return g->ppu.bgcnt[3];
+    case 0x006: return g->ppu.vcount;
+    case 0x008: return g->ppu.bgcnt[0];
+    case 0x00A: return g->ppu.bgcnt[1];
+    case 0x00C: return g->ppu.bgcnt[2];
+    case 0x00E: return g->ppu.bgcnt[3];
     case 0x010: return g->ppu.bghofs[0];
     case 0x012: return g->ppu.bgvofs[0];
     case 0x014: return g->ppu.bghofs[1];
@@ -133,12 +133,12 @@ void io_write16(GBA *g, uint32_t addr, uint16_t v) {
     uint32_t reg = addr & 0x3FE;
     switch (reg) {
     case 0x000: g->ppu.dispcnt = v; return;
-    case 0x002: g->ppu.dispstat = (g->ppu.dispstat & 0x0007) | (v & 0xFFF8); return;
-    case 0x004: return;                                   /* VCOUNT read-only */
-    case 0x006: g->ppu.bgcnt[0] = v; return;
-    case 0x008: g->ppu.bgcnt[1] = v; return;
-    case 0x00A: g->ppu.bgcnt[2] = v; return;
-    case 0x00C: g->ppu.bgcnt[3] = v; return;
+    case 0x004: g->ppu.dispstat = (g->ppu.dispstat & 0x0007) | (v & 0xFFF8); return;
+    case 0x006: return;                                   /* VCOUNT read-only */
+    case 0x008: g->ppu.bgcnt[0] = v; return;
+    case 0x00A: g->ppu.bgcnt[1] = v; return;
+    case 0x00C: g->ppu.bgcnt[2] = v; return;
+    case 0x00E: g->ppu.bgcnt[3] = v; return;
     case 0x010: g->ppu.bghofs[0] = v & 0x1FF; return;
     case 0x012: g->ppu.bgvofs[0] = v & 0x1FF; return;
     case 0x014: g->ppu.bghofs[1] = v & 0x1FF; return;

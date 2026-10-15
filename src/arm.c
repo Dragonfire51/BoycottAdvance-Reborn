@@ -372,7 +372,8 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
             write_reg(g, rd, g->cpu.spsr[bank_of(get_cpsr(g))]);
             set_pc(g, r15(g) + 4); add_cycles(g, 1); return;
         }
-        if ((insn & 0x0FB0F000) == 0x0120F000) {          /* MSR (CPSR or SPSR) */
+        if ((insn & 0x0FB0F000) == 0x0120F000 ||   /* MSR reg: 00010 R 10 */
+            (insn & 0x0FB0F000) == 0x0320F000) {   /* MSR imm: 00110 R 10 */
             uint32_t val = o.value;
             uint32_t mask = 0;
             if (insn & 0x00010000) mask |= 0x000000FF;    /* control */
@@ -457,7 +458,19 @@ static void thumb_exec_at(GBA *g, uint16_t insn) {
     uint32_t rd = insn & 7, rs = (insn >> 3) & 7, rn = (insn >> 6) & 7;
     uint32_t next = r15(g) + 2;
 
-    /* format 1: move shifted register (0000/0001) */
+    /* format 2: add/subtract (00011) 0x1800-0x1FFF */
+    if ((insn & 0xF800) == 0x1800) {
+        bool immf = insn & 0x0400;
+        bool sub  = insn & 0x0200;
+        uint32_t b = immf ? ((insn >> 6) & 7) : read_reg(g, rn);
+        uint32_t a = read_reg(g, rs);
+        uint32_t r = sub ? a - b : a + b;
+        if (sub) flags_sub3(g, a, b, r, 1); else flags_add3(g, a, b, r, 0);
+        write_reg(g, rd, r);
+        set_pc(g, next); add_cycles(g, 1); return;
+    }
+
+    /* format 1: move shifted register (0000/0001) 0x0000-0x17FF */
     if (op == 0x0 || op == 0x1) {
         uint32_t sh = (insn >> 6) & 0x1F;
         uint32_t kind = (insn >> 11) & 3;
@@ -477,8 +490,8 @@ static void thumb_exec_at(GBA *g, uint16_t insn) {
         set_pc(g, next); add_cycles(g, 1); return;
     }
 
-    /* format 3: MOV/CMP/ADD/SUB immediate (0010) */
-    if (op == 0x2) {
+    /* format 3: MOV/CMP/ADD/SUB immediate (00100/00101/00110/00111) */
+    if (op == 0x2 || op == 0x3) {
         uint32_t imm8 = insn & 0xFF;
         uint32_t rd8 = (insn >> 8) & 7;
         uint32_t subop = (insn >> 11) & 3;
@@ -487,18 +500,6 @@ static void thumb_exec_at(GBA *g, uint16_t insn) {
         else if (subop == 1) { flags_sub3(g, a, imm8, a - imm8, 1); }
         else if (subop == 2) { uint32_t r = a + imm8; flags_add3(g, a, imm8, r, 0); write_reg(g, rd8, r); }
         else { uint32_t r = a - imm8; flags_sub3(g, a, imm8, r, 1); write_reg(g, rd8, r); }
-        set_pc(g, next); add_cycles(g, 1); return;
-    }
-
-    /* format 2: add/subtract (0011) */
-    if (op == 0x3) {
-        bool immf = insn & 0x0400;
-        bool sub  = insn & 0x0200;
-        uint32_t b = immf ? ((insn >> 6) & 7) : read_reg(g, rn);
-        uint32_t a = read_reg(g, rs);
-        uint32_t r = sub ? a - b : a + b;
-        if (sub) flags_sub3(g, a, b, r, 1); else flags_add3(g, a, b, r, 0);
-        write_reg(g, rd, r);
         set_pc(g, next); add_cycles(g, 1); return;
     }
 

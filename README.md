@@ -115,6 +115,17 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.3.1** — three core CPU/IO fixes that make real games boot and
+  render: the Thumb decoder mishandled *add/subtract* (format 2,
+  `0x1800-0x1FFF`) and *mov/cmp/add/sub immediate* (format 3,
+  `0x2000-0x3FFF`), so `ADD Rd,#imm` and register `ADD/SUB` silently did
+  the wrong thing (e.g. a `word-copy` loop never advanced, hanging the
+  ROM); `MSR` with an **immediate** operand (`0x0320F000`) was not
+  recognised, so the condition-flag tests failed; and the video I/O
+  registers were offset by two bytes (`DISPSTAT`, `VCOUNT`, `BG0CNT`…
+  `BG3CNT`), which broke VBlank detection and every background layer.
+  Verified with the jsmolka ARM/Thumb/Memory/BIOS suites ("All tests
+  passed") and the PPU `shades`/`stripes` tests.
 - **v1.3.0** — fixed the `MLA`/`MUL` destination-register decode (the
   multiply result landed in the wrong register, so address maths — and
   therefore almost every game — rendered wrong or nothing at all); fixed
