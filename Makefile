@@ -9,7 +9,7 @@ ifneq ($(VK_LIBS),)
   LDLIBS += $(VK_LIBS)
 endif
 
-SRC = src/gba.c src/mem.c src/arm.c src/ppu.c src/apu.c src/bios.c src/fb.c src/video.c src/main.c
+SRC = src/gba.c src/mem.c src/arm.c src/ppu.c src/apu.c src/bios.c src/fb.c src/video.c src/gui.c src/main.c
 ifneq ($(VK_LIBS),)
   SRC += src/vk.c
 endif

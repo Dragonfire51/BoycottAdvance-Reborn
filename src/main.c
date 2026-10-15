@@ -14,7 +14,10 @@
 #include "fb.h"
 #include "video.h"
 #include "icon.h"
+#include "gui.h"
+#include "uiactions.h"
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_syswm.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,6 +59,9 @@ typedef struct {
 static Config cfg;
 static GBA   *g;
 static int    g_paused;
+static int    gui_active;          /* native Win32 menu bar in use? */
+static SDL_AudioDeviceID g_adev;   /* so menu callbacks can pause audio */
+static SDL_Window *g_win;          /* main window (for menu callbacks) */
 
 /* ------------------------------------------------------------------ .ini */
 static void ini_get(const char *path, const char *key, char *out, size_t n) {
@@ -139,19 +145,8 @@ static uint16_t key_state(void) {
 }
 
 /* ------------------------------------------------------------- menu model */
-enum {
-    M_LOADROM=1, M_ROMINFO, M_AUTORUN, M_RUNPAUSE, M_RESET, M_STATE_SLOT,
-    M_LOADSTATE, M_SAVESTATE, M_EXIT,
-    M_ZOOM1, M_ZOOM2, M_ZOOM3, M_ZOOM4, M_FLASHID, M_SCANLINE, M_FIT, M_FULLSCREEN,
-    M_SKIP0, M_SKIP1, M_SKIP2, M_SKIP3, M_SKIP4, M_SKIP5, M_AUTOSKIP, M_SMOOTH,
-    M_THROTTLE, M_SHOWFPS, M_SHOWFPSPCT, M_SOUND, M_DSOUNDA, M_DSOUNDB, M_GBCSOUND,
-    M_REVSTEREO, M_SELBIOS, M_BIOSEN, M_BIOSBOOT, M_SKIPINTROS, M_CONTROLLERS,
-    M_HISTORY, M_CMDLINE, M_ABOUT,
-    /* Frame Buffer backend items (contiguous) */
-    M_VB_AUTO, M_VB_SOFT, M_VB_GL, M_VB_VK, M_VB_GDI, M_VB_D3D,
-    /* Controls remap items (contiguous, one per keypad button) */
-    M_KEY0, M_KEY0_END = M_KEY0 + KP_COUNT - 1
-};
+/* The command identifiers (M_*) live in uiactions.h, shared with the
+ * native Win32 GUI (gui.c). */
 typedef struct { const char *label; int id; } MenuItem;
 static MenuItem m_file[] = {
     {"Load ROM...",M_LOADROM},{"ROM Information...",M_ROMINFO},{"Auto Run",M_AUTORUN},{"",0},
@@ -179,7 +174,7 @@ static MenuItem m_options[] = {
     {"Map A",M_KEY0+KP_A},{"Map B",M_KEY0+KP_B},{"Map Select",M_KEY0+KP_SELECT},
     {"Map Start",M_KEY0+KP_START},{"Map Right",M_KEY0+KP_RIGHT},{"Map Left",M_KEY0+KP_LEFT},
     {"Map Up",M_KEY0+KP_UP},{"Map Down",M_KEY0+KP_DOWN},{"Map R",M_KEY0+KP_R},{"Map L",M_KEY0+KP_L},
-    {"Reset Key Mappings",M_CONTROLLERS},{NULL,0}};
+    {"Reset Key Mappings",M_CONTROLS},{NULL,0}};
 static MenuItem m_help[] = {
     {"History...",M_HISTORY},{"Command Line Options...",M_CMDLINE},{"About...",M_ABOUT},{NULL,0}};
 static struct { const char *title; MenuItem *items; } menus[] = {
@@ -196,6 +191,7 @@ static int menu_x(int i) { int x=4; for (int j=0;j<i;j++) x += text_w(menus[j].t
 static int menu_width(MenuItem *it) { int w=0; for (MenuItem*m=it;m->label;++m) if(m->label[0]&&text_w(m->label)>w) w=text_w(m->label); return w+24; }
 static int menu_height(MenuItem *it) { int h=4; for (MenuItem*m=it;m->label;++m) h += m->label[0]?16:7; return h; }
 static void dlg_text(const char *t, const char *b) {
+    if (gui_active) { gui_native_message(t, b); return; }
     dialog_kind = 1; snprintf(dialog_title,sizeof dialog_title,"%s",t);
     snprintf(dialog_body,sizeof dialog_body,"%s",b);
 }
@@ -298,6 +294,30 @@ static void load_rom(const char *path) {
         gba_reset(g); g_paused = 0;
     } else dlg_text("Error", "Cannot load ROM file.");
 }
+
+/* ---- callbacks for the native Win32 GUI (see gui.c) ---- */
+static void do_action(int id);
+static int  item_checked(int id);
+#ifdef _WIN32
+static void gui_cb_action(int id)   { do_action(id); }
+static int  gui_cb_checked(int id)  { return item_checked(id); }
+static void gui_cb_loadrom(const char *path) { load_rom(path); }
+static void gui_cb_setbios(const char *path) { gba_load_bios(g, path); }
+static void gui_cb_pause(void)  { if (g_adev) SDL_PauseAudioDevice(g_adev, 1); }
+static void gui_cb_resume(void) { if (g_adev) SDL_PauseAudioDevice(g_adev, 0); }
+#endif
+
+static void gui_native_setup(void) {
+#ifdef _WIN32
+    SDL_SysWMinfo wm;
+    SDL_VERSION(&wm.version);
+    if (!SDL_GetWindowWMInfo(g_win, &wm) || wm.subsystem != SDL_SYSWM_WINDOWS) return;
+    GuiCallbacks cb = { gui_cb_action, gui_cb_checked, gui_cb_loadrom,
+                        gui_cb_setbios, gui_cb_pause, gui_cb_resume };
+    gui_active = gui_native_init((void *)wm.info.win.window,
+                                 gba_icon_argb, GBA_ICON_W, GBA_ICON_H, &cb);
+#endif
+}
 static void state_path(char *b, size_t n) { snprintf(b,n,"state%d.sav",cfg.state_slot); }
 static void show_rom_info(void) {
     char b[1024];
@@ -349,15 +369,20 @@ static void reset_keys(void) {
 static void begin_key_capture(int kp) {
     key_capture = kp; dialog_kind = 3;
     snprintf(dialog_title, sizeof dialog_title, "Map key: %s", KP_NAME[kp]);
+    if (gui_active)
+        gui_native_message("Controls",
+            "Press the key you want to assign on the emulator window.\n"
+            "ESC cancels.");
 }
 static void toggle_fullscreen(SDL_Window *w) {
     static int fs = 0; fs = !fs;
     SDL_SetWindowFullscreen(w, fs ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
 }
 
-static void do_action(int id, SDL_Window *win) {
+static void do_action(int id) {
     switch (id) {
-    case M_LOADROM: rom_browser_open(); break;
+    case M_LOADROM:
+        if (gui_active) gui_native_open_rom(); else rom_browser_open(); break;
     case M_ROMINFO: show_rom_info(); break;
     case M_AUTORUN: cfg.autorun = !cfg.autorun; break;
     case M_RUNPAUSE: g_paused = !g_paused; break;
@@ -371,7 +396,7 @@ static void do_action(int id, SDL_Window *win) {
     case M_FLASHID: cfg.flashid = (cfg.flashid+1)%3; break;
     case M_SCANLINE: cfg.scanline = !cfg.scanline; break;
     case M_FIT: cfg.scalemode = (cfg.scalemode==1)?0:1; break;
-    case M_FULLSCREEN: toggle_fullscreen(win); cfg.scalemode = 2; break;
+    case M_FULLSCREEN: toggle_fullscreen(g_win); cfg.scalemode = 2; break;
     case M_SKIP0: case M_SKIP1: case M_SKIP2: case M_SKIP3: case M_SKIP4: case M_SKIP5:
         cfg.frameskip = id-M_SKIP0; g->frameskip = cfg.frameskip; break;
     case M_AUTOSKIP: cfg.autoframeskip = !cfg.autoframeskip; break;
@@ -384,11 +409,14 @@ static void do_action(int id, SDL_Window *win) {
     case M_DSOUNDB: cfg.dsound_b = !cfg.dsound_b; break;
     case M_GBCSOUND: cfg.gbc_sound = !cfg.gbc_sound; break;
     case M_REVSTEREO: cfg.reverse_stereo = !cfg.reverse_stereo; break;
-    case M_SELBIOS: gba_load_bios(g, "gba_bios.bin"); dlg_text("BIOS","BIOS loaded from gba_bios.bin"); break;
+    case M_SELBIOS:
+        if (gui_active) gui_native_open_bios();
+        else { gba_load_bios(g, "gba_bios.bin"); dlg_text("BIOS","BIOS loaded from gba_bios.bin"); }
+        break;
     case M_BIOSEN: cfg.biosenable = !cfg.biosenable; g->bios_enabled = cfg.biosenable; break;
     case M_BIOSBOOT: cfg.biosfastboot = !cfg.biosfastboot; g->bios_fastboot = cfg.biosfastboot; break;
     case M_SKIPINTROS: cfg.skipintros = !cfg.skipintros; break;
-    case M_CONTROLLERS: reset_keys(); break;
+    case M_CONTROLS: reset_keys(); break;
     case M_HISTORY: show_history(); break;
     case M_CMDLINE: show_cmdline(); break;
     case M_ABOUT: show_about(); break;
@@ -402,6 +430,7 @@ static void do_action(int id, SDL_Window *win) {
         if (id >= M_KEY0 && id <= M_KEY0_END) begin_key_capture(id - M_KEY0);
         break;
     }
+    if (gui_active) gui_native_sync();
 }
 
 /* ---------------------------------------------------------------- hit test */
@@ -517,10 +546,22 @@ int main(int argc, char **argv) {
     }
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, cfg.smooth?"1":"0");
 
+    g_win = win;
+
+    /* Native Win32 menu bar (original BoycottAdvance look). When it is set
+     * up the software menu bar is dropped and the client area becomes the
+     * pure game view. */
+    gui_native_setup();
+    if (gui_active) {
+        SDL_SetWindowSize(win, SCREEN_W*cfg.zoom, SCREEN_H*cfg.zoom);
+        SDL_SetWindowMinimumSize(win, SCREEN_W, SCREEN_H);
+    }
+
     SDL_AudioSpec want,hv; SDL_zero(want);
     want.freq=AUDIO_FREQ; want.format=AUDIO_S16SYS; want.channels=AUDIO_CHANNELS;
     want.samples=1024; want.callback=audio_cb; want.userdata=g;
     SDL_AudioDeviceID adev = SDL_OpenAudioDevice(NULL,0,&want,&hv,0);
+    g_adev = adev;
     if (adev) SDL_PauseAudioDevice(adev,0);
 
     FB  fb;
@@ -532,6 +573,7 @@ int main(int argc, char **argv) {
     int fps_n = 0; float fps = 0;
 
     while (running) {
+        if (gui_active && gui_native_quit_requested()) running = 0;
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_QUIT) running = 0;
@@ -539,6 +581,7 @@ int main(int argc, char **argv) {
                 fb_w = fb_h = 0;   /* force re-create at the new size */
             } else if (ev.type == SDL_MOUSEBUTTONDOWN && ev.button.button == SDL_BUTTON_LEFT) {
                 int mx = ev.button.x, my = ev.button.y;
+                if (gui_active) continue;   /* menu handled by the native menu bar */
                 if (dialog_kind == 2) {
                     int list_y = 64;
                     if (my>=list_y && my<list_y+16*rom_count) {
@@ -552,7 +595,7 @@ int main(int argc, char **argv) {
                     menu_open = (hit==menu_open)?-1:hit; menu_hover = -1;
                 } else if (menu_open >= 0) {
                     int it = menu_item_hit(menu_open,mx,my);
-                    if (it>=0) { do_action(menus[menu_open].items[it].id,win); menu_open=-1; }
+                    if (it>=0) { do_action(menus[menu_open].items[it].id); menu_open=-1; }
                     else menu_open = -1;
                 }
             } else if (ev.type == SDL_MOUSEMOTION && menu_open >= 0) {
@@ -608,17 +651,18 @@ int main(int argc, char **argv) {
 
         /* --- compose the frame --- */
         fb_fill(&fb, 0xFF000000);
-        int aw = fb.w, ah = fb.h - MENUBAR_H;
+        int mh = gui_active ? 0 : MENUBAR_H;   /* native GUI has its own bar */
+        int aw = fb.w, ah = fb.h - mh;
         int dstx, dsty, dstw, dsth;
         if (cfg.scalemode == 1) {                 /* fit to window */
             int s = (aw/SCREEN_W < ah/SCREEN_H) ? aw/SCREEN_W : ah/SCREEN_H;
             if (s<1) s=1;
             dstw = SCREEN_W*s; dsth = SCREEN_H*s;
-            dstx = (aw-dstw)/2; dsty = MENUBAR_H+(ah-dsth)/2;
+            dstx = (aw-dstw)/2; dsty = mh+(ah-dsth)/2;
         } else {
             dstw = SCREEN_W*cfg.zoom; dsth = SCREEN_H*cfg.zoom;
             dstx = (aw-dstw)/2; if (dstx<0) dstx=0;
-            dsty = MENUBAR_H;
+            dsty = mh;
         }
         fb_blit_frame(&fb, dstx, dsty, dstw, dsth, g->ppu.frame, cfg.scanline);
 
@@ -626,9 +670,9 @@ int main(int argc, char **argv) {
             char t[64];
             if (cfg.showfps_pct) snprintf(t,sizeof t,"%d%%",(int)(fps*100/60));
             else snprintf(t,sizeof t,"%.0f fps",fps);
-            fb_text(&fb, fb.w-text_w(t)-6, MENUBAR_H+4, t, 0xFFFFFF00);
+            fb_text(&fb, fb.w-text_w(t)-6, mh+4, t, 0xFFFFFF00);
         }
-        draw_menubar(&fb);
+        if (!gui_active) draw_menubar(&fb);
 
         if (dialog_kind) {
             fb_rect(&fb,0,MENUBAR_H,fb.w,fb.h-MENUBAR_H,0xDC1E1E1E);
@@ -674,7 +718,9 @@ int main(int argc, char **argv) {
     }
 
     cfg_save("BoycottAdvance.ini");
+    if (gui_active) gui_native_shutdown();
     if (adev) SDL_CloseAudioDevice(adev);
+    g_adev = 0;
     if (video) vid_shutdown(video);
     if (fb_w) fb_free(&fb);
     free(g);

@@ -53,6 +53,13 @@ falls back to SDL Software when the selected backend cannot initialise.
 
 ## GUI
 
+On Windows, BoycottAdvance Reborn uses a **native Win32 menu bar**
+attached to the emulator window — the same look as the original
+BoycottAdvance 0.2.8 — with native *Open ROM* / *Select BIOS* file
+dialogs and native message boxes, so the menu does not steal space from
+the game view. On other platforms the frontend composes the same menu bar
+in software.
+
 BoycottAdvance Reborn reproduces the original 0.2.8 menu bar (the CPU
 debugger is intentionally omitted). Settings are stored in
 `BoycottAdvance.ini`.
@@ -115,6 +122,10 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.3.2** — the Windows build now uses the original BoycottAdvance
+  look: a real Win32 menu bar attached to the window plus native *Open
+  ROM* / *Select BIOS* dialogs and message boxes (the software menu bar
+  remains on other platforms).
 - **v1.3.1** — three core CPU/IO fixes that make real games boot and
   render: the Thumb decoder mishandled *add/subtract* (format 2,
   `0x1800-0x1FFF`) and *mov/cmp/add/sub immediate* (format 3,

@@ -53,10 +53,10 @@ jobs:
           S=/tmp/SDL2-2.32.10/$T
           mkdir -p build
           $T-windres -i src/icon.rc -o build/icon.res
-          for f in gba mem arm ppu apu bios fb video main; do
+          for f in gba mem arm ppu apu bios fb video gui main; do
             $T-gcc -std=c99 -O2 -Wall -Isrc -I$S/include -c src/$f.c -o build/$f.o
           done
-          $T-gcc build/*.o -L$S/lib -lmingw32 -lSDL2main -lSDL2 -ld3d9 -lgdi32 -lm -o build/boycottadvance-reborn.exe
+          $T-gcc build/*.o -L$S/lib -lmingw32 -lSDL2main -lSDL2 -ld3d9 -lgdi32 -lcomdlg32 -lm -o build/boycottadvance-reborn.exe
           mkdir -p dist
           cp build/boycottadvance-reborn.exe dist/
           cp README.md gba_bios.bin dist/
