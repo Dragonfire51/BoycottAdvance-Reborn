@@ -51,7 +51,7 @@ software and presented through one backend, chosen from
 On Windows the build links **no SDL at all**: video goes through GDI or
 Direct3D 9, audio through WinMM (`waveOut`) and input through
 `GetAsyncKeyState` plus the WinMM joystick API. The chosen backend is
-stored in `BoycottAdvance.ini` (`VideoBackend`); on Linux/macOS it falls
+stored in `boycottadvance-reborn.ini` (`VideoBackend`); on Linux/macOS it falls
 back to SDL Software when the selected backend cannot initialise.
 
 
@@ -66,7 +66,7 @@ in software.
 
 BoycottAdvance Reborn reproduces the original 0.2.8 menu bar (the CPU
 debugger is intentionally omitted). Settings are stored in
-`BoycottAdvance.ini`.
+`boycottadvance-reborn.ini`.
 
 - **File** — Load ROM..., ROM Information..., Auto Run, Run/Pause
   Emulation, Reset Emulation, Choose State Slot, Load State, Save State, Exit
@@ -124,7 +124,7 @@ without it the emulator uses a built-in fast-boot stub.
 ### Controls
 
 Key mappings are configurable from **Options > Controls** and stored in
-`BoycottAdvance.ini` (one `Key_<button>` entry per button). Defaults:
+`boycottadvance-reborn.ini` (one `Key_<button>` entry per button). Defaults:
 
 | GBA | Key |
 |---|---|

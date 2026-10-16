@@ -20,6 +20,7 @@ endif
 CC      = $(CROSS)gcc
 RC      = $(CROSS)windres
 CFLAGS  = -std=c99 -O2 -Wall -Wextra -Isrc -D_WIN32
+LDFLAGS = -mwindows
 LDLIBS  = -lwinmm -ld3d9 -lgdi32 -luser32 -lcomdlg32 -lm
 
 SRC = src/gba.c src/mem.c src/arm.c src/ppu.c src/apu.c src/bios.c \
@@ -31,7 +32,7 @@ TARGET = boycottadvance-reborn-$(ARCH).exe
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
-	$(CC) $(CFLAGS) $(OBJ) $(LDLIBS) -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(LDLIBS) -o $@
 
 src/icon.res: src/icon.rc assets/icon.ico
 	$(RC) -O coff -i $< -o $@
