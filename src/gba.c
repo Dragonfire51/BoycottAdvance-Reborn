@@ -59,9 +59,11 @@ void gba_reset(GBA *g) {
 
     /* Boot. The default (BIOS fast boot) replicates the state the real BIOS
        leaves after its init and jumps straight into the cartridge, so no
-       copyrighted BIOS dump is required. With fast boot disabled and a BIOS
-       image present, the ARM7 starts at 0x00000000 and runs the BIOS. */
-    if (g->bios_enabled && !g->bios_fastboot && g->bios[0] != 0) {
+       copyrighted BIOS dump is required. With fast boot disabled, a BIOS
+       image present and the intro not skipped, the ARM7 starts at
+       0x00000000 and runs the BIOS. */
+    if (g->bios_enabled && !g->bios_fastboot && !g->skip_intros &&
+        g->bios[0] != 0) {
         g->cpu.cpsr = 0x0000001F;        /* system mode, ARM state, IRQ enabled */
         for (int i = 0; i < 16; i++) g->cpu.r[i] = 0;
         g->cpu.r[13] = 0x03007F00;       /* SP (USR/SYS) */

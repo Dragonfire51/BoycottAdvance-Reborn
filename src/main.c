@@ -438,9 +438,18 @@ static void do_action(int id) {
         if (gui_active) gui_native_open_bios();
         else { gba_load_bios(g, "gba_bios.bin"); dlg_text("BIOS","BIOS loaded from gba_bios.bin"); }
         break;
-    case M_BIOSEN: cfg.biosenable = !cfg.biosenable; g->bios_enabled = cfg.biosenable; break;
-    case M_BIOSBOOT: cfg.biosfastboot = !cfg.biosfastboot; g->bios_fastboot = cfg.biosfastboot; break;
-    case M_SKIPINTROS: cfg.skipintros = !cfg.skipintros; break;
+    case M_BIOSEN:
+        cfg.biosenable = !cfg.biosenable; g->bios_enabled = cfg.biosenable;
+        if (g->rom_size) gba_reset(g);
+        break;
+    case M_BIOSBOOT:
+        cfg.biosfastboot = !cfg.biosfastboot; g->bios_fastboot = cfg.biosfastboot;
+        if (g->rom_size) gba_reset(g);
+        break;
+    case M_SKIPINTROS:
+        cfg.skipintros = !cfg.skipintros; g->skip_intros = cfg.skipintros;
+        if (g->rom_size) gba_reset(g);
+        break;
     case M_CONTROLS: reset_keys(); break;
     case M_HISTORY: show_history(); break;
     case M_CMDLINE: show_cmdline(); break;
@@ -577,6 +586,7 @@ int main(int argc, char **argv) {
     gba_init(g);
     gba_load_bios(g, "gba_bios.bin");
     g->bios_enabled = cfg.biosenable; g->bios_fastboot = cfg.biosfastboot;
+    g->skip_intros = cfg.skipintros;
     g->frameskip = cfg.frameskip;
 
     if (rom_arg) load_rom(rom_arg);
