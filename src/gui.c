@@ -27,6 +27,7 @@ static HWND         g_hwnd;
 static WNDPROC      g_oldproc;
 static GuiCallbacks g_cb;
 static volatile LONG g_quit;
+static HMENU        g_ct_menu;      /* Controls submenu (labels refreshed) */
 /* Win32 file-dialog filters are double-null terminated UTF-16 strings;
  * keep the wide literal (with embedded NULs) intact. */
 static const WCHAR   g_romfilter[] =
@@ -43,6 +44,8 @@ static void item(HMENU m, const char *label, int id) {
     AppendMenuA(m, MF_STRING, (UINT)id, label);
 }
 static void sep(HMENU m) { AppendMenuA(m, MF_SEPARATOR, 0, NULL); }
+
+static void refresh_control_labels(void);
 
 /* --------------------------------------------------------------- joystick */
 /* Joystick 0 through WinMM (the same API the original BoycottAdvance
@@ -165,18 +168,32 @@ static void build_menu(void) {
 #endif
     sep(opt);
     HMENU ct = add_popup(opt, "Controls");
-    item(ct, "Map A", M_KEY0 + 0);
-    item(ct, "Map B", M_KEY0 + 1);
-    item(ct, "Map Select", M_KEY0 + 2);
-    item(ct, "Map Start", M_KEY0 + 3);
-    item(ct, "Map Right", M_KEY0 + 4);
-    item(ct, "Map Left", M_KEY0 + 5);
-    item(ct, "Map Up", M_KEY0 + 6);
-    item(ct, "Map Down", M_KEY0 + 7);
-    item(ct, "Map R", M_KEY0 + 8);
-    item(ct, "Map L", M_KEY0 + 9);
+    HMENU ctk = add_popup(ct, "Keyboard");
+    item(ctk, "Map A", M_KEY0 + 0);
+    item(ctk, "Map B", M_KEY0 + 1);
+    item(ctk, "Map Select", M_KEY0 + 2);
+    item(ctk, "Map Start", M_KEY0 + 3);
+    item(ctk, "Map Right", M_KEY0 + 4);
+    item(ctk, "Map Left", M_KEY0 + 5);
+    item(ctk, "Map Up", M_KEY0 + 6);
+    item(ctk, "Map Down", M_KEY0 + 7);
+    item(ctk, "Map R", M_KEY0 + 8);
+    item(ctk, "Map L", M_KEY0 + 9);
+    HMENU ctj = add_popup(ct, "Joystick");
+    item(ctj, "Map A", M_JOY0 + 0);
+    item(ctj, "Map B", M_JOY0 + 1);
+    item(ctj, "Map Select", M_JOY0 + 2);
+    item(ctj, "Map Start", M_JOY0 + 3);
+    item(ctj, "Map Right", M_JOY0 + 4);
+    item(ctj, "Map Left", M_JOY0 + 5);
+    item(ctj, "Map Up", M_JOY0 + 6);
+    item(ctj, "Map Down", M_JOY0 + 7);
+    item(ctj, "Map R", M_JOY0 + 8);
+    item(ctj, "Map L", M_JOY0 + 9);
     sep(ct);
     item(ct, "Reset Key Mappings", M_CONTROLS);
+    item(ct, "Reset Joystick Mappings", M_RESETJOY);
+    g_ct_menu = ct;
 
     HMENU help = add_popup(bar, "&Help");
     item(help, "&History...", M_HISTORY);
@@ -184,6 +201,26 @@ static void build_menu(void) {
     item(help, "&About...", M_ABOUT);
 
     SetMenu(g_hwnd, bar);
+    refresh_control_labels();
+}
+
+/* Show the current key/joystick binding next to every remap entry, e.g.
+ * "Map A\t[A] | Joy 0". Called whenever the bindings may have changed. */
+static void refresh_control_labels(void) {
+    if (!g_ct_menu) return;
+    static const char *btn[JOY_KP_COUNT] = {
+        "A", "B", "Select", "Start", "Right", "Left", "Up", "Down", "R", "L" };
+    char label[96];
+    for (int kp = 0; kp < JOY_KP_COUNT; kp++) {
+        const char *kn = (g_cb.key_name) ? g_cb.key_name(kp) : "?";
+        const char *jn = (g_cb.joy_name) ? g_cb.joy_name(kp) : "?";
+        snprintf(label, sizeof label, "Map %s\t[%s]", btn[kp], kn ? kn : "?");
+        ModifyMenuA(g_ct_menu, (UINT)(M_KEY0 + kp), MF_BYCOMMAND | MF_STRING,
+                    (UINT_PTR)(M_KEY0 + kp), label);
+        snprintf(label, sizeof label, "Map %s\t%s", btn[kp], jn ? jn : "?");
+        ModifyMenuA(g_ct_menu, (UINT)(M_JOY0 + kp), MF_BYCOMMAND | MF_STRING,
+                    (UINT_PTR)(M_JOY0 + kp), label);
+    }
 }
 
 /* Refresh the checkmarks for every toggleable command in a menu tree. */
@@ -203,6 +240,7 @@ void gui_native_sync(void) {
     if (!g_hwnd) return;
     HMENU bar = GetMenu(g_hwnd);
     if (bar) sync_menu(bar);
+    refresh_control_labels();
 }
 
 /* --------------------------------------------------------------- wndproc */

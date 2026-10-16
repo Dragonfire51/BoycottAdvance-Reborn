@@ -5,7 +5,7 @@
  * several backends (video.c): SDL Software/OpenGL, native Windows GDI or
  * Direct3D 9, or Vulkan. Boot ROMs are chosen from an in-window browser.
  * Audio is SDL2. Key mappings are configurable and stored in
- * BoycottAdvance.ini.
+ * boycottadvance-reborn.ini.
  */
 #define _DEFAULT_SOURCE
 #include "gba.h"
@@ -314,6 +314,8 @@ static void load_rom(const char *path) {
 /* ---- callbacks for the native Win32 GUI (see gui.c) ---- */
 static void do_action(int id);
 static int  item_checked(int id);
+static const char *scancode_name(int sc);
+static void joy_binding_label(int joy, char *out, size_t n);
 #ifdef _WIN32
 static void gui_cb_action(int id)   { do_action(id); }
 static int  gui_cb_checked(int id)  { return item_checked(id); }
@@ -321,6 +323,12 @@ static void gui_cb_loadrom(const char *path) { load_rom(path); }
 static void gui_cb_setbios(const char *path) { gba_load_bios(g, path); }
 static void gui_cb_pause(void)  { if (g_adev) SDL_PauseAudioDevice(g_adev, 1); }
 static void gui_cb_resume(void) { if (g_adev) SDL_PauseAudioDevice(g_adev, 0); }
+static const char *gui_cb_keyname(int kp) { return scancode_name(cfg.keymap[kp]); }
+static const char *gui_cb_joyname(int kp) {
+    static char buf[24];
+    joy_binding_label(cfg.joymap[kp], buf, sizeof buf);
+    return buf;
+}
 #endif
 
 static void gui_native_setup(void) {
@@ -329,7 +337,8 @@ static void gui_native_setup(void) {
     SDL_VERSION(&wm.version);
     if (!SDL_GetWindowWMInfo(g_win, &wm) || wm.subsystem != SDL_SYSWM_WINDOWS) return;
     GuiCallbacks cb = { gui_cb_action, gui_cb_checked, gui_cb_loadrom,
-                        gui_cb_setbios, gui_cb_pause, gui_cb_resume };
+                        gui_cb_setbios, gui_cb_pause, gui_cb_resume,
+                        gui_cb_keyname, gui_cb_joyname };
     gui_active = gui_native_init((void *)wm.info.win.window,
                                  gba_icon_argb, GBA_ICON_W, GBA_ICON_H, &cb);
 #endif
@@ -366,7 +375,7 @@ static void show_history(void) {
       "    therefore most games) rendered wrong or nothing.\n"
       "  - Fixed sound: envelope clock no longer freezes, correct\n"
       "    square/noise/wave mixing and DMA Direct Sound FIFOs.\n"
-      "  - Configurable key mappings, saved in BoycottAdvance.ini.\n"
+      "  - Configurable key mappings, saved in boycottadvance-reborn.ini.\n"
       "  - New Options/Frame Buffer backends: SDL Software, OpenGL,\n"
       "    Windows GDI, Direct3D 9 and Vulkan (when available).\n\n"
       "v1.2.0: ARM LDR/LDM PC fix, PPU bitmap gating, ROM browser.\n"
@@ -550,7 +559,7 @@ static void draw_menubar(FB *fb) {
 /* ------------------------------------------------------------------- main */
 int main(int argc, char **argv) {
     const char *rom_arg = NULL;
-    cfg_load("BoycottAdvance.ini");        /* defaults first */
+    cfg_load("boycottadvance-reborn.ini");        /* defaults first */
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i],"-help")) { printf("Options: -help -autosave -sound -bios -fastboot [rom]\n"); return 0; }
         else if (!strcmp(argv[i],"-sound")) cfg.sound_enable = 1;
@@ -755,7 +764,7 @@ int main(int argc, char **argv) {
         if (now-fps_t>=500) { fps = fps_n*1000.0f/(now-fps_t); fps_n=0; fps_t=now; }
     }
 
-    cfg_save("BoycottAdvance.ini");
+    cfg_save("boycottadvance-reborn.ini");
     if (gui_active) gui_native_shutdown();
     if (adev) SDL_CloseAudioDevice(adev);
     g_adev = 0;

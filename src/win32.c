@@ -162,7 +162,12 @@ static void ini_get(const char *path, const char *key, char *out, size_t n) {
         char *p = line;
         while (*p==' '||*p=='\t') p++;
         if (strncmp(p, key, klen)==0) {
-            p += klen; while (*p==' '||*p=='\t') p++;
+            /* The key must be followed by a delimiter, otherwise a shorter
+             * key would match a longer one (Key_R vs Key_Right). */
+            char after = p[klen];
+            if (after!=' ' && after!='\t' && after!='=' && after!='\r' &&
+                after!='\n' && after!='\0') continue;
+            p += klen; while (*p==' '||*p=='\t'||*p=='=') p++;
             char *v = p; while (*v && *v!='\r' && *v!='\n') v++; *v=0;
             snprintf(out, n, "%s", p); break;
         }
@@ -262,7 +267,7 @@ static void show_history(void) {
       "  - Fixed MLA/MUL destination register decode.\n"
       "  - Fixed sound: envelope clock, square/noise/wave mixing and\n"
       "    DMA Direct Sound FIFOs.\n"
-      "  - Configurable key mappings, saved in BoycottAdvance.ini.\n"
+      "  - Configurable key mappings, saved in boycottadvance-reborn.ini.\n"
       "  - Frame-buffer backends: GDI and Direct3D 9 (Windows).\n\n"
       "v1.2.0: ARM LDR/LDM PC fix, PPU bitmap gating, ROM browser.\n"
       "v1.0.0: first public clean-room release.";
@@ -270,7 +275,44 @@ static void show_history(void) {
 }
 static void reset_keys(void) {
     memcpy(cfg.keymap, KP_DEFAULT_VK, sizeof cfg.keymap);
-    msgbox("Controls", "Key mappings restored to defaults.");
+}
+static void reset_joystick(void) {
+    memcpy(cfg.joymap, JOY_DEFAULT, sizeof cfg.joymap);
+}
+
+/* Human-readable names shown in the Controls menu. */
+static const char *vk_name(int vk) {
+    static char buf[24];
+    switch (vk) {
+    case VK_RETURN: return "Enter";
+    case VK_BACK:   return "Backspace";
+    case VK_TAB:    return "Tab";
+    case VK_SPACE:  return "Space";
+    case VK_ESCAPE: return "Esc";
+    case VK_LEFT:   return "Left";
+    case VK_RIGHT:  return "Right";
+    case VK_UP:     return "Up";
+    case VK_DOWN:   return "Down";
+    case VK_SHIFT:  return "Shift";
+    case VK_CONTROL:return "Ctrl";
+    case VK_MENU:   return "Alt";
+    }
+    if (vk >= VK_F1 && vk <= VK_F12) { snprintf(buf, sizeof buf, "F%d", vk - VK_F1 + 1); return buf; }
+    if (vk >= 0x20 && vk < 0x7F) { buf[0] = (char)vk; buf[1] = 0; return buf; }
+    snprintf(buf, sizeof buf, "VK %d", vk);
+    return buf;
+}
+static const char *joy_name(int kp) {
+    static char buf[24];
+    int v = cfg.joymap[kp];
+    switch (v) {
+    case JOY_POV_UP:    return "POV Up";
+    case JOY_POV_RIGHT: return "POV Right";
+    case JOY_POV_DOWN:  return "POV Down";
+    case JOY_POV_LEFT:  return "POV Left";
+    }
+    snprintf(buf, sizeof buf, "Button %d", v);
+    return buf;
 }
 static void toggle_fullscreen(void) {
     g_fs = !g_fs;
@@ -306,27 +348,65 @@ static void save_screenshot(void) {
 /* ------------------------------------------------------------------ actions */
 static void do_action(int id);
 static int  item_checked(int id);
+static const char *vk_name(int vk);
+static const char *joy_name(int kp);
 static void gui_cb_action(int id)   { do_action(id); }
 static int  gui_cb_checked(int id)  { return item_checked(id); }
 static void gui_cb_loadrom(const char *path) { load_rom(path); }
 static void gui_cb_setbios(const char *path) { gba_load_bios(g, path); }
 static void gui_cb_pause(void)  { /* waveOut flows continuously; no need */ }
 static void gui_cb_resume(void) { }
+static const char *gui_cb_keyname(int kp) { return vk_name(cfg.keymap[kp]); }
+static const char *gui_cb_joyname(int kp) { return joy_name(kp); }
 
 /* ------------------------------------------------------------------ key capture */
+/* The menu item arms a capture and returns; the next key or joystick event
+ * on the emulator window is bound. Capture is deliberately non-modal so the
+ * window keeps receiving input (a modal message box would swallow it). */
 static int key_capture = -1;
+static int joy_capture = -1;
 
 static void capture_key(int kp) {
     key_capture = kp;
-    msgbox("Controls",
-        "Press the key you want to assign on the emulator window.\n"
-        "ESC cancels.");
+    joy_capture = -1;
+    SetWindowTextA(g_hwnd, "BoycottAdvance Reborn  -  press a key to map (ESC cancels)");
 }
 static void on_key_assign(int vk) {
     if (key_capture < 0) return;
-    if (vk == VK_ESCAPE) { key_capture = -1; return; }
+    if (vk == VK_ESCAPE) { key_capture = -1; SetWindowTextA(g_hwnd, GBA_TITLE); return; }
     cfg.keymap[key_capture] = vk;
     key_capture = -1;
+    SetWindowTextA(g_hwnd, GBA_TITLE);
+    gui_native_sync();
+}
+static void capture_joy(int kp) {
+    joy_capture = kp;
+    key_capture = -1;
+    SetWindowTextA(g_hwnd, "BoycottAdvance Reborn  -  press a joystick button to map (ESC cancels)");
+}
+static void on_joy_assign(int value) {
+    if (joy_capture < 0) return;
+    cfg.joymap[joy_capture] = value;
+    joy_capture = -1;
+    SetWindowTextA(g_hwnd, GBA_TITLE);
+    gui_native_sync();
+}
+/* Called every frame while a joystick capture is armed: bind the first
+ * newly pressed button, or the POV direction if the hat is moved. */
+static void poll_joy_capture(void) {
+    if (joy_capture < 0) return;
+    static int prev_buttons = 0;
+    int buttons = 0, pov = 0;
+    if (!ctl_joy_raw(&buttons, &pov)) return;
+    if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) { joy_capture = -1; SetWindowTextA(g_hwnd, GBA_TITLE); return; }
+    int newly = buttons & ~prev_buttons;
+    prev_buttons = buttons;
+    if (newly) {
+        int b = 0; while (b < JOY_MAX_BUTTONS && !(newly & (1 << b))) b++;
+        on_joy_assign(b);
+    } else if (pov) {
+        on_joy_assign(pov);
+    }
 }
 
 static void do_action(int id) {
@@ -364,8 +444,9 @@ static void do_action(int id) {
     case M_SELBIOS:  gui_native_open_bios(); break;
     case M_BIOSEN:   cfg.biosenable = !cfg.biosenable; g->bios_enabled = cfg.biosenable; break;
     case M_BIOSBOOT: cfg.biosfastboot = !cfg.biosfastboot; g->bios_fastboot = cfg.biosfastboot; break;
-    case M_SKIPINTROS: cfg.skipintros = !cfg.skipintros; break;
     case M_CONTROLS: reset_keys(); break;
+    case M_RESETJOY: reset_joystick(); break;
+    case M_SKIPINTROS: cfg.skipintros = !cfg.skipintros; g->skip_intros = cfg.skipintros; break;
     case M_HISTORY:  show_history(); break;
     case M_CMDLINE:
         msgbox("BoycottAdvance Command Line Options",
@@ -381,6 +462,7 @@ static void do_action(int id) {
         break; }
     default:
         if (id >= M_KEY0 && id <= M_KEY0_END) capture_key(id - M_KEY0);
+        else if (id >= M_JOY0 && id <= M_JOY0_END) capture_joy(id - M_JOY0);
         break;
     }
     gui_native_sync();
@@ -480,7 +562,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     (void)prev; (void)cmdline; (void)show;
     g_inst = inst;
 
-    cfg_load("BoycottAdvance.ini");
+    cfg_load("boycottadvance-reborn.ini");
     const char *rom_arg = NULL;
     {
         LPWSTR w = GetCommandLineW();
@@ -534,7 +616,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
 
     /* Native menu bar (gui.c). */
     GuiCallbacks cb = { gui_cb_action, gui_cb_checked, gui_cb_loadrom,
-                        gui_cb_setbios, gui_cb_pause, gui_cb_resume };
+                        gui_cb_setbios, gui_cb_pause, gui_cb_resume,
+                        gui_cb_keyname, gui_cb_joyname };
     gui_native_init((void *)g_hwnd, gba_icon_argb, GBA_ICON_W, GBA_ICON_H, &cb);
 
     ShowWindow(g_hwnd, SW_SHOW);
@@ -564,6 +647,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
             if (msg.message == WM_QUIT) running = 0;
         }
         if (g_quit) break;
+
+        poll_joy_capture();
 
         /* Run one frame. */
         if (!g_paused && g->rom_size > 0) {
@@ -606,7 +691,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     audio_close();
     if (video) vid_shutdown(video);
     if (fb_w) fb_free(&fb);
-    cfg_save("BoycottAdvance.ini");
+    cfg_save("boycottadvance-reborn.ini");
     gui_native_shutdown();
     free(g);
     return 0;

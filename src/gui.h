@@ -45,6 +45,10 @@ typedef struct {
     void (*setbios_path)(const char *path);         /* load a chosen BIOS file*/
     void (*pause_audio)(void);                      /* called around menus     */
     void (*resume_audio)(void);
+    /* Human-readable current bindings, so the Controls menu can display
+     * them next to each button. kp is a JOY_KP_* index. */
+    const char *(*key_name)(int kp);
+    const char *(*joy_name)(int kp);
 } GuiCallbacks;
 
 /* Attach the native menu bar to an existing window (its HWND on Windows).
