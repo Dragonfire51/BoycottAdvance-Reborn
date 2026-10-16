@@ -24,6 +24,25 @@ void dma_run(GBA *g, int ch);
  * ========================================================================= */
 uint16_t io_read16(GBA *g, uint32_t addr) {
     uint32_t reg = addr & 0x3FE;
+    /* ---- DMA ---- */
+    /* The four DMA channels occupy 12 bytes each: 0x0B0 (DMA0), 0x0BC
+     * (DMA1), 0x0C8 (DMA2) and 0x0D4 (DMA3). A 16-byte stride would send
+     * every access above channel 0 to the wrong channel. */
+    if (reg >= 0x0B0 && reg <= 0x0DF) {
+        int ch = (int)((reg - 0x0B0) / 12);
+        switch ((reg - 0x0B0) % 12) {
+        case 0: return (uint16_t)g->dma[ch].src;
+        case 2: return 0;
+        case 4: return (uint16_t)g->dma[ch].dst;
+        case 6: return 0;
+        case 8: return (uint16_t)g->dma[ch].count;
+        case 10:
+            return (uint16_t)((g->dma[ch].dst_ctl << 5) | (g->dma[ch].src_ctl << 7) |
+                   (g->dma[ch].word ? 0x0400 : 0) | (g->dma[ch].timing << 12) |
+                   (g->dma[ch].irq_enable ? 0x4000 : 0) | (g->dma[ch].enabled ? 0x8000 : 0));
+        }
+        return 0;
+    }
     switch (reg) {
     /* ---- display ---- */
     case 0x000: return g->ppu.dispcnt;
@@ -95,18 +114,6 @@ uint16_t io_read16(GBA *g, uint32_t addr) {
         int i = (addr & 0xF) >> 1;
         return (uint16_t)(g->apu.wave[i*2] | (g->apu.wave[i*2+1] << 8));
     }
-    /* ---- DMA ---- */
-    case 0x0B0: case 0x0C0: case 0x0D0: case 0x0E0: { int ch=(reg-0x0B0)>>4; return (uint16_t)g->dma[ch].src; }
-    case 0x0B2: case 0x0C2: case 0x0D2: case 0x0E2: return 0;
-    case 0x0B4: case 0x0C4: case 0x0D4: case 0x0E4: { int ch=(reg-0x0B4)>>4; return (uint16_t)g->dma[ch].dst; }
-    case 0x0B6: case 0x0C6: case 0x0D6: case 0x0E6: return 0;
-    case 0x0B8: case 0x0C8: case 0x0D8: case 0x0E8: { int ch=(reg-0x0B8)>>4; return (uint16_t)g->dma[ch].count; }
-    case 0x0BA: case 0x0CA: case 0x0DA: case 0x0EA: {
-        int ch = (reg - 0x0BA) >> 4;
-        return (uint16_t)((g->dma[ch].src_ctl) | (g->dma[ch].dst_ctl << 2) |
-               (g->dma[ch].word ? 0x0400 : 0) | (g->dma[ch].timing << 12) |
-               (g->dma[ch].irq_enable ? 0x4000 : 0) | (g->dma[ch].enabled ? 0x8000 : 0));
-    }
     /* ---- timers ---- */
     case 0x100: case 0x104: case 0x108: case 0x10C: { int t=(reg-0x100)>>2; return g->timer[t].counter; }
     case 0x102: case 0x106: case 0x10A: case 0x10E: { int t=(reg-0x102)>>2; return g->timer[t].reload; }
@@ -131,6 +138,32 @@ uint16_t io_read16(GBA *g, uint32_t addr) {
  * ========================================================================= */
 void io_write16(GBA *g, uint32_t addr, uint16_t v) {
     uint32_t reg = addr & 0x3FE;
+    /* ---- DMA ---- */
+    /* The four DMA channels occupy 12 bytes each: 0x0B0 (DMA0), 0x0BC
+     * (DMA1), 0x0C8 (DMA2) and 0x0D4 (DMA3). A 16-byte stride would send
+     * every access above channel 0 to the wrong channel. */
+    if (reg >= 0x0B0 && reg <= 0x0DF) {
+        int ch = (int)((reg - 0x0B0) / 12);
+        DmaChan *d = &g->dma[ch];
+        switch ((reg - 0x0B0) % 12) {
+        case 0: d->src = (d->src & 0xFFFF0000) | v; return;
+        case 2: d->src = (d->src & 0xFFFF) | ((uint32_t)v << 16); return;
+        case 4: d->dst = (d->dst & 0xFFFF0000) | v; return;
+        case 6: d->dst = (d->dst & 0xFFFF) | ((uint32_t)v << 16); return;
+        case 8: d->count = v & 0xFFFF; return;
+        case 10:
+            d->dst_ctl = (v >> 5) & 3;
+            d->src_ctl = (v >> 7) & 3;
+            d->repeat = (v >> 9) & 1;
+            d->word = (v >> 10) & 1;
+            d->timing = (v >> 12) & 3;
+            d->irq_enable = (v >> 14) & 1;
+            d->enabled = (v >> 15) & 1;
+            if (d->enabled && d->timing == 0) dma_run(g, ch);   /* immediate */
+            return;
+        }
+        return;
+    }
     switch (reg) {
     case 0x000: g->ppu.dispcnt = v; return;
     case 0x004: g->ppu.dispstat = (g->ppu.dispstat & 0x0007) | (v & 0xFFF8); return;
@@ -219,25 +252,6 @@ void io_write16(GBA *g, uint32_t addr, uint16_t v) {
         g->apu.wave[i*2] = v & 0xFF; g->apu.wave[i*2+1] = v >> 8; return;
     }
     case 0x0A0: case 0x0A2: case 0x0A4: case 0x0A6: return;  /* FIFO writes: DMA only */
-    /* ---- DMA ---- */
-    case 0x0B0: case 0x0C0: case 0x0D0: case 0x0E0: { int ch=(reg-0x0B0)>>4; g->dma[ch].src = (g->dma[ch].src & 0xFFFF0000) | v; return; }
-    case 0x0B2: case 0x0C2: case 0x0D2: case 0x0E2: { int ch=(reg-0x0B2)>>4; g->dma[ch].src = (g->dma[ch].src & 0xFFFF) | ((uint32_t)v << 16); return; }
-    case 0x0B4: case 0x0C4: case 0x0D4: case 0x0E4: { int ch=(reg-0x0B4)>>4; g->dma[ch].dst = (g->dma[ch].dst & 0xFFFF0000) | v; return; }
-    case 0x0B6: case 0x0C6: case 0x0D6: case 0x0E6: { int ch=(reg-0x0B6)>>4; g->dma[ch].dst = (g->dma[ch].dst & 0xFFFF) | ((uint32_t)v << 16); return; }
-    case 0x0B8: case 0x0C8: case 0x0D8: case 0x0E8: { int ch=(reg-0x0B8)>>4; g->dma[ch].count = v & 0xFFFF; return; }
-    case 0x0BA: case 0x0CA: case 0x0DA: case 0x0EA: {
-        int ch = (reg - 0x0BA) >> 4;
-        DmaChan *d = &g->dma[ch];
-        d->dst_ctl = (v >> 5) & 3;
-        d->src_ctl = (v >> 7) & 3;
-        d->repeat = (v >> 9) & 1;
-        d->word = (v >> 10) & 1;
-        d->timing = (v >> 12) & 3;
-        d->irq_enable = (v >> 14) & 1;
-        d->enabled = (v >> 15) & 1;
-        if (d->enabled && d->timing == 0) dma_run(g, ch);   /* immediate */
-        return;
-    }
     /* ---- timers ---- */
     case 0x100: case 0x104: case 0x108: case 0x10C: { int t=(reg-0x100)>>2; g->timer[t].counter = v; return; }
     case 0x102: case 0x106: case 0x10A: case 0x10E: {

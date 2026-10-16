@@ -533,6 +533,9 @@ static void thumb_exec_at(GBA *g, uint16_t insn) {
                 add_cycles(g, 2); return;
             }
             }
+            /* ADD/MOV with Rd=PC is a branch: the write above already set
+             * the PC, so do not overwrite it with the fall-through value. */
+            if (rd2 == 15 && ((insn >> 8) & 3) != 1) { add_cycles(g, 3); return; }
             set_pc(g, next); add_cycles(g, 1); return;
         }
         /* format 4: ALU operations */
@@ -717,9 +720,10 @@ void thumb_exec(GBA *g) {
 void arm_execute(GBA *g, uint32_t max_cycles) {
     uint32_t start = g->cycle;
     while (g->cycle - start < max_cycles) {
-        /* IRQ exception has priority over halt */
+        /* IRQ exception has priority over halt. IF is NOT acknowledged here:
+         * the GBA leaves the flag set so the handler can read IE&IF to find
+         * the source; the BIOS/handler clears it by writing 1 to IF. */
         if (g->ime && (g->if_reg & g->ie & 0x3FFF) && !(g->cpu.cpsr & CPSR_I)) {
-            g->if_reg &= ~(g->if_reg & g->ie & 0x3FFF);   /* acknowledge */
             enter_exception(g, 0x12, g->cpu.r[15] + (thumb_mode(g) ? 2 : 4), 0x18);
             continue;
         }
