@@ -105,7 +105,13 @@ static void build_menu(void) {
     item(file, "&Run/Pause Emulation", M_RUNPAUSE);
     item(file, "&Reset Emulation", M_RESET);
     sep(file);
-    item(file, "Choose &State Slot", M_STATE_SLOT);
+    /* The original listed the ten save-state slots directly. */
+    HMENU slots = add_popup(file, "Choose &State Slot");
+    for (int i = 0; i < M_SLOT_COUNT; i++) {
+        char label[16];
+        snprintf(label, sizeof label, "Slot %d", i);
+        item(slots, label, M_SLOT0 + i);
+    }
     item(file, "&Load State", M_LOADSTATE);
     item(file, "&Save State", M_SAVESTATE);
     sep(file);

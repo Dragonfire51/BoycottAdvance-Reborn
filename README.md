@@ -142,6 +142,11 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.2** — **File > Choose State Slot** now lists the ten save-state
+  slots (`Slot 0` … `Slot 9`) and checks the active one, matching the
+  original BoycottAdvance; `Load State` / `Save State` use the selected
+  slot and the choice persists as `StateSlot` in
+  `boycottadvance-reborn.ini`.
 - **v1.4.1** — the Controls menu now matches the original
   BoycottAdvance: **Options > Controls > Input Configuration...** opens a
   single window with a **Keyboard** page and a **Joystick** page, one row

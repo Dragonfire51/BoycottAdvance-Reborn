@@ -32,5 +32,10 @@ enum { M_JOY0 = M_KEY0 + 10 };
 enum { M_RESETJOY = M_JOY0_END + 1 };
 /* Opens the modal Input Configuration dialog (Keyboard / Joystick pages). */
 enum { M_INPUTCFG = M_RESETJOY + 1 };
+/* "Choose State Slot" submenu: ten contiguous items, radio-checked. The
+ * original BoycottAdvance exposed the same slot list. */
+enum { M_SLOT0 = M_INPUTCFG + 1 };
+#define M_SLOT_COUNT 10
+#define M_SLOT_LAST  (M_SLOT0 + M_SLOT_COUNT - 1)
 
 #endif

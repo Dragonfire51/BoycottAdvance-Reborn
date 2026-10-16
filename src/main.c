@@ -107,6 +107,8 @@ static void cfg_load(const char *path) {
     cfg.skipintros   = ini_geti(path, "SkipIntros", 0);
     cfg.autorun      = ini_geti(path, "AutoRun", 1);
     cfg.flashid      = ini_geti(path, "FlashROMId", 0);
+    cfg.state_slot   = ini_geti(path, "StateSlot", 0);
+    if (cfg.state_slot < 0 || cfg.state_slot >= M_SLOT_COUNT) cfg.state_slot = 0;
     cfg.video_backend= ini_geti(path, "VideoBackend", VID_AUTO);
     ini_get(path, "RomPath", cfg.lastdir, sizeof cfg.lastdir);
     if (!cfg.lastdir[0]) snprintf(cfg.lastdir, sizeof cfg.lastdir, ".");
@@ -125,11 +127,12 @@ static void cfg_save(const char *path) {
       "ScreenZoom %d\nScanline %d\nAutoThrottle %d\nShowFPS %d\nShowFPSPercent %d\n"
       "FrameSkip %d\nAutoFrameSkip %d\nSoundEnable %d\nGameboySoundEnable %d\n"
       "DirectSoundAEnable %d\nDirectSoundBEnable %d\nBIOSEnable %d\nBIOSFastBoot %d\n"
-      "SkipIntros %d\nAutoRun %d\nFlashROMId %d\nVideoBackend %d\nRomPath %s\n",
+      "SkipIntros %d\nAutoRun %d\nFlashROMId %d\nStateSlot %d\nVideoBackend %d\nRomPath %s\n",
       cfg.zoom, cfg.scanline, cfg.autothrottle, cfg.showfps, cfg.showfps_pct,
       cfg.frameskip, cfg.autoframeskip, cfg.sound_enable, cfg.gbc_sound,
       cfg.dsound_a, cfg.dsound_b, cfg.biosenable, cfg.biosfastboot,
-      cfg.skipintros, cfg.autorun, cfg.flashid, cfg.video_backend, cfg.lastdir);
+      cfg.skipintros, cfg.autorun, cfg.flashid, cfg.state_slot,
+      cfg.video_backend, cfg.lastdir);
     for (int i = 0; i < KP_COUNT; i++)
         fprintf(f, "Key_%s %d\n", KP_NAME[i], cfg.keymap[i]);
     for (int i = 0; i < KP_COUNT; i++)
@@ -167,7 +170,11 @@ typedef struct { const char *label; int id; } MenuItem;
 static MenuItem m_file[] = {
     {"Load ROM...",M_LOADROM},{"ROM Information...",M_ROMINFO},{"Auto Run",M_AUTORUN},{"",0},
     {"Run/Pause Emulation",M_RUNPAUSE},{"Reset Emulation",M_RESET},{"",0},
-    {"Choose State Slot",M_STATE_SLOT},{"Load State",M_LOADSTATE},{"Save State",M_SAVESTATE},
+    {"State Slot",0},{"Slot 0",M_SLOT0+0},{"Slot 1",M_SLOT0+1},
+    {"Slot 2",M_SLOT0+2},{"Slot 3",M_SLOT0+3},{"Slot 4",M_SLOT0+4},
+    {"Slot 5",M_SLOT0+5},{"Slot 6",M_SLOT0+6},{"Slot 7",M_SLOT0+7},
+    {"Slot 8",M_SLOT0+8},{"Slot 9",M_SLOT0+9},
+    {"Load State",M_LOADSTATE},{"Save State",M_SAVESTATE},
     {"",0},{"Exit",M_EXIT},{NULL,0}};
 static MenuItem m_window[] = {
     {"Zoom x1 (100%)",M_ZOOM1},{"Zoom x2 (200%)",M_ZOOM2},{"Zoom x3 (300%)",M_ZOOM3},
@@ -374,6 +381,10 @@ static void show_about(void) {
 }
 static void show_history(void) {
     dlg_text("History", GBA_TITLE "\n\n"
+      "v1.4.2 changes:\n"
+      "  - File > Choose State Slot now lists the ten slots (Slot 0..Slot 9)\n"
+      "    and checks the active one; Load State / Save State use the\n"
+      "    selected slot. The choice persists as StateSlot in the ini.\n\n"
       "v1.4.1 changes:\n"
       "  - Controls now match the original BoycottAdvance: Options >\n"
       "    Controls opens a single Input Configuration window with a\n"
@@ -479,7 +490,8 @@ static void do_action(int id) {
         cfg.video_backend = map[id - M_VB_AUTO];
         break; }
     default:
-        if (id >= M_KEY0 && id <= M_KEY0_END) begin_key_capture(id - M_KEY0);
+        if (id >= M_SLOT0 && id <= M_SLOT_LAST) cfg.state_slot = id - M_SLOT0;
+        else if (id >= M_KEY0 && id <= M_KEY0_END) begin_key_capture(id - M_KEY0);
         break;
     }
     if (gui_active) gui_native_sync();
@@ -513,6 +525,7 @@ static int item_checked(int id) {
     case M_REVSTEREO: return cfg.reverse_stereo; case M_BIOSEN: return cfg.biosenable;
     case M_BIOSBOOT: return cfg.biosfastboot; case M_SKIPINTROS: return cfg.skipintros;
     default:
+        if (id>=M_SLOT0 && id<=M_SLOT_LAST) return cfg.state_slot==id-M_SLOT0;
         if (id>=M_ZOOM1 && id<=M_ZOOM4) return cfg.zoom==id-M_ZOOM1+1;
         if (id>=M_SKIP0 && id<=M_SKIP5) return cfg.frameskip==id-M_SKIP0;
         if (id>=M_VB_AUTO && id<=M_VB_D3D) {
