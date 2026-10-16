@@ -263,12 +263,30 @@ static void show_about(void) {
 static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
-      "v1.3.0 changes:\n"
-      "  - Fixed MLA/MUL destination register decode.\n"
-      "  - Fixed sound: envelope clock, square/noise/wave mixing and\n"
-      "    DMA Direct Sound FIFOs.\n"
-      "  - Configurable key mappings, saved in boycottadvance-reborn.ini.\n"
-      "  - Frame-buffer backends: GDI and Direct3D 9 (Windows).\n\n"
+      "v1.4.1 changes:\n"
+      "  - Controls now match the original BoycottAdvance: Options >\n"
+      "    Controls opens a single Input Configuration window with a\n"
+      "    Keyboard page and a Joystick page (one row per GBA button,\n"
+      "    OK / Cancel), instead of the per-button menu entries.\n"
+      "  - Fixed the config file name. Windows wrote BoycottAdvance.ini\n"
+      "    (the old build); it now reads and writes\n"
+      "    boycottadvance-reborn.ini like the rest of the project.\n"
+      "  - Joystick D-pad: the POV hat can be bound to the four\n"
+      "    directions next to the face/shoulder buttons.\n"
+      "  - The Windows binaries run as a GUI application (no console\n"
+      "    window); this release ships that build.\n\n"
+      "v1.4.0 changes:\n"
+      "  - Windows x86/x64 is fully SDL-free: native GDI / Direct3D 9\n"
+      "    window, WinMM (waveOut) audio, WinMM joystick, GetAsyncKeyState\n"
+      "    input and the full native Win32 menu bar (except Debug).\n"
+      "  - R/L remaps no longer collide with Right/Left on load.\n"
+      "  - Cartridge SRAM/Flash at 0x0E000000 is mapped (saves kept).\n"
+      "  - Correct DMA address control and CpuSet 21-bit count.\n"
+      "  - Save/Load State buffers are static (1 MB locals overflowed the\n"
+      "    thread stack and crashed).\n"
+      "  - BIOS Enable / Skip BIOS Boot / Skip Intro Hacks take effect\n"
+      "    immediately (they now reset the core) and persist.\n\n"
+      "v1.3.0: MLA/MUL destination decode, sound envelope/mixing/DMA.\n"
       "v1.2.0: ARM LDR/LDM PC fix, PPU bitmap gating, ROM browser.\n"
       "v1.0.0: first public clean-room release.";
     msgbox("History", hist);
@@ -358,6 +376,10 @@ static void gui_cb_pause(void)  { /* waveOut flows continuously; no need */ }
 static void gui_cb_resume(void) { }
 static const char *gui_cb_keyname(int kp) { return vk_name(cfg.keymap[kp]); }
 static const char *gui_cb_joyname(int kp) { return joy_name(kp); }
+static int  gui_cb_keyget(int kp) { return cfg.keymap[kp]; }
+static void gui_cb_keyset(int kp, int vk) { cfg.keymap[kp] = vk; }
+static int  gui_cb_joyget(int kp) { return cfg.joymap[kp]; }
+static void gui_cb_joyset(int kp, int v) { cfg.joymap[kp] = v; }
 
 /* ------------------------------------------------------------------ key capture */
 /* The menu item arms a capture and returns; the next key or joystick event
@@ -452,6 +474,7 @@ static void do_action(int id) {
         break;
     case M_CONTROLS: reset_keys(); break;
     case M_RESETJOY: reset_joystick(); break;
+    case M_INPUTCFG: gui_native_input_config(); break;
     case M_SKIPINTROS:
         cfg.skipintros = !cfg.skipintros; g->skip_intros = cfg.skipintros;
         if (g->rom_size) gba_reset(g);
@@ -627,7 +650,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     /* Native menu bar (gui.c). */
     GuiCallbacks cb = { gui_cb_action, gui_cb_checked, gui_cb_loadrom,
                         gui_cb_setbios, gui_cb_pause, gui_cb_resume,
-                        gui_cb_keyname, gui_cb_joyname };
+                        gui_cb_keyname, gui_cb_joyname,
+                        gui_cb_keyget, gui_cb_keyset, gui_cb_joyget, gui_cb_joyset };
     gui_native_init((void *)g_hwnd, gba_icon_argb, GBA_ICON_W, GBA_ICON_H, &cb);
 
     ShowWindow(g_hwnd, SW_SHOW);

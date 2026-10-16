@@ -123,8 +123,12 @@ without it the emulator uses a built-in fast-boot stub.
 
 ### Controls
 
-Key mappings are configurable from **Options > Controls** and stored in
-`boycottadvance-reborn.ini` (one `Key_<button>` entry per button). Defaults:
+Key mappings are configurable from **Options > Controls > Input
+Configuration...**, which opens the same window the original
+BoycottAdvance used: a **Keyboard** page and a **Joystick** page, one row
+per GBA button, with **OK** / **Cancel**. Bindings are stored in
+`boycottadvance-reborn.ini` (one `Key_<button>` / `JoyGBA_<button>` entry
+per button). Defaults:
 
 | GBA | Key |
 |---|---|
@@ -138,6 +142,15 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.1** — the Controls menu now matches the original
+  BoycottAdvance: **Options > Controls > Input Configuration...** opens a
+  single window with a **Keyboard** page and a **Joystick** page, one row
+  per GBA button (`Button A`, `Button B`, `Button L`, `Button R`,
+  `SELECT`, `START`, `UP`, `DOWN`, `LEFT`, `RIGHT`) plus **OK** / **Cancel**,
+  instead of one menu entry per button. Also fixed the Windows config
+  file name — it wrote the old `BoycottAdvance.ini` and now reads/writes
+  `boycottadvance-reborn.ini` like the rest of the project — and the
+  Windows binaries ship as a GUI application (no console window).
 - **v1.4.0** — the Windows x86/x64 build no longer uses SDL2 at all. It
   now relies solely on the native APIs the original BoycottAdvance used:
   a GDI/Direct3D 9 window, WinMM (`waveOut`) audio, `GetAsyncKeyState`

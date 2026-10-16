@@ -329,6 +329,10 @@ static const char *gui_cb_joyname(int kp) {
     joy_binding_label(cfg.joymap[kp], buf, sizeof buf);
     return buf;
 }
+static int  gui_cb_keyget(int kp) { return cfg.keymap[kp]; }
+static void gui_cb_keyset(int kp, int vk) { cfg.keymap[kp] = vk; }
+static int  gui_cb_joyget(int kp) { return cfg.joymap[kp]; }
+static void gui_cb_joyset(int kp, int v) { cfg.joymap[kp] = v; }
 #endif
 
 static void gui_native_setup(void) {
@@ -338,7 +342,8 @@ static void gui_native_setup(void) {
     if (!SDL_GetWindowWMInfo(g_win, &wm) || wm.subsystem != SDL_SYSWM_WINDOWS) return;
     GuiCallbacks cb = { gui_cb_action, gui_cb_checked, gui_cb_loadrom,
                         gui_cb_setbios, gui_cb_pause, gui_cb_resume,
-                        gui_cb_keyname, gui_cb_joyname };
+                        gui_cb_keyname, gui_cb_joyname,
+                        gui_cb_keyget, gui_cb_keyset, gui_cb_joyget, gui_cb_joyset };
     gui_active = gui_native_init((void *)wm.info.win.window,
                                  gba_icon_argb, GBA_ICON_W, GBA_ICON_H, &cb);
 #endif
@@ -369,15 +374,28 @@ static void show_about(void) {
 }
 static void show_history(void) {
     dlg_text("History", GBA_TITLE "\n\n"
-      "v1.3.0 changes:\n"
-      "  - Fixed MLA/MUL destination register decode: the multiply\n"
-      "    result went to the wrong register, so address maths (and\n"
-      "    therefore most games) rendered wrong or nothing.\n"
-      "  - Fixed sound: envelope clock no longer freezes, correct\n"
-      "    square/noise/wave mixing and DMA Direct Sound FIFOs.\n"
-      "  - Configurable key mappings, saved in boycottadvance-reborn.ini.\n"
-      "  - New Options/Frame Buffer backends: SDL Software, OpenGL,\n"
-      "    Windows GDI, Direct3D 9 and Vulkan (when available).\n\n"
+      "v1.4.1 changes:\n"
+      "  - Controls now match the original BoycottAdvance: Options >\n"
+      "    Controls opens a single Input Configuration window with a\n"
+      "    Keyboard page and a Joystick page (one row per GBA button,\n"
+      "    OK / Cancel), instead of the per-button menu entries.\n"
+      "  - Fixed the config file name: the Windows build used to write\n"
+      "    BoycottAdvance.ini; it now uses boycottadvance-reborn.ini.\n"
+      "  - Joystick D-pad: the POV hat can be bound to the four\n"
+      "    directions next to the face/shoulder buttons.\n"
+      "  - The Windows binaries run as a GUI application (no console).\n\n"
+      "v1.4.0 changes:\n"
+      "  - Windows x86/x64 is fully SDL-free: native GDI / Direct3D 9\n"
+      "    window, WinMM (waveOut) audio, WinMM joystick, GetAsyncKeyState\n"
+      "    input and the full native Win32 menu bar (except Debug).\n"
+      "  - R/L remaps no longer collide with Right/Left on load.\n"
+      "  - Cartridge SRAM/Flash at 0x0E000000 is mapped (saves kept).\n"
+      "  - Correct DMA address control and CpuSet 21-bit count.\n"
+      "  - Save/Load State buffers are static (1 MB locals overflowed the\n"
+      "    thread stack and crashed).\n"
+      "  - BIOS Enable / Skip BIOS Boot / Skip Intro Hacks take effect\n"
+      "    immediately (they now reset the core) and persist.\n\n"
+      "v1.3.0: MLA/MUL destination decode, sound envelope/mixing/DMA.\n"
       "v1.2.0: ARM LDR/LDM PC fix, PPU bitmap gating, ROM browser.\n"
       "v1.0.0: first public clean-room release.");
 }

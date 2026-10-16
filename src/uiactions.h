@@ -30,5 +30,7 @@ enum { M_JOY0 = M_KEY0 + 10 };
 #define M_JOY0_END (M_JOY0 + 9)
 /* Placed after the remap block so it cannot collide with a "Map ..." item. */
 enum { M_RESETJOY = M_JOY0_END + 1 };
+/* Opens the modal Input Configuration dialog (Keyboard / Joystick pages). */
+enum { M_INPUTCFG = M_RESETJOY + 1 };
 
 #endif

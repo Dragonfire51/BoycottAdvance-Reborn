@@ -49,6 +49,13 @@ typedef struct {
      * them next to each button. kp is a JOY_KP_* index. */
     const char *(*key_name)(int kp);
     const char *(*joy_name)(int kp);
+    /* Live bindings for the Input Configuration dialog. kp is a JOY_KP_*
+     * index; keyboard values are virtual-key codes, joystick values are a
+     * button index or a JOY_POV_* sentinel. */
+    int  (*key_get)(int kp);
+    void (*key_set)(int kp, int vk);
+    int  (*joy_get)(int kp);
+    void (*joy_set)(int kp, int value);
 } GuiCallbacks;
 
 /* Attach the native menu bar to an existing window (its HWND on Windows).
@@ -61,6 +68,7 @@ void gui_native_sync(void);         /* refresh checkmarks after a state change*/
 void gui_native_message(const char *title, const char *body);
 void gui_native_open_rom(void);     /* open a ROM via the native file dialog  */
 void gui_native_open_bios(void);    /* open a BIOS via the native file dialog */
+void gui_native_input_config(void); /* modal Input Configuration dialog        */
 void gui_native_shutdown(void);
 
 #endif
