@@ -299,10 +299,11 @@ void dma_run(GBA *g, int ch) {
     for (uint32_t i = 0; i < count; i++) {
         uint32_t v = d->word ? gba_read32(g, src) : gba_read16(g, src);
         if (d->word) gba_write32(g, dst, v); else gba_write16(g, dst, (uint16_t)v);
-        if (d->src_ctl == 0 || d->src_ctl == 1) src += unit;
-        else if (d->src_ctl == 2) src -= unit;
-        if (d->dst_ctl == 0 || d->dst_ctl == 1) dst += unit;
-        else if (d->dst_ctl == 2) dst -= unit;
+        /* Address control: 0 increment, 1 decrement, 2 fixed, 3 increment/reload. */
+        if (d->src_ctl == 0 || d->src_ctl == 3) src += unit;
+        else if (d->src_ctl == 1) src -= unit;
+        if (d->dst_ctl == 0 || d->dst_ctl == 3) dst += unit;
+        else if (d->dst_ctl == 1) dst -= unit;
     }
     d->src = src;   /* advanced address is kept for repeat transfers */
     d->dst = dst;
@@ -354,7 +355,7 @@ uint32_t gba_read32(GBA *g, uint32_t addr) {
         uint32_t off = (addr - 0x08000000) & (g->rom_mask & ~3u);
         return off < g->rom_size ? rd32_al(g->rom + off) : 0;
     }
-    case 0x0E: return rd32_al(g->rom + (addr & 0xFFFF));
+    case 0x0E: return rd32_al(g->save_mem + (addr & 0x1FFFC));
     default: return 0;
     }
 }
@@ -372,7 +373,7 @@ uint16_t gba_read16(GBA *g, uint32_t addr) {
         uint32_t off = (addr - 0x08000000) & (g->rom_mask & ~1u);
         return off < g->rom_size ? rd16_al(g->rom + off) : 0;
     }
-    case 0x0E: return rd16_al(g->rom + (addr & 0xFFFE));
+    case 0x0E: return rd16_al(g->save_mem + (addr & 0x1FFFE));
     default: return 0;
     }
 }
@@ -390,7 +391,7 @@ uint8_t gba_read8(GBA *g, uint32_t addr) {
         uint32_t off = (addr - 0x08000000) & g->rom_mask;
         return off < g->rom_size ? g->rom[off] : 0;
     }
-    case 0x0E: return g->rom[addr & 0xFFFF];
+    case 0x0E: return g->save_mem[addr & 0x1FFFF];
     default: return 0;
     }
 }
@@ -403,6 +404,7 @@ void gba_write32(GBA *g, uint32_t addr, uint32_t v) {
     case 0x05: wr32_al(g->pal + (addr & 0x3FC), v); return;
     case 0x06: wr32_al(g->vram + (addr & 0x17FFC), v); return;
     case 0x07: wr32_al(g->oam + (addr & 0x3FC), v); return;
+    case 0x0E: wr32_al(g->save_mem + (addr & 0x1FFFC), v); return;
     default: return;   /* ROM write-protected */
     }
 }
@@ -415,6 +417,7 @@ void gba_write16(GBA *g, uint32_t addr, uint16_t v) {
     case 0x05: wr16_al(g->pal + (addr & 0x3FE), v); return;
     case 0x06: wr16_al(g->vram + (addr & 0x17FFE), v); return;
     case 0x07: wr16_al(g->oam + (addr & 0x3FE), v); return;
+    case 0x0E: wr16_al(g->save_mem + (addr & 0x1FFFE), v); return;
     default: return;
     }
 }
@@ -430,6 +433,7 @@ void gba_write8(GBA *g, uint32_t addr, uint8_t v) {
     case 0x05: g->pal[addr & 0x3FF] = v; return;
     case 0x06: g->vram[addr & 0x17FFF] = v; return;
     case 0x07: g->oam[addr & 0x3FF] = v; return;
+    case 0x0E: g->save_mem[addr & 0x1FFFF] = v; return;
     default: return;
     }
 }

@@ -47,7 +47,7 @@ static void swi_cpu_set(GBA *g) {
     uint32_t src = g->cpu.r[0];
     uint32_t dst = g->cpu.r[1];
     uint32_t ctl = g->cpu.r[2];
-    uint32_t count = ctl & 0xFFFFF;
+    uint32_t count = ctl & 0x1FFFFF;
     bool fixed = ctl & 0x01000000;
     bool is32 = ctl & 0x04000000;
     if (is32) {

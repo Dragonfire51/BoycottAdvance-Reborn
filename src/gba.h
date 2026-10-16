@@ -192,6 +192,7 @@ typedef struct GBA {
     uint8_t  bios[BIOS_SIZE];
     bool     bios_enabled;
     bool     bios_fastboot;
+    bool     skip_intros;         /* SkipIntroHacks: enter ROM without BIOS wait */
 
     uint8_t  ewram[EWRAM_SIZE];   /* 0x02000000 */
     uint8_t  iwram[IWRAM_SIZE];   /* 0x03000000 */

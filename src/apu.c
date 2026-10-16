@@ -11,7 +11,7 @@
 
 /* One output sample is ~380 CPU cycles at 44.1 kHz; keep the fraction. */
 #define STEP_FP     ((uint32_t)(((uint64_t)16777216 << 16) / APU_SR))
-static const int32_t DUTY[4] = { 1, 2, 4, 6 };   /* duty step 0..7 */
+static const uint32_t DUTY[4] = { 1, 2, 4, 6 };   /* duty step 0..7 */
 
 static int16_t g_fifo_a[2];   /* last FIFO-A sample, L/R */
 static int16_t g_fifo_b[2];

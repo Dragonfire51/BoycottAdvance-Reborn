@@ -57,9 +57,23 @@ void gba_reset(GBA *g) {
     g->ie = 0;
     g->ppu.vcount = 0;
 
-    /* Fast-boot: replicate the state the real BIOS leaves after its init,
-       then jump straight into the cartridge. This lets commercial titles
-       run without dumping the copyrighted BIOS. */
+    /* Boot. The default (BIOS fast boot) replicates the state the real BIOS
+       leaves after its init and jumps straight into the cartridge, so no
+       copyrighted BIOS dump is required. With fast boot disabled and a BIOS
+       image present, the ARM7 starts at 0x00000000 and runs the BIOS. */
+    if (g->bios_enabled && !g->bios_fastboot && g->bios[0] != 0) {
+        g->cpu.cpsr = 0x0000001F;        /* system mode, ARM state, IRQ enabled */
+        for (int i = 0; i < 16; i++) g->cpu.r[i] = 0;
+        g->cpu.r[13] = 0x03007F00;       /* SP (USR/SYS) */
+        g->cpu.r[15] = 0x00000000;       /* BIOS entry */
+        g->cpu.bank[BANK_IRQ][5] = 0x03007FA0;
+        g->cpu.bank[BANK_SVC][5] = 0x03007FE0;
+        g->cpu.bank[0][5] = 0x03007F00;
+        g->io[0x130] = 0xFF; g->io[0x131] = 0x03;
+        g->key_input = 0x03FF;
+        return;
+    }
+
     g->cpu.cpsr = 0x0000001F;            /* system mode, ARM state, IRQ enabled */
     for (int i = 0; i < 16; i++) g->cpu.r[i] = 0;
     g->cpu.r[13] = 0x03007F00;           /* SP (USR/SYS) */
@@ -188,7 +202,7 @@ void gba_apply_cheats(GBA *g) {
 }
 
 int gba_save_state(GBA *g, const char *path) {
-    uint8_t buf[1 << 20];
+    static uint8_t buf[1 << 20];
     size_t n = 0;
     /* store header */
     memcpy(buf+n, "BARS", 4); n += 4;
@@ -226,7 +240,7 @@ int gba_save_state(GBA *g, const char *path) {
 int gba_load_state(GBA *g, const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
-    uint8_t buf[1 << 20];
+    static uint8_t buf[1 << 20];
     size_t got = fread(buf, 1, sizeof(buf), f);
     fclose(f);
     size_t n = 0;
