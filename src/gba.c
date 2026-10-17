@@ -88,6 +88,27 @@ void gba_reset(GBA *g) {
     g->io[0x130] = 0xFF; g->io[0x131] = 0x03;
     g->io[0x132] = 0x00; g->io[0x133] = 0x00;
     g->key_input = 0x03FF;
+
+    /* Replicate the register state the real BIOS leaves behind when it hands
+       control to the cartridge. Titles such as Pokemon Emerald queue their
+       display writes and only drain the queue from their VBlank handler, so
+       if the VBlank interrupt is not already armed the queue never flushes:
+       DISPSTAT is never written, the handler never runs, and the game
+       deadlocks. Leaving VBlank armed (DISPSTAT bit 3 + IE bit 0 + IME) and
+       the display in forced blank mirrors the hardware and lets the queue
+       drain. The IRQ vector points at the BIOS default handler so the first
+       VBlank before the game installs its own handler is harmless. */
+    g->ppu.dispcnt |= 0x0080;            /* forced blank */
+    g->ppu.dispstat |= 0x0008;           /* VBlank IRQ enable */
+    g->ie |= 0x0001;                     /* IE: VBlank */
+    g->ime = true;
+    gba_write8(g, 0x04000300, 1);        /* POSTFLG: BIOS has run */
+    /* Point the IRQ vector at the BIOS default handler, as the real BIOS does.
+       Only meaningful when a BIOS image is mapped: with fast boot and no dump
+       the BIOS region reads as zero, so an interrupt taken before the game
+       installs its own handler would execute empty space. */
+    if (g->bios[0] != 0)
+        gba_write32(g, 0x03FFFFFC, 0x00000300);  /* BIOS default IRQ handler */
 }
 
 void gba_load_bios(GBA *g, const char *path) {

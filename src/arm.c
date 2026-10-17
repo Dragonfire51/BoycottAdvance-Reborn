@@ -384,7 +384,12 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
                 int b = bank_of(get_cpsr(g));
                 g->cpu.spsr[b] = (g->cpu.spsr[b] & ~mask) | (val & mask);
             } else {                                      /* to CPSR */
-                set_cpsr(g, (get_cpsr(g) & ~mask) | (val & mask));
+                uint32_t nc = (get_cpsr(g) & ~mask) | (val & mask);
+                /* A control-field write may change the CPU mode: route it
+                   through change_mode so r13/r14 get banked in/out, exactly
+                   like an exception return does. */
+                if (mask & 0xFF) change_mode(g, nc);
+                else set_cpsr(g, nc);
             }
             set_pc(g, r15(g) + 4); add_cycles(g, 1); return;
         }
