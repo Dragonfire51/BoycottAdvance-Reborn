@@ -142,6 +142,16 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.3** — two core fixes that unblock commercial titles at boot.
+  `MSR` to `CPSR` changed the CPU mode without banking `r13`/`r14`, so the
+  real BIOS inherited a stale `lr` and looped forever at `0x120`; it now
+  routes through the same mode switch an exception return uses. And fast
+  boot now starts from the register state the real BIOS leaves after POST
+  (forced blank, VBlank armed, `POSTFLG` set, BIOS default IRQ vector), so
+  games that defer their display writes — Pokemon Emerald among them — no
+  longer deadlock waiting for a VBlank handler that could never run. Emerald
+  now applies `DISPSTAT=0x9628`, arms its own interrupts and runs its main
+  loop instead of resetting to the BIOS.
 - **v1.4.2** — **File > Choose State Slot** now lists the ten save-state
   slots (`Slot 0` … `Slot 9`) and checks the active one, matching the
   original BoycottAdvance; `Load State` / `Save State` use the selected

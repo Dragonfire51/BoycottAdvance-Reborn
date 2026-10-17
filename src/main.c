@@ -381,6 +381,13 @@ static void show_about(void) {
 }
 static void show_history(void) {
     dlg_text("History", GBA_TITLE "\n\n"
+      "v1.4.3 changes:\n"
+      "  - Core: MSR to CPSR now banks r13/r14 when it changes the CPU\n"
+      "    mode, so the real BIOS boots past 0x120 instead of looping.\n"
+      "  - Core: fast boot now starts from the register state the real\n"
+      "    BIOS leaves after POST (forced blank + VBlank armed). Pokemon\n"
+      "    Emerald no longer deadlocks on its deferred display writes and\n"
+      "    runs its main loop instead of resetting to the BIOS.\n\n"
       "v1.4.2 changes:\n"
       "  - File > Choose State Slot now lists the ten slots (Slot 0..Slot 9)\n"
       "    and checks the active one; Load State / Save State use the\n"
