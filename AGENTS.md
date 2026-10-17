@@ -16,7 +16,9 @@ Nota de acceso: el sitio devuelve **403** a `curl`/`wget` directos (bloqueo de
 user-agent). Descargarlo con la herramienta de extracción web (Tavily) o desde un
 navegador; no usar `curl` para leerlo.
 
-## Estado (v1.4.2; tags `Latest` = `v1.4.1` movidos; version en src/gba.h)
+## Estado (v1.4.3; tags `Latest` = `v1.4.3`; version en src/gba.h)
+
+- **RELEASE v1.4.3 (publicado)**: `main` = `eacce91`; tag `v1.4.3` y tag `Latest` apuntan a ese commit; releases `v1.4.3` y `Latest` (id 415506383 / 413237927) con los 5 assets (linux-x86_64, macos, win32.zip, win64.zip, src.tar.gz). Proceso de publicacion: bump de `GBA_VERSION` + README + dialogos de historial -> commit -> push a `main` -> `git tag -a v1.4.3` + push (dispara `.github/workflows/build-binaries.yml`, que compila y crea el release) -> `git tag -f Latest` + push -f y reemplazar los assets del release `Latest` via API. Los binarios Windows se verificaron localmente con mingw-w64 (x86_64 e i686, subsistema GUI=2, sin SDL2).
 
 - **HECHO (v1.4.2)**: `File > Choose State Slot` es ahora un submenú con 10 slots (Slot 0..9), radio-check del activo, `Load/Save State` usan el slot elegido y se persiste como `StateSlot` en `boycottadvance-reborn.ini` (cargado en cfg_load con validación de rango). Mismo comportamiento en gui.c (nativo) y main.c (SDL). IDs `M_SLOT0..M_SLOT_LAST` en uiactions.h.
 
