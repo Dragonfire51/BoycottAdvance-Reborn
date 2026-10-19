@@ -110,6 +110,9 @@ static void cfg_load(const char *path) {
     cfg.state_slot   = ini_geti(path, "StateSlot", 0);
     if (cfg.state_slot < 0 || cfg.state_slot >= M_SLOT_COUNT) cfg.state_slot = 0;
     cfg.video_backend= ini_geti(path, "VideoBackend", VID_AUTO);
+    cfg.smooth       = ini_geti(path, "SmoothEmulation", 0);
+    cfg.scalemode    = ini_geti(path, "ScaleMode", 0);
+    cfg.reverse_stereo= ini_geti(path, "ReverseStereo", 0);
     ini_get(path, "RomPath", cfg.lastdir, sizeof cfg.lastdir);
     if (!cfg.lastdir[0]) snprintf(cfg.lastdir, sizeof cfg.lastdir, ".");
     for (int i = 0; i < KP_COUNT; i++) {
@@ -127,12 +130,14 @@ static void cfg_save(const char *path) {
       "ScreenZoom %d\nScanline %d\nAutoThrottle %d\nShowFPS %d\nShowFPSPercent %d\n"
       "FrameSkip %d\nAutoFrameSkip %d\nSoundEnable %d\nGameboySoundEnable %d\n"
       "DirectSoundAEnable %d\nDirectSoundBEnable %d\nBIOSEnable %d\nBIOSFastBoot %d\n"
-      "SkipIntros %d\nAutoRun %d\nFlashROMId %d\nStateSlot %d\nVideoBackend %d\nRomPath %s\n",
+      "SkipIntros %d\nAutoRun %d\nFlashROMId %d\nStateSlot %d\nVideoBackend %d\n"
+      "SmoothEmulation %d\nScaleMode %d\nReverseStereo %d\nRomPath %s\n",
       cfg.zoom, cfg.scanline, cfg.autothrottle, cfg.showfps, cfg.showfps_pct,
       cfg.frameskip, cfg.autoframeskip, cfg.sound_enable, cfg.gbc_sound,
       cfg.dsound_a, cfg.dsound_b, cfg.biosenable, cfg.biosfastboot,
       cfg.skipintros, cfg.autorun, cfg.flashid, cfg.state_slot,
-      cfg.video_backend, cfg.lastdir);
+      cfg.video_backend, cfg.smooth, cfg.scalemode, cfg.reverse_stereo,
+      cfg.lastdir);
     for (int i = 0; i < KP_COUNT; i++)
         fprintf(f, "Key_%s %d\n", KP_NAME[i], cfg.keymap[i]);
     for (int i = 0; i < KP_COUNT; i++)
@@ -324,7 +329,7 @@ static int  item_checked(int id);
 static const char *scancode_name(int sc);
 static void joy_binding_label(int joy, char *out, size_t n);
 #ifdef _WIN32
-static void gui_cb_action(int id)   { do_action(id); }
+static void gui_cb_action(int id)   { do_action(id); cfg_save("boycottadvance-reborn.ini"); }
 static int  gui_cb_checked(int id)  { return item_checked(id); }
 static void gui_cb_loadrom(const char *path) { load_rom(path); }
 static void gui_cb_setbios(const char *path) { gba_load_bios(g, path); }
@@ -337,9 +342,9 @@ static const char *gui_cb_joyname(int kp) {
     return buf;
 }
 static int  gui_cb_keyget(int kp) { return cfg.keymap[kp]; }
-static void gui_cb_keyset(int kp, int vk) { cfg.keymap[kp] = vk; }
+static void gui_cb_keyset(int kp, int vk) { cfg.keymap[kp] = vk; cfg_save("boycottadvance-reborn.ini"); }
 static int  gui_cb_joyget(int kp) { return cfg.joymap[kp]; }
-static void gui_cb_joyset(int kp, int v) { cfg.joymap[kp] = v; }
+static void gui_cb_joyset(int kp, int v) { cfg.joymap[kp] = v; cfg_save("boycottadvance-reborn.ini"); }
 #endif
 
 static void gui_native_setup(void) {
@@ -690,7 +695,8 @@ int main(int argc, char **argv) {
                     menu_open = (hit==menu_open)?-1:hit; menu_hover = -1;
                 } else if (menu_open >= 0) {
                     int it = menu_item_hit(menu_open,mx,my);
-                    if (it>=0) { do_action(menus[menu_open].items[it].id); menu_open=-1; }
+                    if (it>=0) { do_action(menus[menu_open].items[it].id); menu_open=-1;
+                                 cfg_save("boycottadvance-reborn.ini"); }
                     else menu_open = -1;
                 }
             } else if (ev.type == SDL_MOUSEMOTION && menu_open >= 0) {
@@ -706,7 +712,8 @@ int main(int argc, char **argv) {
                 }
                 if (dialog_kind == 3) {           /* capturing a key mapping */
                     if (k==SDLK_ESCAPE) { key_capture = -1; dialog_kind = 0; }
-                    else { cfg.keymap[key_capture] = ev.key.keysym.scancode; key_capture = -1; dialog_kind = 0; }
+                    else { cfg.keymap[key_capture] = ev.key.keysym.scancode; key_capture = -1; dialog_kind = 0;
+                           cfg_save("boycottadvance-reborn.ini"); }
                     continue;
                 }
                 if (dialog_kind) { if (k==SDLK_ESCAPE) dialog_kind=0; continue; }

@@ -154,6 +154,29 @@ static uint16_t key_state(void) {
 }
 
 /* ------------------------------------------------------------------ .ini */
+/* The config lives next to the executable, as the original did. Writing to
+ * a bare relative name would drop it in the process working directory, which
+ * for a shortcut or Start-menu launch is somewhere the user cannot find. If
+ * the install directory is read-only (Program Files) we fall back to the
+ * working directory so the settings still persist. */
+static const char *ini_cwd_path(void) { return "boycottadvance-reborn.ini"; }
+static const char *ini_path(void) {
+    static char path[MAX_PATH];
+    static int resolved = 0;
+    if (!resolved) {
+        char exe[MAX_PATH];
+        DWORD n = GetModuleFileNameA(NULL, exe, sizeof exe);
+        resolved = 1;
+        if (n > 0 && n < sizeof exe) {
+            char *slash = strrchr(exe, '\\');
+            if (slash) slash[1] = 0; else exe[0] = 0;
+            snprintf(path, sizeof path, "%sboycottadvance-reborn.ini", exe);
+        } else {
+            snprintf(path, sizeof path, "%s", ini_cwd_path());
+        }
+    }
+    return path;
+}
 static void ini_get(const char *path, const char *key, char *out, size_t n) {
     FILE *f = fopen(path, "rt"); out[0] = 0;
     if (!f) return;
@@ -198,6 +221,9 @@ static void cfg_load(const char *path) {
     cfg.state_slot   = ini_geti(path, "StateSlot", 0);
     if (cfg.state_slot < 0 || cfg.state_slot >= M_SLOT_COUNT) cfg.state_slot = 0;
     cfg.video_backend= ini_geti(path, "VideoBackend", VID_GDI);
+    cfg.smooth       = ini_geti(path, "SmoothEmulation", 0);
+    cfg.scalemode    = ini_geti(path, "ScaleMode", 0);
+    cfg.reverse_stereo= ini_geti(path, "ReverseStereo", 0);
     ini_get(path, "RomPath", cfg.lastdir, sizeof cfg.lastdir);
     if (!cfg.lastdir[0]) snprintf(cfg.lastdir, sizeof cfg.lastdir, ".");
     for (int i = 0; i < KP_COUNT; i++) {
@@ -209,23 +235,58 @@ static void cfg_load(const char *path) {
         cfg.joymap[i] = ini_geti(path, key, JOY_DEFAULT[i]);
     }
 }
-static void cfg_save(const char *path) {
-    FILE *f = fopen(path, "wt"); if (!f) return;
-    fprintf(f,
+/* Write the config atomically: a temp file followed by a replace, so an
+ * interrupted or failed write cannot truncate a good config (the reference
+ * frontend does the same with its prefs). */
+static int cfg_save(const char *path) {
+    char tmp[MAX_PATH + 8];
+    if ((size_t)snprintf(tmp, sizeof tmp, "%s.tmp", path) >= sizeof tmp) return 0;
+    FILE *f = fopen(tmp, "wt"); if (!f) return 0;
+    int ok = 1;
+    if (fprintf(f,
       "ScreenZoom %d\nScanline %d\nAutoThrottle %d\nShowFPS %d\nShowFPSPercent %d\n"
       "FrameSkip %d\nAutoFrameSkip %d\nSoundEnable %d\nGameboySoundEnable %d\n"
       "DirectSoundAEnable %d\nDirectSoundBEnable %d\nBIOSEnable %d\nBIOSFastBoot %d\n"
-      "SkipIntros %d\nAutoRun %d\nFlashROMId %d\nStateSlot %d\nVideoBackend %d\nRomPath %s\n",
+      "SkipIntros %d\nAutoRun %d\nFlashROMId %d\nStateSlot %d\nVideoBackend %d\n"
+      "SmoothEmulation %d\nScaleMode %d\nReverseStereo %d\nRomPath %s\n",
       cfg.zoom, cfg.scanline, cfg.autothrottle, cfg.showfps, cfg.showfps_pct,
       cfg.frameskip, cfg.autoframeskip, cfg.sound_enable, cfg.gbc_sound,
       cfg.dsound_a, cfg.dsound_b, cfg.biosenable, cfg.biosfastboot,
       cfg.skipintros, cfg.autorun, cfg.flashid, cfg.state_slot,
-      cfg.video_backend, cfg.lastdir);
+      cfg.video_backend, cfg.smooth, cfg.scalemode, cfg.reverse_stereo,
+      cfg.lastdir) < 0) ok = 0;
     for (int i = 0; i < KP_COUNT; i++)
-        fprintf(f, "Key_%s %d\n", KP_NAME[i], cfg.keymap[i]);
+        if (fprintf(f, "Key_%s %d\n", KP_NAME[i], cfg.keymap[i]) < 0) ok = 0;
     for (int i = 0; i < KP_COUNT; i++)
-        fprintf(f, "JoyGBA_%s %d\n", KP_NAME[i], cfg.joymap[i]);
-    fclose(f);
+        if (fprintf(f, "JoyGBA_%s %d\n", KP_NAME[i], cfg.joymap[i]) < 0) ok = 0;
+    if (fclose(f) != 0) ok = 0;
+    if (!ok || !MoveFileExA(tmp, path,
+                            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        DeleteFileA(tmp);
+        return 0;
+    }
+    return 1;
+}
+/* Persist immediately whenever a setting changes, so a setting is never lost
+ * if the emulator is killed (the real BIOS can spin, and a force-close must
+ * not throw away the user's choices). Falls back to the working directory
+ * when the install directory is not writable. */
+static void save_cfg(void) {
+    if (cfg_save(ini_path())) return;
+    if (strcmp(ini_path(), ini_cwd_path()) != 0) cfg_save(ini_cwd_path());
+}
+
+/* Load from next to the executable; if that file does not exist, accept a
+ * config left in the working directory by an older build. */
+static void cfg_load_best(void) {
+    cfg_load(ini_path());
+    if (strcmp(ini_path(), ini_cwd_path()) != 0) {
+        FILE *probe = fopen(ini_path(), "rt");
+        if (!probe) {
+            FILE *old = fopen(ini_cwd_path(), "rt");
+            if (old) { fclose(old); cfg_load(ini_cwd_path()); }
+        } else fclose(probe);
+    }
 }
 
 /* ------------------------------------------------------------------ messages */
@@ -383,18 +444,18 @@ static void do_action(int id);
 static int  item_checked(int id);
 static const char *vk_name(int vk);
 static const char *joy_name(int kp);
-static void gui_cb_action(int id)   { do_action(id); }
+static void gui_cb_action(int id)   { do_action(id); save_cfg(); }
 static int  gui_cb_checked(int id)  { return item_checked(id); }
 static void gui_cb_loadrom(const char *path) { load_rom(path); }
-static void gui_cb_setbios(const char *path) { gba_load_bios(g, path); }
+static void gui_cb_setbios(const char *path) { gba_load_bios(g, path); save_cfg(); }
 static void gui_cb_pause(void)  { /* waveOut flows continuously; no need */ }
 static void gui_cb_resume(void) { }
 static const char *gui_cb_keyname(int kp) { return vk_name(cfg.keymap[kp]); }
 static const char *gui_cb_joyname(int kp) { return joy_name(kp); }
 static int  gui_cb_keyget(int kp) { return cfg.keymap[kp]; }
-static void gui_cb_keyset(int kp, int vk) { cfg.keymap[kp] = vk; }
+static void gui_cb_keyset(int kp, int vk) { cfg.keymap[kp] = vk; save_cfg(); }
 static int  gui_cb_joyget(int kp) { return cfg.joymap[kp]; }
-static void gui_cb_joyset(int kp, int v) { cfg.joymap[kp] = v; }
+static void gui_cb_joyset(int kp, int v) { cfg.joymap[kp] = v; save_cfg(); }
 
 /* ------------------------------------------------------------------ key capture */
 /* The menu item arms a capture and returns; the next key or joystick event
@@ -415,6 +476,7 @@ static void on_key_assign(int vk) {
     key_capture = -1;
     SetWindowTextA(g_hwnd, GBA_TITLE);
     gui_native_sync();
+    save_cfg();
 }
 static void capture_joy(int kp) {
     joy_capture = kp;
@@ -427,6 +489,7 @@ static void on_joy_assign(int value) {
     joy_capture = -1;
     SetWindowTextA(g_hwnd, GBA_TITLE);
     gui_native_sync();
+    save_cfg();
 }
 /* Called every frame while a joystick capture is armed: bind the first
  * newly pressed button, or the POV direction if the hat is moved. */
@@ -611,7 +674,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     (void)prev; (void)cmdline; (void)show;
     g_inst = inst;
 
-    cfg_load("boycottadvance-reborn.ini");
+    cfg_load_best();
     const char *rom_arg = NULL;
     {
         LPWSTR w = GetCommandLineW();
@@ -742,7 +805,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     audio_close();
     if (video) vid_shutdown(video);
     if (fb_w) fb_free(&fb);
-    cfg_save("boycottadvance-reborn.ini");
+    save_cfg();
     gui_native_shutdown();
     free(g);
     return 0;
