@@ -394,33 +394,42 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
             set_pc(g, r15(g) + 4); add_cycles(g, 1); return;
         }
         switch (opc) {
-        case 0x0: res = a & bv;   flags_logic(g, res, carry); break;
-        case 0x1: res = a ^ bv;   flags_logic(g, res, carry); break;
-        case 0x2: res = a - bv;   flags_sub3(g, a, bv, res, 1); break;
-        case 0x3: res = bv - a;   flags_sub3(g, bv, a, res, 1); break;
-        case 0x4: res = a + bv;   flags_add3(g, a, bv, res, 0); break;
-        case 0x5: res = a + bv + ((cpsr & CPSR_C) ? 1 : 0); flags_add3(g, a, bv, res, (cpsr & CPSR_C) ? 1 : 0); break;
-        case 0x6: res = a - bv - ((cpsr & CPSR_C) ? 0 : 1); flags_sub3(g, a, bv, res, (cpsr & CPSR_C) ? 1 : 0); break;
-        case 0x7: res = bv - a - ((cpsr & CPSR_C) ? 0 : 1); flags_sub3(g, bv, a, res, (cpsr & CPSR_C) ? 1 : 0); break;
+        case 0x0: res = a & bv;   break;
+        case 0x1: res = a ^ bv;   break;
+        case 0x2: res = a - bv;   break;
+        case 0x3: res = bv - a;   break;
+        case 0x4: res = a + bv;   break;
+        case 0x5: res = a + bv + ((cpsr & CPSR_C) ? 1 : 0); break;
+        case 0x6: res = a - bv - ((cpsr & CPSR_C) ? 0 : 1); break;
+        case 0x7: res = bv - a - ((cpsr & CPSR_C) ? 0 : 1); break;
         case 0x8: res = a & bv;   break;  /* TST */
         case 0x9: res = a ^ bv;   break;  /* TEQ */
         case 0xA: res = a - bv;   break;  /* CMP */
         case 0xB: res = a + bv;   break;  /* CMN */
-        case 0xC: res = a | bv;   flags_logic(g, res, carry); break;
-        case 0xD: res = bv;       flags_logic(g, res, carry); break;  /* MOV */
-        case 0xE: res = a & ~bv;  flags_logic(g, res, carry); break;  /* BIC */
-        case 0xF: res = ~bv;      flags_logic(g, res, carry); break;  /* MVN */
+        case 0xC: res = a | bv;   break;  /* ORR */
+        case 0xD: res = bv;       break;  /* MOV */
+        case 0xE: res = a & ~bv;  break;  /* BIC */
+        case 0xF: res = ~bv;      break;  /* MVN */
         default:  break;
         }
-        if (s && (opc == 0x8 || opc == 0x9 || opc == 0xA || opc == 0xB)) {
-            if (opc == 0x8) flags_logic(g, res, carry);
-            else if (opc == 0x9) flags_logic(g, res, carry);
-            else if (opc == 0xA) flags_sub3(g, a, bv, res, 1);
-            else flags_add3(g, a, bv, res, 0);
-        }
-        if (s && (opc == 0x2 || opc == 0x3)) {
-            flags_sub3(g, a, bv, res, 1);
-            if (opc == 0x3) flags_sub3(g, bv, a, res, 1);
+        /* Flags change only when S is set (TST/TEQ/CMP/CMN always have it).
+           Writing them unconditionally corrupts the flags a following
+           conditional branch depends on: e.g. the BIOS decompressor's
+           MOV-with-shift loops then branch the wrong way and never
+           terminate. */
+        if (s) switch (opc) {
+        case 0x0: case 0x1: case 0x8: case 0x9:
+        case 0xC: case 0xD: case 0xE: case 0xF:
+            flags_logic(g, res, carry); break;
+        case 0x2: flags_sub3(g, a, bv, res, 1); break;
+        case 0x3: flags_sub3(g, bv, a, res, 1); break;
+        case 0x4: flags_add3(g, a, bv, res, 0); break;
+        case 0x5: flags_add3(g, a, bv, res, (cpsr & CPSR_C) ? 1 : 0); break;
+        case 0x6: flags_sub3(g, a, bv, res, (cpsr & CPSR_C) ? 1 : 0); break;
+        case 0x7: flags_sub3(g, bv, a, res, (cpsr & CPSR_C) ? 1 : 0); break;
+        case 0xA: flags_sub3(g, a, bv, res, 1); break;
+        case 0xB: flags_add3(g, a, bv, res, 0); break;
+        default:  break;
         }
         /* writeback */
         bool write = !(opc == 0x8 || opc == 0x9 || opc == 0xA || opc == 0xB);
@@ -587,14 +596,15 @@ static void thumb_exec_at(GBA *g, uint16_t insn) {
 
     /* format 7/8: load/store with register offset (0101) */
     if (op == 0x5) {
-        bool l = insn & 0x0800, b = insn & 0x0400;
-        bool sign = insn & 0x0200;
+        bool l = insn & 0x0800, b = insn & 0x0400, s = insn & 0x0200;
         uint32_t addr = read_reg(g, rn) + read_reg(g, rs);
         if (l) {
-            if (sign) write_reg(g, rd, (uint32_t)(int16_t)gba_read16(g, addr));
-            else write_reg(g, rd, b ? gba_read8(g, addr) : gba_read32(g, addr));
+            if (b) write_reg(g, rd, s ? (uint32_t)(int8_t)gba_read8(g, addr) : gba_read8(g, addr));
+            else   write_reg(g, rd, s ? (uint32_t)(int16_t)gba_read16(g, addr) : gba_read32(g, addr));
         } else {
-            if (b) gba_write8(g, addr, read_reg(g, rd)); else gba_write32(g, addr, read_reg(g, rd));
+            if (b) gba_write8(g, addr, read_reg(g, rd));
+            else if (s) gba_write16(g, addr, read_reg(g, rd));
+            else gba_write32(g, addr, read_reg(g, rd));
         }
         set_pc(g, next); add_cycles(g, 1); return;
     }
@@ -729,6 +739,7 @@ void arm_execute(GBA *g, uint32_t max_cycles) {
          * the GBA leaves the flag set so the handler can read IE&IF to find
          * the source; the BIOS/handler clears it by writing 1 to IF. */
         if (g->ime && (g->if_reg & g->ie & 0x3FFF) && !(g->cpu.cpsr & CPSR_I)) {
+            g->cst.halt = false;   /* an enabled IRQ wakes the CPU from Halt */
             enter_exception(g, 0x12, g->cpu.r[15] + (thumb_mode(g) ? 2 : 4), 0x18);
             continue;
         }

@@ -440,7 +440,17 @@ void gba_write8(GBA *g, uint32_t addr, uint8_t v) {
     switch (addr >> 24) {
     case 0x02: g->ewram[addr & 0x3FFFF] = v; return;
     case 0x03: g->iwram[addr & 0x7FFF] = v; return;
-    case 0x04: { uint16_t cur = io_read16(g, addr & ~1u);
+    case 0x04: {
+                 /* HALTCNT (0x04000301). The BIOS Halt/IntrWait loops write
+                    it to suspend the CPU until an IRQ arrives; without it the
+                    BIOS never reaches the cartridge. */
+                 if ((addr & 0x0FFFFFFF) == 0x00000301) {
+                     g->io[0x301] = v;
+                     g->cst.halt = true;
+                     if (v == 0x80) g->cst.stopped = true;
+                     return;
+                 }
+                 uint16_t cur = io_read16(g, addr & ~1u);
                  if (addr & 1) cur = (uint16_t)((cur & 0x00FF) | (v << 8));
                  else cur = (uint16_t)((cur & 0xFF00) | v);
                  io_write16(g, addr & ~1u, cur); return; }
