@@ -142,6 +142,18 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.6** — the black screen after the logo is fixed. The BIOS
+  `Halt` / `IntrWait` helper suspends the CPU by writing HALTCNT at
+  `0x04000301`, but the address test used the wrong mask
+  (`0x0FFFFFFF` leaves `0x4000301`), so the write was treated as an
+  ordinary byte, the CPU never slept, and the BIOS spun forever in its
+  halt loop instead of jumping into the cartridge. With the mask fixed
+  the BIOS hands off to the ROM: the display-control sequence now
+  matches a reference emulator exactly and the game turns the screen on.
+  Also: a halted CPU wakes as soon as an enabled IRQ is pending, DISPSTAT
+  reports the live VBlank/HBlank/VCount bits, and VBlank/HBlank-scheduled
+  DMA (with correct repeat-address reload) runs each line. On Windows,
+  closing the window no longer leaves the process behind.
 - **v1.4.5** — backup memory. Save type is now detected from the marker
   strings Nintendo's save drivers embed in the ROM image (`EEPROM_V`,
   `SRAM_V`, `FLASH_V`, `FLASH512_V`, `FLASH1M_V`) instead of always
