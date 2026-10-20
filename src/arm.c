@@ -104,8 +104,12 @@ typedef struct { uint32_t value; uint32_t carry; } Operand;
 
 static inline uint32_t rotr(uint32_t v, uint32_t s) { return (v >> s) | (v << (32 - s)); }
 
-static void barrel_shift(GBA *g, uint32_t v, uint32_t kind, uint32_t amt, Operand *out) {
+static void barrel_shift(GBA *g, uint32_t v, uint32_t kind, uint32_t amt, bool reg, Operand *out) {
     uint32_t c = (get_cpsr(g) & CPSR_C) ? 1 : 0;
+    /* A register-specified shift with a count of 0 performs no shift and
+     * leaves the carry unchanged; only immediate-encoded shifts treat 0 as
+     * "32" (LSR/ASR #32) or RRX (ROR #0). */
+    if (reg && amt == 0) { out->value = v; out->carry = c; return; }
     switch (kind) {
     case 0: /* LSL */
         if (amt == 0) { out->value = v; out->carry = c; }
@@ -147,10 +151,10 @@ static Operand get_operand(GBA *g, uint32_t insn) {
             uint32_t rs = (insn >> 8) & 0xF;
             uint32_t amt = read_reg(g, rs);
             if (rs == 15) amt = r15(g) + 8;      /* architecture quirk */
-            barrel_shift(g, v, typ, amt & 0xFF, &o);
+            barrel_shift(g, v, typ, amt & 0xFF, true, &o);
         } else {
             uint32_t amt = (insn >> 7) & 0x1F;
-            barrel_shift(g, v, typ, amt, &o);
+            barrel_shift(g, v, typ, amt, false, &o);
         }
     }
     return o;
@@ -295,7 +299,7 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
         uint32_t offset;
         if (i) {
             uint32_t rm = insn & 0xF, typ = (insn >> 5) & 3, amt = (insn >> 7) & 0x1F;
-            Operand o; barrel_shift(g, read_reg(g, rm), typ, amt, &o);
+            Operand o; barrel_shift(g, read_reg(g, rm), typ, amt, false, &o);
             offset = o.value;
         } else offset = insn & 0xFFF;
         if (!u) offset = (uint32_t)(-(int32_t)offset);
