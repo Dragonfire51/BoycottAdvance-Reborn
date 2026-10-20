@@ -386,6 +386,13 @@ static void show_about(void) {
 }
 static void show_history(void) {
     dlg_text("History", GBA_TITLE "\n\n"
+      "v1.4.4 changes:\n"
+      "  - Core: ARM register-specified shifts with a count of 0 no\n"
+      "    longer shift (they used to be treated as #32 / RRX). This\n"
+      "    corrupted the BIOS decompressor output, so the boot image and\n"
+      "    the game's initial data came out wrong.\n"
+      "  - With that fixed, the real BIOS now boots the ROM and several\n"
+      "    commercial titles get past their boot logo.\n\n"
       "v1.4.3 changes:\n"
       "  - Core: MSR to CPSR now banks r13/r14 when it changes the CPU\n"
       "    mode, so the real BIOS boots past 0x120 instead of looping.\n"

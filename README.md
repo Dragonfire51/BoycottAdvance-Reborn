@@ -142,6 +142,17 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.4** — a CPU core fix. The ARM barrel shifter applied the
+  *immediate* rules to register-specified shifts, so a shift count of 0
+  was treated as `#32` (`LSR`/`ASR`) or `RRX` (`ROR #0`). On ARM a
+  register-specified shift with count 0 performs no shift and leaves the
+  carry untouched. The BIOS decompressor (`LSR ip, fp, r4` with `r4=0`)
+  was the first casualty: it corrupted the low bits of every word it
+  wrote to VRAM, so the boot image and the game's initial data came out
+  wrong. Fixed by giving `barrel_shift()` a `reg` flag and returning the
+  value unchanged when `reg && count == 0`. The first I/O divergence
+  against a reference implementation (write #99742, frame 1) is gone, and
+  the real BIOS now boots the ROM.
 - **v1.4.3** — two core fixes that unblock commercial titles at boot.
   `MSR` to `CPSR` changed the CPU mode without banking `r13`/`r14`, so the
   real BIOS inherited a stale `lr` and looped forever at `0x120`; it now
