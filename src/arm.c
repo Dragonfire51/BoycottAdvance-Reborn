@@ -739,6 +739,12 @@ void thumb_exec(GBA *g) {
 void arm_execute(GBA *g, uint32_t max_cycles) {
     uint32_t start = g->cycle;
     while (g->cycle - start < max_cycles) {
+        /* A halted CPU wakes as soon as an *enabled* interrupt is requested
+           (IE & IF), regardless of IME or the CPSR I bit; IME only gates the
+           exception vectoring below. Missing this stalls the CPU until the
+           next VBlank and desynchronises code that polls VCOUNT. */
+        if (g->cst.halt && (g->if_reg & g->ie & 0x3FFF)) g->cst.halt = false;
+
         /* IRQ exception has priority over halt. IF is NOT acknowledged here:
          * the GBA leaves the flag set so the handler can read IE&IF to find
          * the source; the BIOS/handler clears it by writing 1 to IF. */

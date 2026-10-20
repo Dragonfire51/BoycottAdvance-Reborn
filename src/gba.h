@@ -13,7 +13,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define GBA_VERSION  "v1.4.5"
+#define GBA_VERSION  "v1.4.6"
 #define GBA_NAME     "BoycottAdvance Reborn"
 #define GBA_TITLE    GBA_NAME " " GBA_VERSION
 
@@ -131,6 +131,9 @@ typedef struct {
     bool irq_enable;
     bool enabled;
     int word;
+    /* Reload values used by repeat transfers at VBlank/HBlank/Special. */
+    uint32_t src_latch;
+    uint32_t dst_latch;
 } DmaChan;
 
 /* ---- APU state ----------------------------------------------------------- */

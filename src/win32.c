@@ -83,6 +83,7 @@ typedef struct {
     WAVEHDR   hdr[AUDIO_FRAGS];
     int16_t  *buf[AUDIO_FRAGS];
     int       cur;
+    volatile int closing;   /* set before shutdown so the callback stops requeueing */
 } Audio;
 static Audio g_audio;
 
@@ -91,6 +92,9 @@ static void CALLBACK wave_proc(HWAVEOUT hwo, UINT uMsg, DWORD_PTR inst,
     (void)hwo; (void)p1; (void)p2;
     if (uMsg != WOM_DONE) return;
     Audio *a = (Audio *)inst;
+    /* During shutdown the buffers must not be re-queued, otherwise
+       waveOutReset can never drain and waveOutClose deadlocks. */
+    if (a->closing) return;
     /* Mix in fresh audio for the finished fragment. */
     if (cfg.sound_enable && g) {
         apu_mix(g, a->buf[a->cur], AUDIO_SAMPLES);
@@ -132,10 +136,15 @@ static int audio_open(void) {
 }
 static void audio_close(void) {
     if (!g_audio.hwo) return;
+    /* Stop the callback from re-queueing before resetting, or waveOutReset
+       never drains and waveOutClose blocks forever. */
+    g_audio.closing = 1;
     waveOutReset(g_audio.hwo);
     for (int i = 0; i < AUDIO_FRAGS; i++) {
-        waveOutUnprepareHeader(g_audio.hwo, &g_audio.hdr[i], sizeof(WAVEHDR));
+        if (g_audio.hdr[i].dwFlags & WHDR_PREPARED)
+            waveOutUnprepareHeader(g_audio.hwo, &g_audio.hdr[i], sizeof(WAVEHDR));
         free(g_audio.buf[i]);
+        g_audio.buf[i] = NULL;
     }
     waveOutClose(g_audio.hwo);
     g_audio.hwo = NULL;
@@ -335,64 +344,25 @@ static void show_about(void) {
       "please send a postcard. Keep crediting the authors.");
 }
 static void show_history(void) {
+    /* Show only the changes of the current release, as the user expects. */
     static const char *hist =
       GBA_TITLE "\n\n"
-      "v1.4.5 changes:\n"
-      "  - Backup memory is now detected from the ROM marker strings\n"
-      "    (EEPROM_V / SRAM_V / FLASH_V / FLASH512_V / FLASH1M_V) instead of\n"
-      "    always reporting \"none\".\n"
-      "  - Serial EEPROM (4Kbit and 64Kbit) is implemented: the bit protocol\n"
-      "    is driven through DMA to 0x0D000000, with the transfer count\n"
-      "    selecting the phase. Titles such as Medabots (Metabee/Rokusho)\n"
-      "    that keep their save on EEPROM no longer stall on the backup\n"
-      "    driver at boot.\n"
-      "  - Battery saves are written to <rom>.sav on exit and on reset, and\n"
-      "    loaded when the ROM is opened.\n\n"
-      "v1.4.4 changes:\n"
-      "  - Core: ARM register-specified shifts with a count of 0 no\n"
-      "    longer shift (they used to be treated as #32 / RRX). This\n"
-      "    corrupted the BIOS decompressor output, so the boot image and\n"
-      "    the game's initial data came out wrong.\n"
-      "  - With that fixed, the real BIOS now boots the ROM and several\n"
-      "    commercial titles get past their boot logo.\n\n"
-      "v1.4.3 changes:\n"
-      "  - Core: MSR to CPSR now banks r13/r14 when it changes the CPU\n"
-      "    mode, so the real BIOS boots past 0x120 instead of looping.\n"
-      "  - Core: fast boot now starts from the register state the real\n"
-      "    BIOS leaves after POST (forced blank + VBlank armed). Pokemon\n"
-      "    Emerald no longer deadlocks on its deferred display writes and\n"
-      "    runs its main loop instead of resetting to the BIOS.\n\n"
-      "v1.4.2 changes:\n"
-      "  - File > Choose State Slot now lists the ten slots (Slot 0..Slot 9)\n"
-      "    and radio-checks the active one, as the original BoycottAdvance\n"
-      "    did; Load State / Save State use the selected slot. The choice\n"
-      "    persists as StateSlot in boycottadvance-reborn.ini.\n\n"
-      "v1.4.1 changes:\n"
-      "  - Controls now match the original BoycottAdvance: Options >\n"
-      "    Controls opens a single Input Configuration window with a\n"
-      "    Keyboard page and a Joystick page (one row per GBA button,\n"
-      "    OK / Cancel), instead of the per-button menu entries.\n"
-      "  - Fixed the config file name. Windows wrote BoycottAdvance.ini\n"
-      "    (the old build); it now reads and writes\n"
-      "    boycottadvance-reborn.ini like the rest of the project.\n"
-      "  - Joystick D-pad: the POV hat can be bound to the four\n"
-      "    directions next to the face/shoulder buttons.\n"
-      "  - The Windows binaries run as a GUI application (no console\n"
-      "    window); this release ships that build.\n\n"
-      "v1.4.0 changes:\n"
-      "  - Windows x86/x64 is fully SDL-free: native GDI / Direct3D 9\n"
-      "    window, WinMM (waveOut) audio, WinMM joystick, GetAsyncKeyState\n"
-      "    input and the full native Win32 menu bar (except Debug).\n"
-      "  - R/L remaps no longer collide with Right/Left on load.\n"
-      "  - Cartridge SRAM/Flash at 0x0E000000 is mapped (saves kept).\n"
-      "  - Correct DMA address control and CpuSet 21-bit count.\n"
-      "  - Save/Load State buffers are static (1 MB locals overflowed the\n"
-      "    thread stack and crashed).\n"
-      "  - BIOS Enable / Skip BIOS Boot / Skip Intro Hacks take effect\n"
-      "    immediately (they now reset the core) and persist.\n\n"
-      "v1.3.0: MLA/MUL destination decode, sound envelope/mixing/DMA.\n"
-      "v1.2.0: ARM LDR/LDM PC fix, PPU bitmap gating, ROM browser.\n"
-      "v1.0.0: first public clean-room release.";
+      "What's new in " GBA_VERSION ":\n"
+      "  - Core: the BIOS Halt / IntrWait loop writes HALTCNT at 0x04000301,\n"
+      "    but the address test used the wrong mask, so the write was never\n"
+      "    recognised and the CPU never slept. The BIOS then busy-spun\n"
+      "    forever instead of handing control to the cartridge, which is\n"
+      "    what kept the screen black after the logo. Pokemon Emerald and\n"
+      "    other titles now leave the BIOS and run their own code.\n"
+      "  - Core: DMA channels scheduled for VBlank or HBlank now actually\n"
+      "    run at those moments (previously only immediate DMA worked), and\n"
+      "    repeat transfers reload their latched addresses. This is what\n"
+      "    game code relies on to refill its display and sound buffers.\n"
+      "  - Core: DISPSTAT now reports the live VBlank / HBlank / VCount\n"
+      "    status bits, so code that polls them sees the real state.\n"
+      "  - Windows: closing the window no longer leaves the process behind.\n"
+      "    The waveOut callback is stopped before the device is reset, so\n"
+      "    audio shutdown cannot deadlock; no more End Task needed.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

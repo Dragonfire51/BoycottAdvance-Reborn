@@ -16,6 +16,7 @@ uint16_t io_read16(GBA *g, uint32_t addr);
 void io_update_timers(GBA *g, uint32_t cycles);
 void io_trigger_keypad(GBA *g, uint32_t cycles);
 void dma_run(GBA *g, int ch);
+void dma_trigger(GBA *g, int timing);
 
 /* BIOS helpers */
 void gba_swi(GBA *g, uint32_t comment);

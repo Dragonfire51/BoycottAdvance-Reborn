@@ -216,18 +216,29 @@ static void run_frame_core(GBA *g) {
     for (int line = 0; line < 228; line++) {
         g->ppu.vcount = (uint16_t)line;
 
+        /* DISPSTAT bits 0-2 report the live status: 0 = in VBlank, 1 = in
+           HBlank, 2 = VCount match. Code that polls them (rather than using
+           the IRQ) depends on these being updated every line. */
+        uint16_t st = (uint16_t)(g->ppu.dispstat & 0xFFF8);
+        if (line >= 160) st |= 0x0001;                      /* VBlank flag */
+        if (line < 160)  st |= 0x0002;                      /* HBlank flag  */
+        if (line == ((g->ppu.dispstat >> 8) & 0xFF)) st |= 0x0004;
+        g->ppu.dispstat = st;
+
         /* VBlank: start (line 160) sets IF and wakes the CPU */
         if (line == 160) {
             if (g->ppu.dispstat & 0x0008) g->if_reg |= IF_VBLANK;
             ppu_render_frame(g);
             g->frame_count++;
             if (g->cst.halt) g->cst.halt = false;   /* VBlankIntrWait satisfied */
+            dma_trigger(g, 1);                      /* VBlank-scheduled DMA */
         }
 
         /* render visible lines lazily (all at VBlank, already done above) */
 
         /* HBlank IRQ at the start of each line's blanking period */
         if (g->ppu.dispstat & 0x0010) g->if_reg |= IF_HBLANK;
+        if (line < 160) dma_trigger(g, 2);          /* HBlank-scheduled DMA */
 
         /* VCount match IRQ */
         if (g->ppu.dispstat & 0x0020) {

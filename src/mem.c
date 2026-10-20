@@ -159,6 +159,7 @@ void io_write16(GBA *g, uint32_t addr, uint16_t v) {
             d->timing = (v >> 12) & 3;
             d->irq_enable = (v >> 14) & 1;
             d->enabled = (v >> 15) & 1;
+            if (d->enabled) { d->src_latch = d->src; d->dst_latch = d->dst; }
             if (d->enabled && d->timing == 0) dma_run(g, ch);   /* immediate */
             return;
         }
@@ -326,10 +327,24 @@ void dma_run(GBA *g, int ch) {
         if (d->dst_ctl == 0 || d->dst_ctl == 3) dst += unit;
         else if (d->dst_ctl == 1) dst -= unit;
     }
-    d->src = src;   /* advanced address is kept for repeat transfers */
-    d->dst = dst;
+    if (d->repeat) {
+        if (d->src_ctl == 3) d->src = d->src_latch;
+        else d->src = src;
+        if (d->dst_ctl == 3) d->dst = d->dst_latch;
+        else d->dst = dst;
+    } else {
+        d->src = src;
+        d->dst = dst;
+    }
     if (d->irq_enable) g->if_reg |= (IF_DMA0 << ch);
     if (!d->repeat) d->enabled = false;
+}
+
+void dma_trigger(GBA *g, int timing) {
+    for (int ch = 0; ch < 4; ch++) {
+        DmaChan *d = &g->dma[ch];
+        if (d->enabled && d->timing == timing) dma_run(g, ch);
+    }
 }
 
 /* =========================================================================
@@ -461,8 +476,9 @@ void gba_write8(GBA *g, uint32_t addr, uint8_t v) {
     case 0x04: {
                  /* HALTCNT (0x04000301). The BIOS Halt/IntrWait loops write
                     it to suspend the CPU until an IRQ arrives; without it the
-                    BIOS never reaches the cartridge. */
-                 if ((addr & 0x0FFFFFFF) == 0x00000301) {
+                    BIOS never reaches the cartridge. Mask off the whole
+                    region nibble, not 0x0FFFFFFF, or the compare never hits. */
+                 if ((addr & 0x00FFFFFF) == 0x000301) {
                      g->io[0x301] = v;
                      g->cst.halt = true;
                      if (v == 0x80) g->cst.stopped = true;
