@@ -2,7 +2,7 @@ CC ?= gcc
 CFLAGS ?= -std=c99 -O2 -Wall -Isrc
 LDLIBS ?= -lm
 
-SRC = src/gba.c src/mem.c src/arm.c src/ppu.c src/apu.c src/bios.c src/fb.c src/video.c src/gui.c
+SRC = src/gba.c src/mem.c src/arm.c src/ppu.c src/apu.c src/bios.c src/fb.c src/video.c src/gui.c src/eeprom.c
 
 ifneq ($(OS),Windows_NT)
   CFLAGS += $(shell pkg-config --cflags sdl2)

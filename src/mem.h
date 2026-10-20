@@ -20,4 +20,15 @@ void dma_run(GBA *g, int ch);
 /* BIOS helpers */
 void gba_swi(GBA *g, uint32_t comment);
 
+/* serial EEPROM backup (0x0D000000 window) */
+bool eeprom_addr_in_range(const GBA *g, uint32_t addr);
+void eeprom_init(GBA *g);
+void eeprom_dma_begin(GBA *g, uint32_t count);
+void eeprom_write_bit(GBA *g, uint8_t bit);
+uint8_t eeprom_read_bit(GBA *g);
+
+/* battery save file (path is the ROM path with a .sav suffix) */
+bool gba_save_battery(GBA *g, const char *rom_path);
+void gba_load_battery(GBA *g, const char *rom_path);
+
 #endif

@@ -291,6 +291,13 @@ void dma_run(GBA *g, int ch) {
     uint32_t count = d->count & 0xFFFF;
     if (count == 0) count = (ch == 3) ? 0x10000 : 0x4000;
 
+    /* EEPROM is bit-serial and only reachable through DMA. The transfer
+       count tells the chip which phase it is in, so notify it before the
+       first halfword. 32-bit transfers never touch it. */
+    if (g->save_type == SAVE_EEPROM && !d->word &&
+        (eeprom_addr_in_range(g, d->dst) || eeprom_addr_in_range(g, d->src)))
+        eeprom_dma_begin(g, count);
+
     /* Sound FIFO mode (channels 1/2 to 0x040000A0/A4): each 32-bit word
        contributes its low byte to the corresponding FIFO. */
     if ((ch == 1 || ch == 2) && (d->dst & 0x0FFFFFFF) >= 0x040000A0 &&
@@ -366,6 +373,7 @@ uint32_t gba_read32(GBA *g, uint32_t addr) {
     case 0x06: return rd32_al(g->vram + (addr & 0x17FFC));
     case 0x07: return rd32_al(g->oam + (addr & 0x3FC));
     case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D: {
+        if (eeprom_addr_in_range(g, addr)) return 0;  /* EEPROM reads are bit-serial via DMA */
         uint32_t off = (addr - 0x08000000) & (g->rom_mask & ~3u);
         return off < g->rom_size ? rd32_al(g->rom + off) : 0;
     }
@@ -384,6 +392,7 @@ uint16_t gba_read16(GBA *g, uint32_t addr) {
     case 0x06: return rd16_al(g->vram + (addr & 0x17FFE));
     case 0x07: return rd16_al(g->oam + (addr & 0x3FE));
     case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D: {
+        if (eeprom_addr_in_range(g, addr)) return (uint16_t)(eeprom_read_bit(g) & 1);
         uint32_t off = (addr - 0x08000000) & (g->rom_mask & ~1u);
         return off < g->rom_size ? rd16_al(g->rom + off) : 0;
     }
@@ -402,6 +411,8 @@ uint8_t gba_read8(GBA *g, uint32_t addr) {
     case 0x06: return g->vram[addr & 0x17FFF];
     case 0x07: return g->oam[addr & 0x3FF];
     case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D: {
+        if (eeprom_addr_in_range(g, addr))
+            return (addr & 1) ? 0 : eeprom_read_bit(g);   /* bit 0 of each halfword */
         uint32_t off = (addr - 0x08000000) & g->rom_mask;
         return off < g->rom_size ? g->rom[off] : 0;
     }
@@ -418,6 +429,7 @@ void gba_write32(GBA *g, uint32_t addr, uint32_t v) {
     case 0x05: wr32_al(g->pal + (addr & 0x3FC), v); return;
     case 0x06: wr32_al(g->vram + (addr & 0x17FFC), v); return;
     case 0x07: wr32_al(g->oam + (addr & 0x3FC), v); return;
+    case 0x0D: return;   /* EEPROM writes go through DMA; the rest is ROM */
     case 0x0E: wr32_al(g->save_mem + (addr & 0x1FFFC), v); return;
     default: return;   /* ROM write-protected */
     }
@@ -431,6 +443,12 @@ void gba_write16(GBA *g, uint32_t addr, uint16_t v) {
     case 0x05: wr16_al(g->pal + (addr & 0x3FE), v); return;
     case 0x06: wr16_al(g->vram + (addr & 0x17FFE), v); return;
     case 0x07: wr16_al(g->oam + (addr & 0x3FE), v); return;
+    case 0x0D:
+        if (eeprom_addr_in_range(g, addr)) {   /* one protocol bit per halfword */
+            eeprom_write_bit(g, (uint8_t)(v & 1));
+            if (g->eeprom.dirty) { g->save_dirty = true; g->eeprom.dirty = false; }
+        }
+        return;
     case 0x0E: wr16_al(g->save_mem + (addr & 0x1FFFE), v); return;
     default: return;
     }
@@ -457,6 +475,7 @@ void gba_write8(GBA *g, uint32_t addr, uint8_t v) {
     case 0x05: g->pal[addr & 0x3FF] = v; return;
     case 0x06: g->vram[addr & 0x17FFF] = v; return;
     case 0x07: g->oam[addr & 0x3FF] = v; return;
+    case 0x0D: return;
     case 0x0E: g->save_mem[addr & 0x1FFFF] = v; return;
     default: return;
     }

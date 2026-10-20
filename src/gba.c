@@ -140,18 +140,66 @@ bool gba_load_rom(GBA *g, const char *path) {
     /* title */
     memcpy(g->rom_title, g->rom + 0xA0, 12);
     g->rom_title[12] = 0;
-    /* save type heuristic from header maker code etc. */
-    g->save_type = 0;
-    if (g->rom_size >= 0x100) {
-        /* detect EEPROM/Flash/SRAM markers anywhere near 0xFC.. 0x100 is not enough.
-           Simple: homebrew & most games without SRAM -> type 0 */
+    /* Save type from the marker strings Nintendo's save drivers leave in
+       the ROM image (same heuristic as the reference implementations). */
+    g->save_type = SAVE_NONE;
+    for (uint32_t i = 0; i + 12 <= g->rom_size; i++) {
+        if (memcmp(g->rom + i, "FLASH1M_V", 9) == 0) { g->save_type = SAVE_FLASH128; break; }
+        if (memcmp(g->rom + i, "FLASH512_V", 10) == 0 ||
+            memcmp(g->rom + i, "FLASH_V", 7) == 0) { g->save_type = SAVE_FLASH64; break; }
+        if (memcmp(g->rom + i, "SRAM_V", 6) == 0) { g->save_type = SAVE_SRAM; break; }
+        if (memcmp(g->rom + i, "EEPROM_V", 8) == 0) { g->save_type = SAVE_EEPROM; break; }
     }
+    g->save_size = g->save_type == SAVE_FLASH128 ? 0x20000 :
+                   g->save_type == SAVE_FLASH64  ? 0x10000 :
+                   g->save_type == SAVE_SRAM     ? 0x8000  :
+                   g->save_type == SAVE_EEPROM   ? EEPROM_SIZE : 0;
+    memset(g->save_mem, 0xFF, sizeof(g->save_mem));
+    g->save_dirty = false;
+    eeprom_init(g);
+    gba_load_battery(g, path);
+    return true;
+}
+
+/* Battery save file: the ROM path with a .sav suffix. */
+static void sav_path(const char *rom_path, char *out, size_t n) {
+    snprintf(out, n, "%s.sav", rom_path);
+}
+
+void gba_load_battery(GBA *g, const char *rom_path) {
+    char p[1200];
+    sav_path(rom_path, p, sizeof p);
+    FILE *f = fopen(p, "rb");
+    if (!f) return;
+    if (g->save_type == SAVE_EEPROM) {
+        size_t got = fread(g->eeprom.data, 1, sizeof(g->eeprom.data), f);
+        if (got < 0x200) memset(g->eeprom.data, 0xFF, sizeof(g->eeprom.data));
+    } else {
+        size_t got = fread(g->save_mem, 1, g->save_size, f);
+        if (got < g->save_size) memset(g->save_mem + got, 0xFF, g->save_size - got);
+    }
+    fclose(f);
+}
+
+bool gba_save_battery(GBA *g, const char *rom_path) {
+    if (g->save_type == SAVE_NONE || !rom_path || !rom_path[0]) return false;
+    char p[1200];
+    sav_path(rom_path, p, sizeof p);
+    FILE *f = fopen(p, "wb");
+    if (!f) return false;
+    if (g->save_type == SAVE_EEPROM) fwrite(g->eeprom.data, 1, sizeof(g->eeprom.data), f);
+    else                            fwrite(g->save_mem, 1, g->save_size, f);
+    fclose(f);
+    g->save_dirty = false;
     return true;
 }
 
 void gba_set_savetype(GBA *g, int type) {
     g->save_type = type;
-    g->save_size = type == 3 ? 0x10000 : type == 2 ? 0x10000 : type == 1 ? 0x8000 : 0;
+    g->save_size = type == SAVE_FLASH128 ? 0x20000 :
+                   type == SAVE_FLASH64  ? 0x10000 :
+                   type == SAVE_SRAM     ? 0x8000  :
+                   type == SAVE_EEPROM   ? EEPROM_SIZE : 0;
 }
 
 /* update keypad values */
@@ -242,6 +290,7 @@ int gba_save_state(GBA *g, const char *path) {
     memcpy(buf+n, g->pal, sizeof(g->pal));     n += sizeof(g->pal);
     memcpy(buf+n, g->io, sizeof(g->io));       n += sizeof(g->io);
     memcpy(buf+n, g->save_mem, sizeof(g->save_mem)); n += sizeof(g->save_mem);
+    memcpy(buf+n, &g->eeprom, sizeof(g->eeprom)); n += sizeof(g->eeprom);
     memcpy(buf+n, &g->ie, sizeof(g->ie)); n += sizeof(g->ie);
     memcpy(buf+n, &g->if_reg, sizeof(g->if_reg)); n += sizeof(g->if_reg);
     memcpy(buf+n, &g->ime, sizeof(g->ime)); n += sizeof(g->ime);
@@ -287,6 +336,7 @@ int gba_load_state(GBA *g, const char *path) {
     memcpy(g->pal, buf+n, sizeof(g->pal)); n += sizeof(g->pal);
     memcpy(g->io, buf+n, sizeof(g->io)); n += sizeof(g->io);
     memcpy(g->save_mem, buf+n, sizeof(g->save_mem)); n += sizeof(g->save_mem);
+    memcpy(&g->eeprom, buf+n, sizeof(g->eeprom)); n += sizeof(g->eeprom);
     memcpy(&g->ie, buf+n, sizeof(g->ie)); n += sizeof(g->ie);
     memcpy(&g->if_reg, buf+n, sizeof(g->if_reg)); n += sizeof(g->if_reg);
     memcpy(&g->ime, buf+n, sizeof(g->ime)); n += sizeof(g->ime);

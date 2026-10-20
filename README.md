@@ -142,6 +142,17 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.5** — backup memory. Save type is now detected from the marker
+  strings Nintendo's save drivers embed in the ROM image (`EEPROM_V`,
+  `SRAM_V`, `FLASH_V`, `FLASH512_V`, `FLASH1M_V`) instead of always
+  reporting "none". Serial EEPROM is implemented: the 4Kbit/64Kbit chip
+  is bit-serial on the D0 line and only reachable through DMA, so the DMA
+  transfer count selects the protocol phase (9/17 read address, 68 read
+  data, 73/81 write, 1 ready poll) and the address width is locked in on
+  the first command. Medabots (Metabee and Rokusho) keep their save on
+  EEPROM and used to stall in the backup driver before the title screen.
+  Battery saves are now written to `<rom>.sav` on exit and on reset and
+  read back when the ROM is opened.
 - **v1.4.4** — a CPU core fix. The ARM barrel shifter applied the
   *immediate* rules to register-specified shifts, so a shift count of 0
   was treated as `#32` (`LSR`/`ASR`) or `RRX` (`ROR #0`). On ARM a

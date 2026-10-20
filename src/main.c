@@ -361,13 +361,23 @@ static void gui_native_setup(void) {
 #endif
 }
 static void state_path(char *b, size_t n) { snprintf(b,n,"state%d.sav",cfg.state_slot); }
+static const char *save_type_name(int t) {
+    switch (t) {
+    case SAVE_SRAM:     return "SRAM 32KB";
+    case SAVE_FLASH64:  return "Flash 64KB";
+    case SAVE_FLASH128: return "Flash 128KB";
+    case SAVE_EEPROM:   return "EEPROM";
+    default:            return "none";
+    }
+}
+
 static void show_rom_info(void) {
     char b[1024];
     snprintf(b,sizeof b,
         "FileName : %s\nTitle    : %.16s\nSize     : %u bytes (%u KB)\n"
-        "Save type: %d\nBackup size: %u bytes",
+        "Save type: %s\nBackup size: %u bytes",
         cfg.rompath[0]?cfg.rompath:"(none)", g->rom_title, g->rom_size,
-        g->rom_size/1024, g->save_type, g->save_size);
+        g->rom_size/1024, save_type_name(g->save_type), g->save_size);
     dlg_text("ROM Info", b);
 }
 static void show_about(void) {
@@ -386,6 +396,17 @@ static void show_about(void) {
 }
 static void show_history(void) {
     dlg_text("History", GBA_TITLE "\n\n"
+      "v1.4.5 changes:\n"
+      "  - Backup memory is now detected from the ROM marker strings\n"
+      "    (EEPROM_V / SRAM_V / FLASH_V / FLASH512_V / FLASH1M_V) instead of\n"
+      "    always reporting \"none\".\n"
+      "  - Serial EEPROM (4Kbit and 64Kbit) is implemented: the bit protocol\n"
+      "    is driven through DMA to 0x0D000000, with the transfer count\n"
+      "    selecting the phase. Titles such as Medabots (Metabee/Rokusho)\n"
+      "    that keep their save on EEPROM no longer stall on the backup\n"
+      "    driver at boot.\n"
+      "  - Battery saves are written to <rom>.sav on exit and on reset, and\n"
+      "    loaded when the ROM is opened.\n\n"
       "v1.4.4 changes:\n"
       "  - Core: ARM register-specified shifts with a count of 0 no\n"
       "    longer shift (they used to be treated as #32 / RRX). This\n"
@@ -459,7 +480,7 @@ static void do_action(int id) {
     case M_ROMINFO: show_rom_info(); break;
     case M_AUTORUN: cfg.autorun = !cfg.autorun; break;
     case M_RUNPAUSE: g_paused = !g_paused; break;
-    case M_RESET: gba_reset(g); g_paused = 0; break;
+    case M_RESET: gba_save_battery(g, cfg.rompath); gba_reset(g); g_paused = 0; break;
     case M_STATE_SLOT: cfg.state_slot = (cfg.state_slot+1)%10; break;
     case M_LOADSTATE: { char p[64]; state_path(p,sizeof p); gba_load_state(g,p); break; }
     case M_SAVESTATE:{ char p[64]; state_path(p,sizeof p); gba_save_state(g,p); break; }
@@ -826,6 +847,7 @@ int main(int argc, char **argv) {
         if (now-fps_t>=500) { fps = fps_n*1000.0f/(now-fps_t); fps_n=0; fps_t=now; }
     }
 
+    gba_save_battery(g, cfg.rompath);
     cfg_save("boycottadvance-reborn.ini");
     if (gui_active) gui_native_shutdown();
     if (adev) SDL_CloseAudioDevice(adev);

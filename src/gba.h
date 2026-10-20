@@ -13,7 +13,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define GBA_VERSION  "v1.4.4"
+#define GBA_VERSION  "v1.4.5"
 #define GBA_NAME     "BoycottAdvance Reborn"
 #define GBA_TITLE    GBA_NAME " " GBA_VERSION
 
@@ -48,6 +48,30 @@
 #define OAM_SIZE    0x400
 #define ROM_MAX     0x2000000
 #define SAVE_MAX    0x20000
+
+/* ---- Save hardware types ----------------------------------------------- */
+enum {
+    SAVE_NONE = 0, SAVE_SRAM, SAVE_FLASH64, SAVE_FLASH128, SAVE_EEPROM
+};
+
+/* EEPROM protocol states (GBATEK: bit-serial over the D0 line). */
+enum {
+    EEPROM_IDLE, EEPROM_RX_CMD, EEPROM_RX_ADDR_R, EEPROM_RX_ADDR_W,
+    EEPROM_RX_DATA, EEPROM_TX_DATA, EEPROM_READY
+};
+
+#define EEPROM_SIZE 0x2000          /* 8KB = 64Kbit; 4Kbit uses the low 512B */
+
+typedef struct {
+    uint8_t  data[EEPROM_SIZE];
+    int      addr_bits;             /* 0 unknown, 6 = 4Kbit, 14 = 64Kbit */
+    int      state;
+    uint16_t addr;
+    uint16_t rx_count;
+    uint64_t shift;                 /* tx/rx shift register */
+    uint16_t tx_count;
+    bool     dirty;                 /* a write completed; save to disk */
+} Eeprom;
 
 /* ---- Interrupt flags --------------------------------------------------- */
 #define IF_VBLANK 0x0001
@@ -209,7 +233,9 @@ typedef struct GBA {
 
     uint8_t  save_mem[SAVE_MAX];
     uint32_t save_size;
-    int      save_type;           /* 0 none, 1 sram, 2 flash, 3 flash128, 4 eeprom */
+    int      save_type;           /* SAVE_* */
+    Eeprom   eeprom;              /* serial EEPROM (save_type == SAVE_EEPROM) */
+    bool     save_dirty;          /* battery save needs flushing to disk */
 
     uint8_t  io[0x400];           /* I/O registers window */
 
@@ -262,6 +288,8 @@ void gba_reset(GBA *g);
 void gba_load_bios(GBA *g, const char *path);
 bool gba_load_rom(GBA *g, const char *path);
 void gba_set_savetype(GBA *g, int type);
+bool gba_save_battery(GBA *g, const char *rom_path);
+void gba_load_battery(GBA *g, const char *rom_path);
 
 void gba_run_frame(GBA *g);          /* run one frame; render into ppu.frame */
 bool gba_step(GBA *g, uint32_t max_cycles); /* internal stepping helpers */
