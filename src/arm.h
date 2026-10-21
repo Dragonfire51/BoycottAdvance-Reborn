@@ -13,3 +13,4 @@ void arm_set_irq_line(GBA *g, bool high);
 bool arm_is_halted(GBA *g);
 
 #endif
+

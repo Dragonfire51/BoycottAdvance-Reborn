@@ -4,9 +4,46 @@
  */
 #include "gba.h"
 #include "mem.h"
+#include <math.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 static inline bool thumb_mode_p(GBA *g) { return (g->cpu.cpsr & CPSR_T) != 0; }
+
+/* Fixed-point trig used by the affine-set routines.  The GBA stores angles
+ * as 8-bit values (bit 7 = sign of sin, low 7 bits = 0..180/128).  We only
+ * ever need cos(a) and sin(a) for such angles, so precompute the 256-entry
+ * cosine table in 1.15 fixed point (SCALE = 32768 = 1.0). */
+#define AFF_SCALE 32768
+static int32_t s_cos_tbl[256]; /* [angle] in 0..255 steps of 180/128; lazy fill */
+static int32_t s_cos_ready = 0;
+static void aff_ensure_cos(void) {
+    if (s_cos_ready) return;
+    for (int i = 0; i < 256; i++) {
+        double a = (double)i / 128.0 * 3.14159265358979323846;
+        s_cos_tbl[i] = (int32_t)(cos(a) * AFF_SCALE);
+    }
+    s_cos_ready = 1;
+}
+/* GBA angle byte -> (cos, sin) in 1.15 fixed point. */
+static void aff_angle(int angle, int32_t *co, int32_t *si) {
+    aff_ensure_cos();
+    int idx = angle & 0xFF;
+    int32_t c = s_cos_tbl[idx];
+    int32_t s = s_cos_tbl[(idx + 64) & 0xFF];
+    if (angle < 0) { s = -s; }  /* negative angle flips the sine */
+    *co = c; *si = s;
+}
+static inline int32_t aff_sat16(int32_t v) {
+    if (v > 32767) return 32767;
+    if (v < -32768) return -32768;
+    return v;
+}
+static inline int32_t aff_sat32(int32_t v) {
+    /* rx/ry are stored as (rx * 256) in the dest per GBATEK; keep within s32 */
+    return v;
+}
 
 static void swi_soft_reset(GBA *g) {
     /* SWI 0x00: restart from the BIOS entry (0x00000000) or the EWRAM entry
@@ -76,10 +113,21 @@ static void swi_stop(GBA *g) {
     g->cst.halt = true;
     g->cst.stopped = true;
 }
-static void swi_intr_wait(GBA *g) {
-    /* SWI 0x04: wait for any of the IRQs in r0; r1=1 discards old flags.
-       We let the frame loop keep running and only halt the CPU here. */
-    g->cst.halt = true;
+void swi_intr_wait(GBA *g) {
+    /* SWI 0x04: IntrWait(clear, irq).  r0 bit0 = clear flags first,
+       r1 = mask of IRQs to wait for (only the enable bits are usable).
+       If clear is set, any IRQ already pending is discarded and the CPU
+       waits for a new one; otherwise a matching pending IRQ returns
+       immediately and only a non-matching state halts. */
+    int clear = (int)(g->cpu.r[0] & 1);
+    uint32_t mask = g->cpu.r[1] & 0x3FFF;
+    if (clear) {
+        g->if_reg &= ~(uint16_t)mask;
+        g->cst.halt = true;
+    } else {
+        if (g->if_reg & mask) return;   /* ya hay una IRQ esperada */
+        g->cst.halt = true;
+    }
 }
 static void swi_vblank_intr_wait(GBA *g) {
     /* SWI 0x05: VBlankIntrWait. Equivalent to IntrWait(1,1).
@@ -87,10 +135,18 @@ static void swi_vblank_intr_wait(GBA *g) {
        halt as soon as IF_VBLANK is raised. */
     g->cst.halt = true;
 }
-static void swi_div32(GBA *g) {
+void swi_div32(GBA *g) {
     int32_t a = (int32_t)g->cpu.r[0];
     int32_t b = (int32_t)g->cpu.r[1];
-    if (b == 0) { g->cpu.r[0] = a; g->cpu.r[1] = a; g->cpu.r[3] = 0; return; }
+    if (b == 0) { g->cpu.r[0] = (uint32_t)a; g->cpu.r[1] = (uint32_t)a; g->cpu.r[3] = 0; return; }
+    if (b == -1 && a == INT32_MIN) {
+        /* GBATEK: 0x80000000 / -1 yields 0x80000000 with remainder 0
+           on ARM7TDMI; the C division would be undefined behaviour. */
+        g->cpu.r[0] = (uint32_t)INT32_MIN;
+        g->cpu.r[1] = 0;
+        g->cpu.r[3] = 0;
+        return;
+    }
     g->cpu.r[0] = (uint32_t)(a / b);
     g->cpu.r[3] = (uint32_t)(a % b);
     g->cpu.r[1] = (uint32_t)(a % b);
@@ -149,7 +205,83 @@ static void swi_cpu_fast_set(GBA *g) {
         }
     }
 }
-static void swi_affine_set(GBA *g) { (void)g; }
+/* SWI 0x0E (BgAffineSet).  Source entries are 20 bytes:
+ *   0: ox (s32, 8.8),  4: oy (s32, 8.8),   8: cx (s16), 10: cy (s16),
+ *  12: sx (s16, 8.8), 14: sy (s16, 8.8),  16: theta (u8, 1/128 turn per 8)
+ * Destination is a 16-byte BG affine matrix+offset block:
+ *   +0..+6: pa/pb/pc/pd (s16, 8.8), +8: rx (s32, 8.8), +12: ry (s32, 8.8).
+ * Formula (mGBA/GBATEK):
+ *     [pa pb]   [sx 0 ] [cos -sin]         [rx]   [ox]   [pa pb] [cx]
+ *     [pc pd] = [0  sy] [sin  cos]    ->   [ry] = [oy] - [pc pd] [cy]      */
+static void swi_affine_set(GBA *g) {
+    int count = (int)g->cpu.r[2];
+    uint32_t off = g->cpu.r[0];
+    uint32_t dst = g->cpu.r[1];
+
+    for (int i = 0; i < count; i++) {
+        int32_t ox = gba_read32(g, off + 0);
+        int32_t oy = gba_read32(g, off + 4);
+        int32_t cx  = (int16_t)gba_read16(g, off + 8);
+        int32_t cy  = (int16_t)gba_read16(g, off + 10);
+        int32_t sx  = (int16_t)gba_read16(g, off + 12);   /* 8.8 fixed */
+        int32_t sy  = (int16_t)gba_read16(g, off + 14);
+        int32_t theta = (int8_t)gba_read8(g, off + 16) << 8; /* sign extend, 1.15 angle */
+        off += 20;
+
+        int32_t c, s;
+        aff_angle(theta, &c, &s);                         /* 1.15 each */
+
+        /* A = sx*cos,  B = -sx*sin,  C = sy*sin,  D = sy*cos (all 8.8 -> 1.15) */
+        int32_t A = (sx * c) >> 7;                        /* 8.8 * 1.15 = 16.23 -> /256 = A in 8.8 */
+        int32_t B = (-sx * s) >> 7;
+        int32_t C = (sy * s) >> 7;
+        int32_t D = (sy * c) >> 7;
+
+        int32_t rx = ox - ((A * cx) >> 8) - ((B * cy) >> 8);
+        int32_t ry = oy - ((C * cx) >> 8) - ((D * cy) >> 8);
+
+        gba_write16(g, dst + 0, (uint16_t)aff_sat16(A));
+        gba_write16(g, dst + 2, (uint16_t)aff_sat16(B));
+        gba_write16(g, dst + 4, (uint16_t)aff_sat16(C));
+        gba_write16(g, dst + 6, (uint16_t)aff_sat16(D));
+        gba_write32(g, dst + 8,  (uint32_t)aff_sat32(rx));
+        gba_write32(g, dst + 12, (uint32_t)aff_sat32(ry));
+        dst += 16;
+    }
+}
+
+/* SWI 0x0F (ObjAffineSet).  Source entries are 8 bytes:
+ *   0: sx (s16, 8.8), 2: sy (s16, 8.8), 4: theta (s8), 5: unused.
+ * Destination entries are four s16 (pa/pb/pc/pd) spaced by the fourth
+ * argument (default 8).  No translation is written. */
+static void swi_obj_affine_set(GBA *g) {
+    int count = (int)g->cpu.r[2];
+    int diff = (int)g->cpu.r[3];
+    if (diff <= 0) diff = 8;             /* GBATEK: 4th arg is the stride */
+    uint32_t off = g->cpu.r[0];
+    uint32_t dst = g->cpu.r[1];
+
+    for (int i = 0; i < count; i++) {
+        int32_t sx  = (int16_t)gba_read16(g, off + 0);
+        int32_t sy  = (int16_t)gba_read16(g, off + 2);
+        int32_t theta = (int8_t)gba_read8(g, off + 4) << 8;
+        off += 8;
+
+        int32_t c, s;
+        aff_angle(theta, &c, &s);
+
+        int32_t A = (sx * c) >> 7;      /* 8.8 * 1.15 -> 8.8 */
+        int32_t B = (-sx * s) >> 7;
+        int32_t C = (sy * s) >> 7;
+        int32_t D = (sy * c) >> 7;
+
+        gba_write16(g, dst + 0*diff, (uint16_t)aff_sat16(A));
+        gba_write16(g, dst + 1*diff, (uint16_t)aff_sat16(B));
+        gba_write16(g, dst + 2*diff, (uint16_t)aff_sat16(C));
+        gba_write16(g, dst + 3*diff, (uint16_t)aff_sat16(D));
+        dst += diff * 4;
+    }
+}
 
 /* Read the 3-byte little-endian decompressed length after a header byte. */
 static uint32_t swi_read_len(GBA *g, uint32_t *src) {
@@ -324,6 +456,7 @@ void gba_swi(GBA *g, uint32_t comment) {
     case 0x0B: swi_cpu_set(g); break;
     case 0x0C: swi_cpu_fast_set(g); break;
     case 0x0E: swi_affine_set(g); break;
+    case 0x0F: swi_obj_affine_set(g); break;
     case 0x10: swi_bitunpack(g); break;
     case 0x11: swi_lz77(g, false); break;
     case 0x12: swi_lz77(g, true); break;
@@ -337,4 +470,46 @@ void gba_swi(GBA *g, uint32_t comment) {
     }
     /* clear halt if we just returned from a wait that should continue */
     /* normal return: PC was already incremented by arm_exec */
+}
+/* Minimal BIOS HLE for the interrupt vectors.  A real BIOS maps its default
+ * IRQ handler at address 0x18 and, around entry, reads the address stored at
+ * 0x03FFFFFC as the IRQ dispatcher pointer.  When no BIOS dump is loaded we
+ * install a tiny stub in IWRAM (the BIOS shadow region is beyond the ARM7's
+ * 0x03FF0000-0x03FFFFFF area) so an interrupt taken before the game installs
+ * its own handler returns immediately instead of executing empty space.
+ *
+ * The stub must be DMA-ed into IWRAM because code cannot normally be written
+ * there via normal 16/32-bit stores at 0x03000000+ (the game is still running
+ * from a low address and has full access).  Practically we place it at the
+ * very top of IWRAM (0x03007F00) which BIOS-driven code typically treats as
+ * scratch.
+ */
+static void bios_write32(uint8_t *dst, uint32_t v) {
+    dst[0] = (uint8_t)(v & 0xFF);
+    dst[1] = (uint8_t)((v >> 8) & 0xFF);
+    dst[2] = (uint8_t)((v >> 16) & 0xFF);
+    dst[3] = (uint8_t)((v >> 24) & 0xFF);
+}
+
+void bios_install_stub(GBA *g) {
+    /* Reproduce el vector IRQ y la rutina de despacho de la BIOS real
+       (GBATEK "GBA Interrupt Control"; secuencia observada en un dump de
+       la BIOS original):
+        0x018: b  #0x128                  vector IRQ
+        0x128: push {r0-r3, ip, lr}       guarda el contexto
+        0x12c: mov  r0, #0x04000000
+        0x130: add  lr, pc, #0            lr = 0x138 (epilogo)
+        0x134: ldr  pc, [r0, #-4]         salta a [0x03FFFFFC] (handler del juego)
+        0x138: pop  {r0-r3, ip, lr}
+        0x13c: subs pc, lr, #4            retorno IRQ (restaura CPSR de SPSR_irq)
+       Asi el flujo es identico haya o no volcado de BIOS: el juego instala su
+       handler en 0x03007FFC y la IRQ entra por el vector 0x18, pasa por la
+       rutina de despacho y vuelve con la semantica ARM correcta. */
+    bios_write32(g->bios + 0x018, 0xEA000042u);   /* b  #0x128 */
+    bios_write32(g->bios + 0x128, 0xE92D500Fu);   /* push {r0-r3, ip, lr} */
+    bios_write32(g->bios + 0x12C, 0xE3A00301u);   /* mov  r0, #0x04000000 */
+    bios_write32(g->bios + 0x130, 0xE28FE000u);   /* add  lr, pc, #0 */
+    bios_write32(g->bios + 0x134, 0xE510F004u);   /* ldr  pc, [r0, #-4] */
+    bios_write32(g->bios + 0x138, 0xE8BD500Fu);   /* pop  {r0-r3, ip, lr} */
+    bios_write32(g->bios + 0x13C, 0xE25EF004u);   /* subs pc, lr, #4 */
 }

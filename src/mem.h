@@ -17,9 +17,11 @@ void io_update_timers(GBA *g, uint32_t cycles);
 void io_trigger_keypad(GBA *g, uint32_t cycles);
 void dma_run(GBA *g, int ch);
 void dma_trigger(GBA *g, int timing);
+void dma_fifo_request(GBA *g, int fifo);   /* timing 3: sound FIFO A (0) / B (1) */
 
 /* BIOS helpers */
 void gba_swi(GBA *g, uint32_t comment);
+void bios_install_stub(GBA *g);             /* BIOS HLE minima: vector IRQ en 0x18 */
 
 /* serial EEPROM backup (0x0D000000 window) */
 bool eeprom_addr_in_range(const GBA *g, uint32_t addr);

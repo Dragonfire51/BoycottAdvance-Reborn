@@ -63,7 +63,7 @@ void gba_reset(GBA *g) {
        image present and the intro not skipped, the ARM7 starts at
        0x00000000 and runs the BIOS. */
     if (g->bios_enabled && !g->bios_fastboot && !g->skip_intros &&
-        g->bios[0] != 0) {
+        g->bios_loaded) {
         g->cpu.cpsr = 0x0000001F;        /* system mode, ARM state, IRQ enabled */
         for (int i = 0; i < 16; i++) g->cpu.r[i] = 0;
         g->cpu.r[13] = 0x03007F00;       /* SP (USR/SYS) */
@@ -107,8 +107,10 @@ void gba_reset(GBA *g) {
        Only meaningful when a BIOS image is mapped: with fast boot and no dump
        the BIOS region reads as zero, so an interrupt taken before the game
        installs its own handler would execute empty space. */
-    if (g->bios[0] != 0)
+    if (g->bios_loaded)
         gba_write32(g, 0x03FFFFFC, 0x00000300);  /* BIOS default IRQ handler */
+    else
+        bios_install_stub(g);        /* HLE stub so the first IRQ is harmless */
 }
 
 void gba_load_bios(GBA *g, const char *path) {
@@ -118,6 +120,7 @@ void gba_load_bios(GBA *g, const char *path) {
     if (got < BIOS_SIZE) memset(g->bios + got, 0, BIOS_SIZE - got);
     fclose(f);
     g->bios_enabled = true;
+    g->bios_loaded = (got == BIOS_SIZE);
 }
 
 bool gba_load_rom(GBA *g, const char *path) {
@@ -213,45 +216,50 @@ void gba_update_keypad(GBA *g, uint16_t keys) {
 /* Run one video frame: step the PPU line by line, running the CPU for the
  * cycles each scanline takes, firing HBlank/VBlank/VCount interrupts. */
 static void run_frame_core(GBA *g) {
-    const uint32_t line_cycles = 1232;      /* 240px @ 4 cyc + hblank */
+    const uint32_t visible_cycles = 960;     /* 240 px * 4 ciclos */
+    const uint32_t hblank_cycles  = 272;     /* total 1232 por linea */
+
+    ppu_frame_start(g);                      /* recarga puntos de referencia afines */
+    apu_step(g, 0);
 
     for (int line = 0; line < 228; line++) {
+        int vm = (g->ppu.dispstat >> 8) & 0xFF;
         g->ppu.vcount = (uint16_t)line;
 
-        /* DISPSTAT bits 0-2 report the live status: 0 = in VBlank, 1 = in
-           HBlank, 2 = VCount match. Code that polls them (rather than using
-           the IRQ) depends on these being updated every line. */
+        /* DISPSTAT bits 0-1: bit0 VBlank (lineas 160-227), bit1 HBlank en la
+           parte no visible; bit2 VCount match.  Bit1 lo mantiene el nucleo. */
         uint16_t st = (uint16_t)(g->ppu.dispstat & 0xFFF8);
-        if (line >= 160) st |= 0x0001;                      /* VBlank flag */
-        if (line < 160)  st |= 0x0002;                      /* HBlank flag  */
-        if (line == ((g->ppu.dispstat >> 8) & 0xFF)) st |= 0x0004;
+        if (line >= 160) st |= 0x0001;                      /* VBlank */
+        if (line == vm)  st |= 0x0004;                      /* VCount match */
         g->ppu.dispstat = st;
 
-        /* VBlank: start (line 160) sets IF and wakes the CPU */
-        if (line == 160) {
+        /* VBlank: la IRQ se dispara en la linea 159, un scanline antes de que
+           VCOUNT entre en la ventana 160-227 (como el hardware) */
+        if (line == 159) {
             if (g->ppu.dispstat & 0x0008) g->if_reg |= IF_VBLANK;
-            ppu_render_frame(g);
             g->frame_count++;
             if (g->cst.halt) g->cst.halt = false;   /* VBlankIntrWait satisfied */
             dma_trigger(g, 1);                      /* VBlank-scheduled DMA */
         }
+        /* VCount match IRQ */
+        if ((g->ppu.dispstat & 0x0020) && line == vm) g->if_reg |= IF_VCOUNT;
 
-        /* render visible lines lazily (all at VBlank, already done above) */
+        /* parte visible de la linea: la CPU corre sus 960 ciclos y al acabar
+           se renderiza la linea con los registros tal como han quedado */
+        io_update_timers(g, visible_cycles);
+        arm_execute(g, visible_cycles);
+        apu_step(g, visible_cycles);
+        if (line < 160) ppu_render_line(g, line);
 
-        /* HBlank IRQ at the start of each line's blanking period */
+        /* HBlank: la CPU corre los 272 ciclos restantes; DMA e IRQ de HBlank.
+           Los cambios de BGxHOFS, WINx, BLDx hechos aqui afectan a la linea
+           siguiente (efectos de HDMA como Pokédex / transiciones). */
+        g->ppu.dispstat |= 0x0002;
         if (g->ppu.dispstat & 0x0010) g->if_reg |= IF_HBLANK;
         if (line < 160) dma_trigger(g, 2);          /* HBlank-scheduled DMA */
-
-        /* VCount match IRQ */
-        if (g->ppu.dispstat & 0x0020) {
-            int vm = (g->ppu.dispstat >> 8) & 0xFF;
-            if (line == vm) g->if_reg |= IF_VCOUNT;
-        }
-
-        io_update_timers(g, line_cycles);
-
-        /* Run the CPU for this scanline's cycles (interrupts handled inside) */
-        arm_execute(g, line_cycles);
+        io_update_timers(g, hblank_cycles);
+        arm_execute(g, hblank_cycles);
+        apu_step(g, hblank_cycles);
     }
     g->ppu.vcount = 0;
 }
@@ -290,7 +298,7 @@ int gba_save_state(GBA *g, const char *path) {
     size_t n = 0;
     /* store header */
     memcpy(buf+n, "BARS", 4); n += 4;
-    buf[n++] = 1;   /* version */
+    buf[n++] = 2;   /* version */
     /* CPU */
     memcpy(buf+n, &g->cpu, sizeof(g->cpu)); n += sizeof(g->cpu);
     memcpy(buf+n, &g->cst, sizeof(g->cst)); n += sizeof(g->cst);
@@ -333,7 +341,7 @@ int gba_load_state(GBA *g, const char *path) {
     if (memcmp(buf+n, "BARS", 4) != 0) return -1;
     n += 4;
     int ver = buf[n++];
-    if (ver != 1) return -1;
+    if (ver != 2) return -1;
     size_t cpu_sz = sizeof(g->cpu);
     if (n + cpu_sz > got) return -1;
     memcpy(&g->cpu, buf+n, cpu_sz); n += cpu_sz;

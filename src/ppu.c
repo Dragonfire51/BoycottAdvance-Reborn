@@ -1,222 +1,365 @@
 /*
- * ppu.c - GBA background/sprite rendering (modes 0-5, OBJ).
- * Clean-room implementation of the GBA PPU, following the GBATEK
- * description of the display controller.
+ * ppu.c - GBA PPU: BG modes 0-5, OBJ (regular + affine), windows, colour
+ * special effects (alpha / brighten / darken), BG mosaic.
+ * Per-scanline renderer, written from GBATEK ("LCD" chapters).
+ *
+ * Call order per frame (see gba.c run_frame_core):
+ *   ppu_frame_start(g);                 // latch affine reference points
+ *   for line 0..159: run CPU for the visible 960 cycles, ppu_render_line(g, line)
  */
 #include "gba.h"
 #include "mem.h"
 
+#define TRANS 0x8000u            /* marker: transparent pixel in a layer buffer */
+
+enum { L_BG0, L_BG1, L_BG2, L_BG3, L_OBJ, L_BD };   /* matches BLDCNT bit order */
+
+typedef struct {
+    uint16_t bg[4][SCREEN_W];    /* RGB555 or TRANS */
+    uint16_t obj[SCREEN_W];      /* RGB555 or TRANS */
+    uint8_t  obj_pri[SCREEN_W];
+    uint8_t  obj_semi[SCREEN_W]; /* OBJ mode 1 (semi-transparent) */
+    uint8_t  obj_win[SCREEN_W];  /* OBJ mode 2 (OBJ window mask) */
+} LineBuf;
+
+static LineBuf lb;
+
+/* ---- memory helpers ---------------------------------------------------- */
+/* VRAM is 96K mirrored in 128K: 0x18000-0x1FFFF mirrors 0x10000-0x17FFF.
+ * (The old helpers indexed past the end of g->vram for those addresses.) */
+static inline uint32_t vmirror(uint32_t off) {
+    off &= 0x1FFFF;
+    return off >= VRAM_SIZE ? off - 0x8000 : off;
+}
 static inline uint16_t read_pal(GBA *g, int idx) {
     idx &= 0x1FF;
-    return (uint16_t)(g->pal[idx*2] | (g->pal[idx*2+1] << 8));
+    return (uint16_t)((g->pal[idx*2] | (g->pal[idx*2+1] << 8)) & 0x7FFF);
 }
 static inline uint16_t read_vram16(GBA *g, uint32_t off) {
-    off &= 0x1FFFF;
+    off = vmirror(off) & ~1u;
     return (uint16_t)(g->vram[off] | (g->vram[off+1] << 8));
 }
 static inline uint8_t read_vram8(GBA *g, uint32_t off) {
-    return g->vram[off & 0x1FFFF];
+    return g->vram[vmirror(off)];
+}
+static inline uint16_t oam16(GBA *g, int off) {
+    return (uint16_t)(g->oam[off] | (g->oam[off+1] << 8));
 }
 
-/* Render a full scanline y (0..159) into ppu.frame */
-static void render_line(GBA *g, int y) {
+/* ---- text backgrounds (GBATEK "LCD I/O BG Control", "BG Screen Data Format") */
+static void render_text_bg(GBA *g, int bgn, int y) {
     Ppu *p = &g->ppu;
-    uint16_t dispcnt = p->dispcnt;
-    int bg_mode = dispcnt & 0x7;
-    bool obj_enabled = dispcnt & 0x1000;
-    uint32_t base = (uint32_t)y * SCREEN_W;
+    uint16_t *out = lb.bg[bgn];
+    uint16_t bgcnt = p->bgcnt[bgn];
+    uint32_t cbb = ((bgcnt >> 2) & 3) * 0x4000;     /* char base block */
+    uint32_t sb  = ((bgcnt >> 8) & 0x1F) * 0x800;   /* screen base block */
+    bool is8 = bgcnt & 0x80;
+    int size = (bgcnt >> 14) & 3;                   /* 0:256x256 1:512x256 2:256x512 3:512x512 */
+    int mw = (size & 1) ? 512 : 256, mh = (size & 2) ? 512 : 256;
+    int mos_h = 1, mos_v = 1;
+    if (bgcnt & 0x40) {                             /* BG mosaic enable */
+        mos_h = (p->mosaic & 0xF) + 1;
+        mos_v = ((p->mosaic >> 4) & 0xF) + 1;
+    }
+    int sy = y - (y % mos_v);
+    int hofs = p->bghofs[bgn] & 0x1FF, vofs = p->bgvofs[bgn] & 0x1FF;
 
-    /* backdrop */
-    uint16_t backdrop = read_pal(g, 0);
     for (int x = 0; x < SCREEN_W; x++) {
-        p->frame[base + x] = backdrop;
-        p->bgpri[base + x] = 4;         /* 4 = lowest priority */
-    }
-
-    /* ---- text modes 0-2: BG0-3 ---- */
-    if (bg_mode <= 2) {
-        int nbg = (bg_mode == 0) ? 4 : 2;   /* mode 1/2: BG0-1 are text */
-        for (int bgn = nbg - 1; bgn >= 0; bgn--) {   /* draw low priority first */
-            if (!(dispcnt & (1 << (8 + bgn)))) continue;
-            uint16_t bgcnt = p->bgcnt[bgn];
-            int pri = bgcnt & 3;
-            uint32_t cbb = ((bgcnt >> 2) & 3) * 0x4000;   /* char base block */
-            uint32_t sb  = ((bgcnt >> 8) & 0x1F) * 0x800;   /* screen base block */
-            bool is8 = bgcnt & 0x80;
-            int size = (bgcnt >> 14) & 3;
-            static const int dimt[4][2] = {{32,32},{64,32},{32,64},{64,64}};
-            int mw = dimt[size][0], mh = dimt[size][1];
-            int palbank = (bgn < 2) ? ((bgcnt >> 4) & 0xF) : 0;
-            uint32_t hofs = p->bghofs[bgn] & 0x1FF, vofs = p->bgvofs[bgn] & 0x1FF;
-
-            for (int x = 0; x < SCREEN_W; x++) {
-                int tx = (x + hofs) & (mw*8 - 1);
-                int ty = (y + vofs) & (mh*8 - 1);
-                int tile_x = tx >> 3, tile_y = ty >> 3;
-                /* screen block position (256px = 32 tiles per block, blocks laid out) */
-                int block_x = (tile_x >> 5) & (mw / 32 - 1 ? mw/32 - 1 : 0);
-                int block_y = tile_y >> 5;
-                int within_x = tile_x & 31, within_y = tile_y & 31;
-                uint32_t map_off = sb + (uint32_t)(block_y * (mw/32) + block_x) * 0x800
-                                 + (uint32_t)within_y * 64 + (uint32_t)within_x * 2;
-                uint16_t se = read_vram16(g, map_off);
-                int tno = se & 0x3FF;
-                int flip_x = (se >> 10) & 1, flip_y = (se >> 11) & 1;
-                int px = tx & 7, py = ty & 7;
-                if (flip_x) px = 7 - px;
-                if (flip_y) py = 7 - py;
-                uint32_t ch = cbb + (uint32_t)tno * (is8 ? 64 : 32) + (uint32_t)py * (is8 ? 8 : 4);
-                int palidx;
-                if (is8) palidx = read_vram8(g, ch + px);
-                else {
-                    uint8_t b = read_vram8(g, ch + (px >> 1));
-                    palidx = (px & 1) ? (b >> 4) : (b & 0xF);
-                    palidx |= palbank << 4;
-                }
-                if (palidx == 0) continue;
-                if (pri < p->bgpri[base + x]) {
-                    p->frame[base + x] = read_pal(g, palidx);
-                    p->bgpri[base + x] = pri;
-                }
-            }
+        int sx = x - (x % mos_h);
+        int tx = (sx + hofs) & (mw - 1);
+        int ty = (sy + vofs) & (mh - 1);
+        int tile_x = tx >> 3, tile_y = ty >> 3;
+        int bx = tile_x >> 5, by = tile_y >> 5;
+        int blk = (size == 0) ? 0 : (size == 1) ? bx : (size == 2) ? by : (by * 2 + bx);
+        uint32_t map_off = sb + (uint32_t)blk * 0x800
+                         + (uint32_t)(tile_y & 31) * 64 + (uint32_t)(tile_x & 31) * 2;
+        uint16_t se = read_vram16(g, map_off);
+        int tno = se & 0x3FF;
+        int px = tx & 7, py = ty & 7;
+        if (se & 0x0400) px = 7 - px;
+        if (se & 0x0800) py = 7 - py;
+        if (is8) {
+            int idx = read_vram8(g, cbb + (uint32_t)tno * 64 + (uint32_t)py * 8 + px);
+            out[x] = idx ? read_pal(g, idx) : TRANS;
+        } else {
+            uint8_t b = read_vram8(g, cbb + (uint32_t)tno * 32 + (uint32_t)py * 4 + (px >> 1));
+            int c = (px & 1) ? (b >> 4) : (b & 0xF);
+            /* palette bank comes from the SCREEN ENTRY (bits 12-15), and
+             * transparency is colour 0 of the tile, not of the whole palette */
+            out[x] = c ? read_pal(g, (se >> 12) * 16 + c) : TRANS;
         }
     }
+}
 
-    /* ---- mode 1/2 affine background BG2 ---- */
-    if (bg_mode == 1 || bg_mode == 2) {
-        int bgn = 2;
-        if (dispcnt & (1 << (8 + bgn))) {
-            uint16_t bgcnt = p->bgcnt[bgn];
-            int pri = bgcnt & 3;
-            uint32_t cbb = ((bgcnt >> 2) & 3) * 0x4000;
-            uint32_t sb  = ((bgcnt >> 8) & 0x1F) * 0x800;
-            int size = (bgcnt >> 14) & 3;
-            int mw = 128 << (size & 1), mh = 128 << ((size >> 1) & 1);
-            int32_t refx = p->bgaffx[0], refy = p->bgaffy[0];
-            int32_t pA = p->bgaffpa[bgn-2], pB = p->bgaffpb[bgn-2];
-            int32_t pC = p->bgaffpc[bgn-2], pD = p->bgaffpd[bgn-2];
-            for (int x = 0; x < SCREEN_W; x++) {
-                int32_t sx = (refx + pA * x + pB * y) >> 8;
-                int32_t sy = (refy + pC * x + pD * y) >> 8;
-                sx &= (mw - 1); sy &= (mh - 1);
-                int tile_x = sx >> 3, tile_y = sy >> 3;
-                uint32_t map_off = sb + (uint32_t)tile_y * (mw/8) + (uint32_t)tile_x;
-                int tno = read_vram8(g, map_off);
-                uint32_t ch = cbb + (uint32_t)tno * 64 + (uint32_t)(sy & 7) * 8 + (sx & 7);
-                int palidx = read_vram8(g, ch);
-                if (palidx == 0) continue;
-                if (pri < p->bgpri[base + x]) {
-                    p->frame[base + x] = read_pal(g, palidx);
-                    p->bgpri[base + x] = pri;
-                }
-            }
+/* ---- affine backgrounds (BG2 / BG3), GBATEK "BG Rotation/Scaling" -------- */
+static void render_affine_bg(GBA *g, int bgn, int y) {
+    Ppu *p = &g->ppu;
+    uint16_t *out = lb.bg[bgn];
+    int a = bgn - 2;
+    uint16_t bgcnt = p->bgcnt[bgn];
+    uint32_t cbb = ((bgcnt >> 2) & 3) * 0x4000;
+    uint32_t sb  = ((bgcnt >> 8) & 0x1F) * 0x800;
+    bool wrap = bgcnt & 0x2000;                     /* area overflow: wraparound */
+    int dim = 128 << ((bgcnt >> 14) & 3);           /* 128/256/512/1024, square */
+    int mos_h = 1, mos_v = 1;
+    if (bgcnt & 0x40) {
+        mos_h = (p->mosaic & 0xF) + 1;
+        mos_v = ((p->mosaic >> 4) & 0xF) + 1;
+    }
+    int32_t pa = p->pa[a], pc = p->pc[a];
+    int32_t rx = p->refx[a], ry = p->refy[a];
+    if (mos_v > 1) {                                /* sample the first line of the mosaic row */
+        rx -= p->pb[a] * (y % mos_v);
+        ry -= p->pd[a] * (y % mos_v);
+    }
+    for (int x = 0; x < SCREEN_W; x++) {
+        int xs = x - (x % mos_h);
+        int32_t sx = (rx + pa * xs) >> 8;
+        int32_t sy = (ry + pc * xs) >> 8;
+        if (sx < 0 || sx >= dim || sy < 0 || sy >= dim) {
+            if (!wrap) { out[x] = TRANS; continue; }
+            sx &= dim - 1; sy &= dim - 1;
+        }
+        int tno = read_vram8(g, sb + (uint32_t)(sy >> 3) * (uint32_t)(dim >> 3) + (uint32_t)(sx >> 3));
+        int idx = read_vram8(g, cbb + (uint32_t)tno * 64 + (uint32_t)(sy & 7) * 8 + (uint32_t)(sx & 7));
+        out[x] = idx ? read_pal(g, idx) : TRANS;
+    }
+}
+
+/* ---- bitmap modes 3/4/5 (BG2) ------------------------------------------- */
+static void render_bitmap(GBA *g, int mode, int y) {
+    uint16_t *out = lb.bg[2];
+    uint32_t page = ((g->ppu.dispcnt >> 4) & 1) * 0xA000u;
+    for (int x = 0; x < SCREEN_W; x++) {
+        if (mode == 3) {
+            out[x] = read_vram16(g, ((uint32_t)y * 240 + x) * 2) & 0x7FFF;
+        } else if (mode == 4) {
+            int idx = read_vram8(g, page + (uint32_t)y * 240 + x);
+            out[x] = idx ? read_pal(g, idx) : TRANS;
+        } else {
+            out[x] = (x < 160 && y < 128)
+                   ? (read_vram16(g, page + ((uint32_t)y * 160 + x) * 2) & 0x7FFF) : TRANS;
         }
     }
+}
 
-    /* ---- bitmap modes ---- */
-    if (bg_mode == 3) {   /* 240x160, 16bpp */
-        if (dispcnt & (1 << 10)) {
-            for (int x = 0; x < SCREEN_W; x++) {
-                uint32_t off = ((uint32_t)y * 240 + x) * 2;
-                p->frame[base + x] = read_vram16(g, off);
-                p->bgpri[base + x] = 0;
-            }
-        }
-    } else if (bg_mode == 4) {   /* 240x160, 8bpp, 2 pages */
-        if (dispcnt & (1 << 10)) {
-            uint32_t page = (dispcnt >> 4) & 1;
-            for (int x = 0; x < SCREEN_W; x++) {
-                uint32_t off = page * 0xA000 + (uint32_t)y * 240 + x;
-                int idx = read_vram8(g, off);
-                if (idx) { p->frame[base + x] = read_pal(g, idx); p->bgpri[base + x] = 0; }
-            }
-        }
-    } else if (bg_mode == 5) {   /* 160x128, 16bpp, 2 pages */
-        if (dispcnt & (1 << 10)) {
-            uint32_t page = (dispcnt >> 4) & 1;
-            if (y < 128) {
-                for (int x = 0; x < 160; x++) {
-                    uint32_t off = page * 0xA000 + ((uint32_t)y * 160 + x) * 2;
-                    p->frame[base + x] = read_vram16(g, off);
-                    p->bgpri[base + x] = 0;
-                }
-            }
-        }
+/* ---- OBJ (GBATEK "LCD OBJ - OBJ Attributes") ------------------------------
+ * attr0: 0-7 Y, 8 rot/scale, 9 double-size (rot) / disable (no rot),
+ *        10-11 mode (0 normal, 1 semi-transparent, 2 OBJ window), 12 mosaic,
+ *        13 256 colours, 14-15 shape
+ * attr1: 0-8 X, rot: 9-13 matrix index / no rot: 12 hflip 13 vflip, 14-15 size
+ * attr2: 0-9 tile, 10-11 priority, 12-15 palette bank                      */
+static void render_objs(GBA *g, int y) {
+    static const uint8_t dim[3][4][2] = {
+        {{8,8},{16,16},{32,32},{64,64}},
+        {{16,8},{32,8},{32,16},{64,32}},
+        {{8,16},{8,32},{16,32},{32,64}},
+    };
+    Ppu *p = &g->ppu;
+    for (int x = 0; x < SCREEN_W; x++) {
+        lb.obj[x] = TRANS; lb.obj_pri[x] = 7; lb.obj_semi[x] = 0; lb.obj_win[x] = 0;
     }
+    if (!(p->dispcnt & 0x1000)) return;
 
-    /* ---- OBJ (sprites) ---- */
-    if (obj_enabled) {
-        int obj_1d = (dispcnt >> 6) & 1;
-        static const int dim[3][4][2] = {
-            {{8,8},{16,16},{32,32},{64,64}},
-            {{16,8},{32,8},{32,16},{64,32}},
-            {{8,16},{8,32},{16,32},{32,64}},
-        };
-        uint32_t obj_vram = ((dispcnt >> 5) & 1) ? 0x14000 : 0x10000;  /* OBJ char base */
-        /* draw from lowest priority (3) to highest (0): iterate 3..0 */
-        for (int want = 3; want >= 0; want--) {
-            for (int o = 0; o < 128; o++) {
-                uint32_t ea = (uint32_t)o * 8;
-                uint16_t a0 = (uint16_t)(g->oam[ea]   | (g->oam[ea+1] << 8));
-                uint16_t a1 = (uint16_t)(g->oam[ea+2] | (g->oam[ea+3] << 8));
-                uint16_t a2 = (uint16_t)(g->oam[ea+4] | (g->oam[ea+5] << 8));
+    int mode = p->dispcnt & 7;
+    bool one_d = p->dispcnt & 0x40;
+    uint32_t obj_base = (mode >= 3) ? 0x14000 : 0x10000;   /* NOT dispcnt bit 5 */
 
-                if (a0 & 0x0200) continue;             /* rotation/affine: skip */
-                if (a0 & 0x0400) continue;             /* disabled */
-                int shape = (a0 >> 14) & 3;
-                if (shape == 3) continue;
-                int size  = (a1 >> 14) & 3;
-                int pri   = (a2 >> 10) & 3;
-                if (pri != want) continue;
+    for (int o = 0; o < 128; o++) {
+        uint16_t a0 = oam16(g, o * 8), a1 = oam16(g, o * 8 + 2), a2 = oam16(g, o * 8 + 4);
+        bool aff = a0 & 0x0100;
+        if (!aff && (a0 & 0x0200)) continue;               /* OBJ disabled */
+        int omode = (a0 >> 10) & 3;
+        if (omode == 3) continue;
+        int shape = (a0 >> 14) & 3;
+        if (shape == 3) continue;
+        int w = dim[shape][(a1 >> 14) & 3][0], h = dim[shape][(a1 >> 14) & 3][1];
+        bool dbl = aff && (a0 & 0x0200);
+        int bw = dbl ? w * 2 : w, bh = dbl ? h * 2 : h;
 
-                int cmode = (a1 >> 13) & 1;            /* 0=16 colors, 1=256 */
-                int w = dim[shape][size][0], h = dim[shape][size][1];
-                int xpos = a0 & 0x1FF; if (xpos >= 240) xpos -= 512;
-                int ypos = a0 & 0x0FF; if (ypos >= 160) ypos -= 256;
-                bool hflip = a1 & 0x1000, vflip = a1 & 0x2000;
-                int tno = a2 & 0x3FF;
-                int palbank = (a2 >> 12) & 0xF;
+        int ypos = a0 & 0xFF;
+        int ry = (y - ypos) & 0xFF;                        /* row inside bounding box, wraps at 256 */
+        if (ry >= bh) continue;
+        int xpos = a1 & 0x1FF; if (xpos >= 256) xpos -= 512;
 
-                int cols = w >> 3, rows = h >> 3;
-                int stride = obj_1d ? cols : 32;
+        bool pal256 = a0 & 0x2000;                         /* colour mode lives in attr0 */
+        int tno = a2 & 0x3FF, pri = (a2 >> 10) & 3, palbank = (a2 >> 12) & 0xF;
+        if (mode >= 3 && tno < 512) continue;              /* bitmap modes: tiles 0-511 unusable */
+        int tstep = pal256 ? 2 : 1;                        /* 8x8 tile = 1 or 2 32-byte slots */
+        int row_stride = one_d ? (w >> 3) * tstep : 32;
 
-                for (int ry = 0; ry < rows; ry++) {
-                    for (int rx = 0; rx < cols; rx++) {
-                        int tile = (tno + ry * stride + rx) & 0x3FF;
-                        uint32_t tbase = obj_vram + (uint32_t)tile * 32;
-                        for (int py = 0; py < 8; py++) {
-                            int sy = ry*8 + py;
-                            for (int px = 0; px < 8; px++) {
-                                int sx = rx*8 + px;
-                                int dxs = hflip ? (w-1-sx) : sx;
-                                int dys = vflip ? (h-1-sy) : sy;
-                                int scr_x = xpos + dxs, scr_y = ypos + dys;
-                                if (scr_x < 0 || scr_x >= SCREEN_W || scr_y < 0 || scr_y >= SCREEN_H) continue;
-                                uint32_t ch = tbase + (uint32_t)py * (cmode ? 8 : 4) + (uint32_t)(cmode ? px : (px >> 1));
-                                int palidx;
-                                if (cmode) palidx = read_vram8(g, ch);
-                                else {
-                                    uint8_t bb = read_vram8(g, ch);
-                                    palidx = (px & 1) ? (bb >> 4) : (bb & 0xF);
-                                    palidx |= palbank << 4;
-                                }
-                                if (palidx == 0) continue;
-                                uint32_t fb = (uint32_t)scr_y * SCREEN_W + scr_x;
-                                /* sprite pixel beats BG if its priority <= current */
-                                if (pri <= p->bgpri[fb]) {
-                                    p->frame[fb] = read_pal(g, 0x100 + palidx);
-                                    p->bgpri[fb] = pri;
-                                }
-                            }
-                        }
-                    }
-                }
+        int pa = 0, pb = 0, pc = 0, pd = 0;
+        if (aff) {
+            int grp = ((a1 >> 9) & 0x1F) * 32;
+            pa = (int16_t)oam16(g, grp + 6);  pb = (int16_t)oam16(g, grp + 14);
+            pc = (int16_t)oam16(g, grp + 22); pd = (int16_t)oam16(g, grp + 30);
+        }
+
+        for (int bx = 0; bx < bw; bx++) {
+            int scr_x = xpos + bx;
+            if (scr_x < 0 || scr_x >= SCREEN_W) continue;
+            int tx, ty;
+            if (aff) {
+                int cx = bx - bw / 2, cy = ry - bh / 2;
+                tx = ((pa * cx + pb * cy) >> 8) + w / 2;
+                ty = ((pc * cx + pd * cy) >> 8) + h / 2;
+                if (tx < 0 || tx >= w || ty < 0 || ty >= h) continue;
+            } else {
+                tx = (a1 & 0x1000) ? w - 1 - bx : bx;
+                ty = (a1 & 0x2000) ? h - 1 - ry : ry;
+            }
+            uint32_t slot = (uint32_t)(tno + (ty >> 3) * row_stride + (tx >> 3) * tstep) & 0x3FF;
+            uint32_t tbase = obj_base + slot * 32;
+            int px = tx & 7, py = ty & 7, c, palidx;
+            if (pal256) {
+                c = read_vram8(g, tbase + (uint32_t)py * 8 + px);
+                palidx = 0x100 + c;
+            } else {
+                uint8_t b = read_vram8(g, tbase + (uint32_t)py * 4 + (px >> 1));
+                c = (px & 1) ? (b >> 4) : (b & 0xF);
+                palidx = 0x100 + palbank * 16 + c;
+            }
+            if (!c) continue;                              /* transparent: colour 0 of the bank */
+            if (omode == 2) { lb.obj_win[scr_x] = 1; continue; }
+            /* lower priority number wins; ties go to the lower OAM index
+             * (we iterate o ascending, so only replace on strictly lower) */
+            if (lb.obj[scr_x] == TRANS || pri < lb.obj_pri[scr_x]) {
+                lb.obj[scr_x] = read_pal(g, palidx);
+                lb.obj_pri[scr_x] = (uint8_t)pri;
+                lb.obj_semi[scr_x] = (omode == 1);
             }
         }
     }
 }
 
-void ppu_render_frame(GBA *g) {
-    for (int y = 0; y < SCREEN_H; y++)
-        render_line(g, y);
+/* ---- colour effects ------------------------------------------------------ */
+static uint16_t blend_alpha(uint16_t a, uint16_t b, int eva, int evb) {
+    uint16_t out = 0;
+    for (int s = 0; s < 15; s += 5) {
+        int v = (((a >> s) & 31) * eva + ((b >> s) & 31) * evb) >> 4;
+        if (v > 31) v = 31;
+        out |= (uint16_t)(v << s);
+    }
+    return out;
+}
+static uint16_t fade(uint16_t c, int evy, bool up) {
+    uint16_t out = 0;
+    for (int s = 0; s < 15; s += 5) {
+        int v = (c >> s) & 31;
+        v = up ? v + (((31 - v) * evy) >> 4) : v - ((v * evy) >> 4);
+        out |= (uint16_t)(v << s);
+    }
+    return out;
+}
+
+/* ---- windows + priority resolution + blending ----------------------------- */
+static void composite_line(GBA *g, int y) {
+    Ppu *p = &g->ppu;
+    uint16_t dc = p->dispcnt;
+    uint16_t backdrop = read_pal(g, 0);
+    bool anywin = dc & 0xE000;                       /* WIN0 / WIN1 / OBJ window */
+
+    int wx1[2], wx2[2]; bool wy[2];
+    for (int w = 0; w < 2; w++) {
+        int x1 = p->winh[w] >> 8, x2 = p->winh[w] & 0xFF;
+        int y1 = p->winv[w] >> 8, y2 = p->winv[w] & 0xFF;
+        if (x2 > 240 || x1 > x2) x2 = 240;           /* GBATEK: garbage -> 240 / 160 */
+        if (y2 > 160 || y1 > y2) y2 = 160;
+        wx1[w] = x1; wx2[w] = x2;
+        wy[w] = (dc & (0x2000 << w)) && y >= y1 && y < y2;
+    }
+    uint8_t win_ctl[2] = { (uint8_t)(p->winin & 0x3F), (uint8_t)((p->winin >> 8) & 0x3F) };
+    uint8_t out_ctl = (uint8_t)(p->winout & 0x3F);
+    uint8_t obj_ctl = (uint8_t)((p->winout >> 8) & 0x3F);
+
+    int eva = p->bldalpha & 0x1F;        if (eva > 16) eva = 16;
+    int evb = (p->bldalpha >> 8) & 0x1F; if (evb > 16) evb = 16;
+    int evy = p->bldy & 0x1F;            if (evy > 16) evy = 16;
+    uint16_t bld = p->bldcnt;
+    int emode = (bld >> 6) & 3;
+    uint16_t *dst = &p->frame[(uint32_t)y * SCREEN_W];
+
+    for (int x = 0; x < SCREEN_W; x++) {
+        uint8_t m = 0x3F;                            /* bits 0-3 BG, 4 OBJ, 5 effects */
+        if (anywin) {
+            if      (wy[0] && x >= wx1[0] && x < wx2[0])        m = win_ctl[0];
+            else if (wy[1] && x >= wx1[1] && x < wx2[1])        m = win_ctl[1];
+            else if ((dc & 0x8000) && lb.obj_win[x])            m = obj_ctl;
+            else                                                m = out_ctl;
+        }
+        /* find the two topmost opaque layers: per priority, OBJ above BG0..3 */
+        uint16_t col[2] = { backdrop, backdrop };
+        int lay[2] = { L_BD, L_BD };
+        int n = 0;
+        for (int pri = 0; pri < 4 && n < 2; pri++) {
+            if (n < 2 && (m & 0x10) && lb.obj[x] != TRANS && lb.obj_pri[x] == pri) {
+                col[n] = lb.obj[x]; lay[n] = L_OBJ; n++;
+            }
+            for (int bg = 0; bg < 4 && n < 2; bg++) {
+                if ((m & (1 << bg)) && lb.bg[bg][x] != TRANS && (p->bgcnt[bg] & 3) == pri) {
+                    col[n] = lb.bg[bg][x]; lay[n] = bg; n++;
+                }
+            }
+        }
+        uint16_t out = col[0];
+        if (m & 0x20) {
+            int t1 = (bld >> lay[0]) & 1;
+            int t2 = (bld >> (8 + lay[1])) & 1;
+            if (lay[0] == L_OBJ && lb.obj_semi[x] && t2) out = blend_alpha(col[0], col[1], eva, evb);
+            else if (emode == 1 && t1 && t2)             out = blend_alpha(col[0], col[1], eva, evb);
+            else if (emode == 2 && t1)                   out = fade(col[0], evy, true);
+            else if (emode == 3 && t1)                   out = fade(col[0], evy, false);
+        }
+        dst[x] = out;
+    }
+}
+
+/* ---- public API ------------------------------------------------------------ */
+/* Internal affine reference points are reloaded from BGxX/BGxY at the start of
+ * every frame and advanced by PB/PD after each scanline (GBATEK). */
+void ppu_frame_start(GBA *g) {
+    Ppu *p = &g->ppu;
+    for (int i = 0; i < 2; i++) { p->refx[i] = p->bgx[i]; p->refy[i] = p->bgy[i]; }
+}
+
+void ppu_render_line(GBA *g, int y) {
+    Ppu *p = &g->ppu;
+    uint16_t dc = p->dispcnt;
+    uint16_t *dst = &p->frame[(uint32_t)y * SCREEN_W];
+
+    if (dc & 0x0080) {                               /* forced blank: white */
+        for (int x = 0; x < SCREEN_W; x++) dst[x] = 0x7FFF;
+    } else {
+        for (int b = 0; b < 4; b++)
+            for (int x = 0; x < SCREEN_W; x++) lb.bg[b][x] = TRANS;
+        int mode = dc & 7;
+        switch (mode) {
+        case 0:
+            for (int b = 0; b < 4; b++) if (dc & (0x100 << b)) render_text_bg(g, b, y);
+            break;
+        case 1:
+            for (int b = 0; b < 2; b++) if (dc & (0x100 << b)) render_text_bg(g, b, y);
+            if (dc & 0x400) render_affine_bg(g, 2, y);
+            break;
+        case 2:                                      /* BG2/BG3 affine only; no text BGs */
+            if (dc & 0x400) render_affine_bg(g, 2, y);
+            if (dc & 0x800) render_affine_bg(g, 3, y);
+            break;
+        case 3: case 4: case 5:
+            if (dc & 0x400) render_bitmap(g, mode, y);
+            break;
+        default: break;
+        }
+        render_objs(g, y);
+        composite_line(g, y);
+    }
+    for (int i = 0; i < 2; i++) {
+        p->refx[i] += p->pb[i];
+        p->refy[i] += p->pd[i];
+    }
+}
+
+void ppu_render_frame(GBA *g) {                      /* kept for frontends / tools */
+    ppu_frame_start(g);
+    for (int y = 0; y < SCREEN_H; y++) ppu_render_line(g, y);
 }

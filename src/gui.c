@@ -528,6 +528,7 @@ void gui_native_open_bios(void) {}
 void gui_native_shutdown(void) {}
 int  gui_native_init(void *h, const uint32_t *i, int w, int hh, GuiCallbacks *cb) {
     (void)h; (void)i; (void)w; (void)hh; (void)cb; return 0; }
+void gui_native_input_config(void) {}
 
 /* Joysticks are polled through WinMM (Windows only); on other platforms
  * the frontend keeps using only the keyboard. */

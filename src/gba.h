@@ -1,10 +1,13 @@
 /*
  * gba.h - Game Boy Advance system model.
  *
- * Reconstructed from reverse engineering of the BoycottAdvance 0.2.8 binary
- * and from ARM7TDMI / GBA hardware documentation. Modern SDL2 frontend,
- * complete ARM7TDMI core, correct interrupt/BIOS behaviour so commercial
- * games (e.g. Pokemon) boot, and Win11-friendly audio (SDL2 instead of WINMM).
+ * Revisado contra GBATEK. Cambios respecto a v1.4.7:
+ *  - Ppu: mapa de registros afines/ventanas/blend corregido, referencias
+ *    internas BG2/BG3 de 28 bits, flag HBlank real.
+ *  - Apu: reescrito con el layout de registros de GBATEK, frame sequencer,
+ *    FIFOs conducidos por los timers y ring buffer para el hilo de audio.
+ *  - CpuState: estado de IntrWait (re-ejecución del SWI como el BIOS real).
+ *  - GBA: bios_loaded (ya no se deduce de bios[0] != 0).
  */
 #ifndef GBA_H
 #define GBA_H
@@ -13,7 +16,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define GBA_VERSION  "v1.4.7"
+#define GBA_VERSION  "v1.4.8"
 #define GBA_NAME     "BoycottAdvance Reborn"
 #define GBA_TITLE    GBA_NAME " " GBA_VERSION
 
@@ -73,10 +76,7 @@ typedef struct {
     bool     dirty;                 /* a write completed; save to disk */
 } Eeprom;
 
-/* Flash command state machine (SST 39VF512 / Macronix MX29L010 protocol).
-   Pokemon Emerald probes the chip with the JEDEC autoselect sequence and
-   refuses to initialise its save block unless a valid device ID comes back,
-   which is why the raw-array save window is not enough. */
+/* Flash command state machine (SST 39VF512 / Macronix MX29L010 protocol). */
 enum {
     FLASH_READY, FLASH_CMD1, FLASH_CMD2, FLASH_AUTOSELECT,
     FLASH_PROGRAM, FLASH_ERASE
@@ -123,24 +123,25 @@ typedef struct {
     bool irq_pending;
     bool halt;
     bool stopped;
+    bool intr_wait;          /* SWI 04h/05h en curso (se re-ejecuta hasta cumplirse) */
 } CpuState;
 
-/* ---- Timers -------------------------------------------------------------- */
+/* ---- Timers (GBATEK: TMxCNT_L = reload/counter, TMxCNT_H = control) ------ */
 typedef struct {
     bool enabled;
-    uint16_t reload;
-    uint16_t counter;
+    uint16_t reload;         /* valor escrito en TMxCNT_L */
+    uint16_t counter;        /* contador actual (lectura de TMxCNT_L) */
     int prescaler;           /* 1,64,256,1024 */
-    bool count_up;           /* counting by overflow (timer chaining) */
+    bool count_up;           /* cascada (no vale para el timer 0) */
     bool irq_enable;
-    uint32_t clock;          /* sub-cycle accumulator */
+    uint32_t clock;          /* acumulador de ciclos sub-tick */
 } Timer;
 
 /* ---- DMA ------------------------------------------------------------------ */
 typedef struct {
-    uint32_t src;
+    uint32_t src;            /* direccion interna actual */
     uint32_t dst;
-    uint32_t count;
+    uint32_t count;          /* registro DMAxCNT_L (se recarga en cada disparo) */
     int src_ctl;
     int dst_ctl;
     int unit;
@@ -149,87 +150,66 @@ typedef struct {
     bool irq_enable;
     bool enabled;
     int word;
-    /* Reload values used by repeat transfers at VBlank/HBlank/Special. */
-    uint32_t src_latch;
+    uint32_t src_latch;      /* valores escritos en DMAxSAD / DMAxDAD */
     uint32_t dst_latch;
 } DmaChan;
 
 /* ---- APU state ----------------------------------------------------------- */
 #define SAMPLE_RATE 44100
 #define APU_SR       44100
-#define APU_CYCLES_PER_SAMPLE (16777216 / APU_SR)
 
 typedef struct {
-    bool enabled;
+    bool     on;
+    int      vol;            /* volumen de la envolvente (0..15) */
+    int      env_t;          /* contador de envolvente (ticks de 64 Hz) */
+    int      len;            /* contador de longitud (ticks de 256 Hz) */
+    int      pos;            /* posicion de duty / muestra de onda */
+    uint64_t cc;             /* ciclos de CPU acumulados, punto fijo 16.16 */
+} ApuCh;
 
-    /* channels 1..4 */
-    uint16_t nr10, nr11, nr12, nr13, nr14;
-    uint16_t nr21, nr22, nr23, nr24;
-    uint16_t nr30, nr31, nr32, nr33, nr34;
-    uint16_t nr41, nr42, nr43, nr44;
-    uint16_t nr50, nr51, nr52;
-    uint8_t  wave[16];       /* wave sample RAM 0x4000090..0x9F */
-
-    bool ch1_on;
-    uint32_t ch1_phase;      /* 16.16 duty position */
-    uint32_t ch1_env_cc;
-    int  ch1_vol;
-    bool ch1_dir;
-
-    bool ch2_on;
-    uint32_t ch2_phase;
-    uint32_t ch2_env_cc;
-    int  ch2_vol;
-    bool ch2_dir;
-
-    bool ch3_on;
-    uint32_t ch3_phase;
-    uint32_t ch3_len_cc;
-
-    bool ch4_on;
-    uint32_t ch4_env_cc;
-    int  ch4_vol;
-    bool ch4_dir;
-    uint32_t ch4_lfsr;
-    uint32_t ch4_cc;
-
-    uint64_t env_cc;         /* envelope clock accumulator (CPU cycles) */
-
-    int  sound_cnt[2];        /* SOUNDCNT_H: DMA A/B enable + volume */
-    int  fifoa_volume, fifob_volume;
-    int32_t fifoa[32], fifob[32];
-    int fifoa_head, fifoa_len, fifob_head, fifob_len;
-    int32_t fifoa_held, fifob_held;
-    int  fifo_asel, fifo_bsel;        /* timer 0/1 selected per FIFO */
-    uint32_t fifo_acc_a, fifo_acc_b;  /* cycles until next FIFO pop */
-
-    uint64_t sample_cc;      /* leftover cycles, kept as a fraction */
+typedef struct {
+    bool     master;         /* SOUNDCNT_X bit 7 */
+    uint16_t cnt_l;          /* SOUNDCNT_L 0x080 */
+    uint16_t cnt_h;          /* SOUNDCNT_H 0x082 (sin bits de reset) */
+    uint16_t bias;           /* SOUNDBIAS  0x088 */
+    uint16_t r1l, r1h, r1x;  /* SOUND1CNT_L/H/X 0x60/0x62/0x64 */
+    uint16_t r2l, r2h;       /* SOUND2CNT_L/H   0x68/0x6C      */
+    uint16_t r3l, r3h, r3x;  /* SOUND3CNT_L/H/X 0x70/0x72/0x74 */
+    uint16_t r4l, r4h;       /* SOUND4CNT_L/H   0x78/0x7C      */
+    uint8_t  wave[2][16];    /* WAVE_RAM 0x90..0x9F, dos bancos */
+    ApuCh    ch[4];
+    int      sweep_t, shadow;
+    bool     sweep_on;
+    uint32_t lfsr;
+    uint64_t fs_cc;          /* frame sequencer 512 Hz, 16.16 */
+    int      fs_step;
+    uint64_t sample_acc;     /* ciclos*44100 pendientes de convertir en muestras */
+    int8_t   fifo[2][32];
+    int      fifo_head[2], fifo_len[2];
+    int8_t   fifo_held[2];
+    int32_t  hp_x[2], hp_y[2];   /* filtro paso alto (quita el DC) */
 } Apu;
 
 /* ---- PPU state ------------------------------------------------------------- */
 typedef struct {
     uint16_t dispcnt;
-    uint16_t dispstat;
+    uint16_t dispstat;          /* solo bits escribibles: 3,4,5 y LYC (8-15) */
     uint16_t vcount;
     uint16_t bgcnt[4];
-    uint16_t bgvofs[4];
     uint16_t bghofs[4];
-    int16_t  bgaffx[2], bgaffy[2];      /* affine ref points */
-    int16_t  bgaffpa[4], bgaffpb[4];    /* per BG (2 affine BGs) */
-    int16_t  bgaffpc[2], bgaffpd[2];    /* affine deltas (vertical) */
+    uint16_t bgvofs[4];
+    int16_t  pa[2], pb[2], pc[2], pd[2];   /* BG2 = [0], BG3 = [1] */
+    int32_t  bgx[2], bgy[2];               /* BGxX/BGxY escritos (28 bit con signo) */
+    int32_t  refx[2], refy[2];             /* referencias internas por scanline */
     uint16_t winh[2], winv[2];
-    uint16_t winin[2];
-    uint16_t winout;
+    uint16_t winin, winout;
     uint16_t mosaic;
-    uint16_t bldcnt;
-    uint16_t blendalpha;
-    uint16_t blendy;
+    uint16_t bldcnt, bldalpha, bldy;
+    bool     hblank;                       /* estado HBlank de la scanline actual */
     uint16_t keycnt;
     uint16_t keyinput;
 
-    uint16_t frame[SCREEN_W*SCREEN_H];  /* output RGB555 */
-    uint16_t bgpri[SCREEN_W*SCREEN_H];
-    uint16_t bgalpha[SCREEN_W*SCREEN_H];
+    uint16_t frame[SCREEN_W*SCREEN_H];     /* output RGB555 (R = bits 0-4) */
 } Ppu;
 
 /* ---- GBA core --------------------------------------------------------------- */
@@ -237,6 +217,7 @@ typedef struct GBA {
     uint8_t  bios[BIOS_SIZE];
     bool     bios_enabled;
     bool     bios_fastboot;
+    bool     bios_loaded;         /* se cargo un volcado real de la BIOS */
     bool     skip_intros;         /* SkipIntroHacks: enter ROM without BIOS wait */
 
     uint8_t  ewram[EWRAM_SIZE];   /* 0x02000000 */
@@ -266,7 +247,6 @@ typedef struct GBA {
 
     uint32_t cycle;               /* absolute cycle counter (16.78MHz) */
 
-    /* IO registers (also directly readable/writable via io[]; keep explicit for clarity) */
     uint16_t ie, if_reg;
     bool     ime;
     uint16_t keypad;
@@ -281,7 +261,7 @@ typedef struct GBA {
     uint32_t frame_lines;         /* rendering progress (lines) */
     uint64_t frame_count;
 
-    /* keypad (input) */
+    /* keypad (input): activo en bajo, igual que KEYINPUT (0 = pulsado) */
     uint16_t key_input;
 
     /* cheats list */
@@ -324,7 +304,7 @@ void gba_write8(GBA *g, uint32_t addr, uint8_t v);
 void gba_write16(GBA *g, uint32_t addr, uint16_t v);
 void gba_write32(GBA *g, uint32_t addr, uint32_t v);
 
-/* IO helpers */
+/* IO helpers. `keys` es activo en bajo (0 = pulsado), como KEYINPUT. */
 void gba_update_keypad(GBA *g, uint16_t keys);
 uint16_t gba_key_debounced(GBA *g);
 
@@ -338,13 +318,20 @@ int gba_save_state(GBA *g, const char *path);
 int gba_load_state(GBA *g, const char *path);
 
 /* ppu */
-void ppu_render_frame(GBA *g);
+void ppu_frame_start(GBA *g);
+void ppu_render_line(GBA *g, int y);
+void ppu_render_frame(GBA *g);       /* compat: renderiza las 160 lineas */
 
 /* apu */
 void apu_open(void);
 void apu_close(void);
-void apu_mix(GBA *g, int16_t *stream, int nframes);
+void apu_reset(GBA *g);
+void apu_step(GBA *g, uint32_t cycles);                 /* genera muestras al ring */
+void apu_mix(GBA *g, int16_t *stream, int nframes);     /* callback de audio */
 void apu_fifo_write(GBA *g, int ch, const uint8_t *bytes, int nbytes);
+void apu_timer_overflow(GBA *g, int timer, uint32_t n);
+uint16_t apu_read_reg(GBA *g, uint32_t reg);
+void apu_write_reg(GBA *g, uint32_t reg, uint16_t v);
 
 /* frontend utils */
 uint32_t get_ticks_us(void);

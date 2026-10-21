@@ -1,7 +1,7 @@
 /*
  * mem.c - GBA memory map and I/O register emulation.
- * Clean-room implementation, guided by BoycottAdvance 0.2.8's structure
- * and the public GBA hardware reference (GBATEK layout).
+ * Revisado contra GBATEK ("GBA I/O Map", "GBA Memory Map", "GBA Timers",
+ * "GBA DMA Transfers", "GBA Unpredictable Things").
  *
  * I/O registers are addressed by their real offsets from 0x04000000,
  * e.g. DISPCNT=0x000, VCOUNT=0x006, IE=0x200, IF=0x202, IME=0x208,
@@ -17,111 +17,63 @@ static uint32_t rd32_al(const uint8_t *p) { return p[0] | (p[1]<<8) | (p[2]<<16)
 static void wr16_al(uint8_t *p, uint16_t v) { p[0] = v & 0xFF; p[1] = v >> 8; }
 static void wr32_al(uint8_t *p, uint32_t v) { p[0]=v&0xFF; p[1]=(v>>8)&0xFF; p[2]=(v>>16)&0xFF; p[3]=(v>>24)&0xFF; }
 
-void dma_run(GBA *g, int ch);
+static int32_t sext28(uint32_t v) { return (int32_t)(v << 4) >> 4; }
 
 /* =========================================================================
  * I/O reads (16-bit register space)
  * ========================================================================= */
 uint16_t io_read16(GBA *g, uint32_t addr) {
     uint32_t reg = addr & 0x3FE;
-    /* ---- DMA ---- */
-    /* The four DMA channels occupy 12 bytes each: 0x0B0 (DMA0), 0x0BC
-     * (DMA1), 0x0C8 (DMA2) and 0x0D4 (DMA3). A 16-byte stride would send
-     * every access above channel 0 to the wrong channel. */
+    Ppu *p = &g->ppu;
+
+    /* ---- DMA: 12 bytes por canal (0x0B0, 0x0BC, 0x0C8, 0x0D4).
+       GBATEK: SAD/DAD/CNT_L son de solo escritura; solo CNT_H se lee. ---- */
     if (reg >= 0x0B0 && reg <= 0x0DF) {
         int ch = (int)((reg - 0x0B0) / 12);
-        switch ((reg - 0x0B0) % 12) {
-        case 0: return (uint16_t)g->dma[ch].src;
-        case 2: return 0;
-        case 4: return (uint16_t)g->dma[ch].dst;
-        case 6: return 0;
-        case 8: return (uint16_t)g->dma[ch].count;
-        case 10:
-            return (uint16_t)((g->dma[ch].dst_ctl << 5) | (g->dma[ch].src_ctl << 7) |
-                   (g->dma[ch].word ? 0x0400 : 0) | (g->dma[ch].timing << 12) |
-                   (g->dma[ch].irq_enable ? 0x4000 : 0) | (g->dma[ch].enabled ? 0x8000 : 0));
+        if (((reg - 0x0B0) % 12) == 10) {
+            DmaChan *d = &g->dma[ch];
+            return (uint16_t)((d->dst_ctl << 5) | (d->src_ctl << 7) |
+                   (d->repeat ? 0x0200 : 0) | (d->word ? 0x0400 : 0) |
+                   (d->timing << 12) | (d->irq_enable ? 0x4000 : 0) |
+                   (d->enabled ? 0x8000 : 0));
         }
         return 0;
     }
+    /* ---- sonido 0x060-0x09F (PSG, control, wave RAM) ---- */
+    if (reg >= 0x060 && reg <= 0x09F) return apu_read_reg(g, reg);
+
     switch (reg) {
     /* ---- display ---- */
-    case 0x000: return g->ppu.dispcnt;
+    case 0x000: return p->dispcnt;
     case 0x004: {
-        uint16_t v = g->ppu.dispstat & 0xFFF8;
-        if (g->ppu.vcount >= 160) v |= 0x0001;               /* VBlank */
-        if (g->ppu.vcount == ((g->ppu.dispstat >> 8) & 0xFF)) v |= 0x0004;
+        /* bits 0-2 son estado: VBlank (lineas 160..226, NO la 227), HBlank, VCount */
+        uint16_t v = p->dispstat & 0xFFB8;
+        if (p->vcount >= 160 && p->vcount != 227) v |= 0x0001;
+        if (p->hblank) v |= 0x0002;
+        if (p->vcount == ((p->dispstat >> 8) & 0xFF)) v |= 0x0004;
         return v;
     }
-    case 0x006: return g->ppu.vcount;
-    case 0x008: return g->ppu.bgcnt[0];
-    case 0x00A: return g->ppu.bgcnt[1];
-    case 0x00C: return g->ppu.bgcnt[2];
-    case 0x00E: return g->ppu.bgcnt[3];
-    case 0x010: return g->ppu.bghofs[0];
-    case 0x012: return g->ppu.bgvofs[0];
-    case 0x014: return g->ppu.bghofs[1];
-    case 0x016: return g->ppu.bgvofs[1];
-    case 0x018: return g->ppu.bghofs[2];
-    case 0x01A: return g->ppu.bgvofs[2];
-    case 0x01C: return g->ppu.bghofs[3];
-    case 0x01E: return g->ppu.bgvofs[3];
-    case 0x020: return g->ppu.bgaffx[0];
-    case 0x022: return g->ppu.bgaffy[0];
-    case 0x024: return g->ppu.bgaffx[1];
-    case 0x026: return g->ppu.bgaffy[1];
-    case 0x030: return g->ppu.bgaffpa[0];
-    case 0x032: return g->ppu.bgaffpb[0];
-    case 0x034: return g->ppu.bgaffpc[0];
-    case 0x036: return g->ppu.bgaffpd[0];
-    case 0x038: return g->ppu.bgaffpa[1];
-    case 0x03A: return g->ppu.bgaffpb[1];
-    case 0x03C: return g->ppu.bgaffpc[1];
-    case 0x03E: return g->ppu.bgaffpd[1];
-    case 0x040: return g->ppu.winh[0];
-    case 0x042: return g->ppu.winh[1];
-    case 0x044: return g->ppu.winv[0];
-    case 0x046: return g->ppu.winv[1];
-    case 0x048: return g->ppu.winin[0];
-    case 0x04A: return g->ppu.winin[1];
-    case 0x04C: return g->ppu.winout;
-    case 0x050: return g->ppu.mosaic;
-    case 0x052: return g->ppu.bldcnt;
-    case 0x054: return g->ppu.blendalpha;
-    case 0x056: return g->ppu.blendy;
-    /* ---- sound (GBA 16-bit register layout) ----
-       SOUND1CNT_L 0x060  SOUND1CNT_H 0x062  SOUND1CNT_X 0x064
-       SOUND2CNT_L 0x068  SOUND2CNT_H 0x06C
-       SOUND3CNT_L 0x070  SOUND3CNT_H 0x072  SOUND3CNT_X 0x074
-       SOUND4CNT_L 0x078  SOUND4CNT_H 0x07C
-       SOUNDCNT_L  0x080  SOUNDCNT_H  0x082  SOUNDCNT_X  0x084
-       SOUNDBIAS   0x088  WAVE_RAM    0x090  FIFO_A 0x0A0  FIFO_B 0x0A4 */
-    case 0x060: return g->apu.nr10;
-    case 0x062: return g->apu.nr11;
-    case 0x064: return g->apu.nr14;
-    case 0x068: return g->apu.nr21;
-    case 0x06C: return g->apu.nr24;
-    case 0x070: return g->apu.nr30;
-    case 0x072: return g->apu.nr32;
-    case 0x074: return g->apu.nr34;
-    case 0x078: return g->apu.nr41;
-    case 0x07C: return (uint16_t)(((g->apu.nr42 & 0xFF) << 8) | (g->apu.nr43 & 0xFF));
-    case 0x080: return (uint16_t)((g->apu.nr50 & 0xFF) | ((g->apu.nr51 & 0xFF) << 8));
-    case 0x082: return (uint16_t)g->apu.sound_cnt[0];
-    case 0x084: return (uint16_t)((g->apu.nr52 & 0x80) | 0x80);
-    case 0x088: return 0x0200;
-    case 0x090: case 0x092: case 0x094: case 0x096:
-    case 0x098: case 0x09A: case 0x09C: case 0x09E: {
-        int i = (addr & 0xF) >> 1;
-        return (uint16_t)(g->apu.wave[i*2] | (g->apu.wave[i*2+1] << 8));
+    case 0x006: return p->vcount;
+    case 0x008: return p->bgcnt[0];
+    case 0x00A: return p->bgcnt[1];
+    case 0x00C: return p->bgcnt[2];
+    case 0x00E: return p->bgcnt[3];
+    /* BGxHOFS/VOFS, BG2/3 afines, WINxH/V, MOSAIC, BLDY: solo escritura */
+    case 0x048: return p->winin;
+    case 0x04A: return p->winout;
+    case 0x050: return p->bldcnt;
+    case 0x052: return p->bldalpha;
+    /* ---- timers: 0x100+4n = TMnCNT_L (contador), 0x102+4n = TMnCNT_H (control) ---- */
+    case 0x100: case 0x104: case 0x108: case 0x10C:
+        return g->timer[(reg - 0x100) >> 2].counter;
+    case 0x102: case 0x106: case 0x10A: case 0x10E: {
+        Timer *t = &g->timer[(reg - 0x102) >> 2];
+        int ps = t->prescaler == 64 ? 1 : t->prescaler == 256 ? 2 : t->prescaler == 1024 ? 3 : 0;
+        return (uint16_t)(ps | (t->count_up ? 0x04 : 0) | (t->irq_enable ? 0x40 : 0) |
+                          (t->enabled ? 0x80 : 0));
     }
-    /* ---- timers ---- */
-    case 0x100: case 0x104: case 0x108: case 0x10C: { int t=(reg-0x100)>>2; return g->timer[t].counter; }
-    case 0x102: case 0x106: case 0x10A: case 0x10E: { int t=(reg-0x102)>>2; return g->timer[t].reload; }
     /* ---- serial / keypad ---- */
-    case 0x120: return g->io[0x120] | (g->io[0x121] << 8);
-    case 0x122: return g->io[0x122] | (g->io[0x123] << 8);
-    case 0x128: return g->io[0x128] | (g->io[0x129] << 8);   /* SIOCNT */
-    case 0x130: return (uint16_t)(g->key_input & 0x3FF);      /* KEYINPUT */
+    case 0x130: return (uint16_t)(g->key_input & 0x3FF);      /* KEYINPUT (0 = pulsado) */
     case 0x132: return g->io[0x132] | (g->io[0x133] << 8);    /* KEYCNT */
     /* ---- interrupts / waitstate ---- */
     case 0x200: return g->ie;                                 /* IE */
@@ -138,20 +90,20 @@ uint16_t io_read16(GBA *g, uint32_t addr) {
  * ========================================================================= */
 void io_write16(GBA *g, uint32_t addr, uint16_t v) {
     uint32_t reg = addr & 0x3FE;
+    Ppu *p = &g->ppu;
+
     /* ---- DMA ---- */
-    /* The four DMA channels occupy 12 bytes each: 0x0B0 (DMA0), 0x0BC
-     * (DMA1), 0x0C8 (DMA2) and 0x0D4 (DMA3). A 16-byte stride would send
-     * every access above channel 0 to the wrong channel. */
     if (reg >= 0x0B0 && reg <= 0x0DF) {
         int ch = (int)((reg - 0x0B0) / 12);
         DmaChan *d = &g->dma[ch];
         switch ((reg - 0x0B0) % 12) {
-        case 0: d->src = (d->src & 0xFFFF0000) | v; return;
-        case 2: d->src = (d->src & 0xFFFF) | ((uint32_t)v << 16); return;
-        case 4: d->dst = (d->dst & 0xFFFF0000) | v; return;
-        case 6: d->dst = (d->dst & 0xFFFF) | ((uint32_t)v << 16); return;
-        case 8: d->count = v & 0xFFFF; return;
-        case 10:
+        case 0: d->src_latch = (d->src_latch & 0xFFFF0000u) | v; return;
+        case 2: d->src_latch = (d->src_latch & 0x0000FFFFu) | ((uint32_t)v << 16); return;
+        case 4: d->dst_latch = (d->dst_latch & 0xFFFF0000u) | v; return;
+        case 6: d->dst_latch = (d->dst_latch & 0x0000FFFFu) | ((uint32_t)v << 16); return;
+        case 8: d->count = v; return;       /* se enmascara a 14/16 bit al disparar */
+        case 10: {
+            bool was = d->enabled;
             d->dst_ctl = (v >> 5) & 3;
             d->src_ctl = (v >> 7) & 3;
             d->repeat = (v >> 9) & 1;
@@ -159,112 +111,82 @@ void io_write16(GBA *g, uint32_t addr, uint16_t v) {
             d->timing = (v >> 12) & 3;
             d->irq_enable = (v >> 14) & 1;
             d->enabled = (v >> 15) & 1;
-            if (d->enabled) { d->src_latch = d->src; d->dst_latch = d->dst; }
-            if (d->enabled && d->timing == 0) dma_run(g, ch);   /* immediate */
+            /* GBATEK: los registros internos se recargan solo al pasar enable 0 -> 1.
+               DMA0: SAD/DAD de 27 bit; DMA1/2: SAD 28 bit, DAD 27 bit; DMA3: ambos 28. */
+            if (d->enabled && !was) {
+                d->src = d->src_latch & (ch == 0 ? 0x07FFFFFFu : 0x0FFFFFFFu);
+                d->dst = d->dst_latch & (ch == 3 ? 0x0FFFFFFFu : 0x07FFFFFFu);
+                if (d->timing == 0) dma_run(g, ch);                 /* inmediato */
+            }
             return;
         }
-        return;
-    }
-    switch (reg) {
-    case 0x000: g->ppu.dispcnt = v; return;
-    case 0x004: g->ppu.dispstat = (g->ppu.dispstat & 0x0007) | (v & 0xFFF8); return;
-    case 0x006: return;                                   /* VCOUNT read-only */
-    case 0x008: g->ppu.bgcnt[0] = v; return;
-    case 0x00A: g->ppu.bgcnt[1] = v; return;
-    case 0x00C: g->ppu.bgcnt[2] = v; return;
-    case 0x00E: g->ppu.bgcnt[3] = v; return;
-    case 0x010: g->ppu.bghofs[0] = v & 0x1FF; return;
-    case 0x012: g->ppu.bgvofs[0] = v & 0x1FF; return;
-    case 0x014: g->ppu.bghofs[1] = v & 0x1FF; return;
-    case 0x016: g->ppu.bgvofs[1] = v & 0x1FF; return;
-    case 0x018: g->ppu.bghofs[2] = v & 0x1FF; return;
-    case 0x01A: g->ppu.bgvofs[2] = v & 0x1FF; return;
-    case 0x01C: g->ppu.bghofs[3] = v & 0x1FF; return;
-    case 0x01E: g->ppu.bgvofs[3] = v & 0x1FF; return;
-    case 0x020: g->ppu.bgaffx[0] = v & 0x1FF; return;
-    case 0x022: g->ppu.bgaffy[0] = v & 0x1FF; return;
-    case 0x024: g->ppu.bgaffx[1] = v & 0x1FF; return;
-    case 0x026: g->ppu.bgaffy[1] = v & 0x1FF; return;
-    case 0x030: g->ppu.bgaffpa[0] = (int16_t)v; return;
-    case 0x032: g->ppu.bgaffpb[0] = (int16_t)v; return;
-    case 0x034: g->ppu.bgaffpc[0] = (int16_t)v; return;
-    case 0x036: g->ppu.bgaffpd[0] = (int16_t)v; return;
-    case 0x038: g->ppu.bgaffpa[1] = (int16_t)v; return;
-    case 0x03A: g->ppu.bgaffpb[1] = (int16_t)v; return;
-    case 0x03C: g->ppu.bgaffpc[1] = (int16_t)v; return;
-    case 0x03E: g->ppu.bgaffpd[1] = (int16_t)v; return;
-    case 0x040: g->ppu.winh[0] = v & 0xFF; return;
-    case 0x042: g->ppu.winh[1] = v & 0xFF; return;
-    case 0x044: g->ppu.winv[0] = v & 0xFF; return;
-    case 0x046: g->ppu.winv[1] = v & 0xFF; return;
-    case 0x048: g->ppu.winin[0] = v & 0x3F; return;
-    case 0x04A: g->ppu.winin[1] = v & 0x3F; return;
-    case 0x04C: g->ppu.winout = v & 0x3F; return;
-    case 0x050: g->ppu.mosaic = v; return;
-    case 0x052: g->ppu.bldcnt = v; return;
-    case 0x054: g->ppu.blendalpha = v; return;
-    case 0x056: g->ppu.blendy = v; return;
-    /* ---- sound (16-bit register layout) ---- */
-    case 0x060: g->apu.nr10 = v; return;                    /* SOUND1CNT_L sweep */
-    case 0x062:                                             /* SOUND1CNT_H env/duty */
-        g->apu.nr11 = v & 0xC0;      /* duty */
-        g->apu.nr12 = v;             /* env: step(0-2) dir(3) period(4-6) vol(12-15) */
-        g->apu.ch1_dir = (v >> 3) & 1;
-        return;
-    case 0x064:                                             /* SOUND1CNT_X freq/restart */
-        g->apu.nr13 = v & 0x7FF; g->apu.nr14 = v;
-        if (v & 0x8000) {
-            g->apu.ch1_on = true; g->apu.ch1_phase = 0;
-            g->apu.ch1_vol = (g->apu.nr12 >> 12) & 0xF;
         }
         return;
-    case 0x068: g->apu.nr21 = v & 0xC0; return;             /* SOUND2CNT_L */
-    case 0x06C:                                             /* SOUND2CNT_H */
-        g->apu.nr22 = v;
-        g->apu.nr23 = v & 0x7FF; g->apu.nr24 = v;
-        g->apu.ch2_dir = (v >> 3) & 1;
-        if (v & 0x8000) { g->apu.ch2_on = true; g->apu.ch2_phase = 0; g->apu.ch2_vol = (v >> 12) & 0xF; }
-        return;
-    case 0x070: g->apu.nr30 = v & 0xE0; if (!(v & 0x80)) g->apu.ch3_on = false; return;
-    case 0x072: g->apu.nr32 = v & 0xE000; return;           /* SOUND3CNT_H volume/length */
-    case 0x074:                                             /* SOUND3CNT_X */
-        g->apu.nr33 = v & 0x7FF; g->apu.nr34 = v;
-        if (v & 0x8000) { g->apu.ch3_on = true; g->apu.ch3_phase = 0; }
-        return;
-    case 0x078: g->apu.nr41 = v & 0xFF; return;             /* SOUND4CNT_L */
-    case 0x07C:                                             /* SOUND4CNT_H */
-        g->apu.nr42 = v & 0xFF; g->apu.nr43 = (v >> 8) & 0xFF;
-        g->apu.ch4_dir = (v >> 3) & 1;
-        if (v & 0x8000) { g->apu.ch4_on = true; g->apu.ch4_vol = v & 7; g->apu.ch4_lfsr = 0x7FFF; }
-        return;
-    case 0x080: g->apu.nr50 = v & 0xFF; g->apu.nr51 = v >> 8; return;   /* SOUNDCNT_L */
-    case 0x082:                                             /* SOUNDCNT_H */
-        g->apu.sound_cnt[0] = v;
-        if (v & 0x0800) { g->apu.fifoa_head = g->apu.fifoa_len = 0; g->apu.fifoa_held = 0; }
-        if (v & 0x8000) { g->apu.fifob_head = g->apu.fifob_len = 0; g->apu.fifob_held = 0; }
-        return;
-    case 0x084: g->apu.nr52 = v & 0x80;                      /* SOUNDCNT_X */
-        if (!(v & 0x80)) g->apu.ch1_on = g->apu.ch2_on = g->apu.ch3_on = g->apu.ch4_on = false;
-        return;
-    case 0x088: return;                                     /* SOUNDBIAS */
-    case 0x090: case 0x092: case 0x094: case 0x096:
-    case 0x098: case 0x09A: case 0x09C: case 0x09E: {
-        int i = (addr & 0xF) >> 1;
-        g->apu.wave[i*2] = v & 0xFF; g->apu.wave[i*2+1] = v >> 8; return;
     }
-    case 0x0A0: case 0x0A2: case 0x0A4: case 0x0A6: return;  /* FIFO writes: DMA only */
-    /* ---- timers ---- */
-    case 0x100: case 0x104: case 0x108: case 0x10C: { int t=(reg-0x100)>>2; g->timer[t].counter = v; return; }
+    /* ---- sonido 0x060-0x09F ---- */
+    if (reg >= 0x060 && reg <= 0x09F) { apu_write_reg(g, reg, v); return; }
+
+    switch (reg) {
+    case 0x000: p->dispcnt = v; return;
+    case 0x004: p->dispstat = v & 0xFFB8; return;          /* bits 0-2 solo lectura */
+    case 0x006: return;                                    /* VCOUNT read-only */
+    case 0x008: p->bgcnt[0] = v; return;
+    case 0x00A: p->bgcnt[1] = v; return;
+    case 0x00C: p->bgcnt[2] = v; return;
+    case 0x00E: p->bgcnt[3] = v; return;
+    case 0x010: p->bghofs[0] = v & 0x1FF; return;
+    case 0x012: p->bgvofs[0] = v & 0x1FF; return;
+    case 0x014: p->bghofs[1] = v & 0x1FF; return;
+    case 0x016: p->bgvofs[1] = v & 0x1FF; return;
+    case 0x018: p->bghofs[2] = v & 0x1FF; return;
+    case 0x01A: p->bgvofs[2] = v & 0x1FF; return;
+    case 0x01C: p->bghofs[3] = v & 0x1FF; return;
+    case 0x01E: p->bgvofs[3] = v & 0x1FF; return;
+    /* BG2: PA 0x20, PB 0x22, PC 0x24, PD 0x26, X 0x28/0x2A, Y 0x2C/0x2E */
+    case 0x020: p->pa[0] = (int16_t)v; return;
+    case 0x022: p->pb[0] = (int16_t)v; return;
+    case 0x024: p->pc[0] = (int16_t)v; return;
+    case 0x026: p->pd[0] = (int16_t)v; return;
+    case 0x028: p->bgx[0] = sext28(((uint32_t)p->bgx[0] & 0xFFFF0000u) | v); p->refx[0] = p->bgx[0]; return;
+    case 0x02A: p->bgx[0] = sext28(((uint32_t)p->bgx[0] & 0xFFFFu) | ((uint32_t)(v & 0x0FFF) << 16)); p->refx[0] = p->bgx[0]; return;
+    case 0x02C: p->bgy[0] = sext28(((uint32_t)p->bgy[0] & 0xFFFF0000u) | v); p->refy[0] = p->bgy[0]; return;
+    case 0x02E: p->bgy[0] = sext28(((uint32_t)p->bgy[0] & 0xFFFFu) | ((uint32_t)(v & 0x0FFF) << 16)); p->refy[0] = p->bgy[0]; return;
+    /* BG3: PA 0x30, PB 0x32, PC 0x34, PD 0x36, X 0x38/0x3A, Y 0x3C/0x3E */
+    case 0x030: p->pa[1] = (int16_t)v; return;
+    case 0x032: p->pb[1] = (int16_t)v; return;
+    case 0x034: p->pc[1] = (int16_t)v; return;
+    case 0x036: p->pd[1] = (int16_t)v; return;
+    case 0x038: p->bgx[1] = sext28(((uint32_t)p->bgx[1] & 0xFFFF0000u) | v); p->refx[1] = p->bgx[1]; return;
+    case 0x03A: p->bgx[1] = sext28(((uint32_t)p->bgx[1] & 0xFFFFu) | ((uint32_t)(v & 0x0FFF) << 16)); p->refx[1] = p->bgx[1]; return;
+    case 0x03C: p->bgy[1] = sext28(((uint32_t)p->bgy[1] & 0xFFFF0000u) | v); p->refy[1] = p->bgy[1]; return;
+    case 0x03E: p->bgy[1] = sext28(((uint32_t)p->bgy[1] & 0xFFFFu) | ((uint32_t)(v & 0x0FFF) << 16)); p->refy[1] = p->bgy[1]; return;
+    /* ventanas / mosaic / blend (GBATEK: WININ 0x48, WINOUT 0x4A, MOSAIC 0x4C,
+       BLDCNT 0x50, BLDALPHA 0x52, BLDY 0x54) */
+    case 0x040: p->winh[0] = v; return;
+    case 0x042: p->winh[1] = v; return;
+    case 0x044: p->winv[0] = v; return;
+    case 0x046: p->winv[1] = v; return;
+    case 0x048: p->winin = v & 0x3F3F; return;
+    case 0x04A: p->winout = v & 0x3F3F; return;
+    case 0x04C: p->mosaic = v; return;
+    case 0x050: p->bldcnt = v & 0x3FFF; return;
+    case 0x052: p->bldalpha = v & 0x1F1F; return;
+    case 0x054: p->bldy = v & 0x1F; return;
+    /* ---- FIFO de Direct Sound: cada halfword aporta 2 muestras (byte bajo primero) ---- */
+    case 0x0A0: case 0x0A2: { uint8_t b[2] = { (uint8_t)v, (uint8_t)(v >> 8) }; apu_fifo_write(g, 0, b, 2); return; }
+    case 0x0A4: case 0x0A6: { uint8_t b[2] = { (uint8_t)v, (uint8_t)(v >> 8) }; apu_fifo_write(g, 1, b, 2); return; }
+    /* ---- timers: TMnCNT_L = valor de recarga; TMnCNT_H = control ---- */
+    case 0x100: case 0x104: case 0x108: case 0x10C:
+        g->timer[(reg - 0x100) >> 2].reload = v; return;
     case 0x102: case 0x106: case 0x10A: case 0x10E: {
-        int t = (reg - 0x102) >> 2;
-        Timer *tm = &g->timer[t];
-        tm->reload = v;
-        tm->enabled = (v >> 7) & 1;
-        tm->irq_enable = (v >> 6) & 1;
+        Timer *tm = &g->timer[(reg - 0x102) >> 2];
+        bool was = tm->enabled;
+        static const int ps[4] = { 1, 64, 256, 1024 };
+        tm->prescaler = ps[v & 3];
         tm->count_up = (v >> 2) & 1;
-        int ps = v & 3;
-        tm->prescaler = ps == 0 ? 1 : ps == 1 ? 64 : ps == 2 ? 256 : 1024;
-        if (tm->enabled) tm->counter = tm->reload;
+        tm->irq_enable = (v >> 6) & 1;
+        tm->enabled = (v >> 7) & 1;
+        if (tm->enabled && !was) { tm->counter = tm->reload; tm->clock = 0; }
         return;
     }
     /* ---- serial / keypad ---- */
@@ -274,70 +196,67 @@ void io_write16(GBA *g, uint32_t addr, uint16_t v) {
     case 0x132: g->io[0x132] = v & 0xFF; g->io[0x133] = v >> 8; return;
     /* ---- interrupts / waitstate ---- */
     case 0x200: g->ie = v & 0x3FFF; return;               /* IE  */
-    case 0x202: g->if_reg &= ~(v & 0x3FFF); return;       /* IF: write 1 clears */
-    case 0x204: g->io[0x204] = v & 0xFF; g->io[0x205] = v >> 8; return;  /* WAITCNT */
+    case 0x202: g->if_reg &= (uint16_t)~(v & 0x3FFF); return;   /* IF: write 1 clears */
+    case 0x204: g->io[0x204] = v & 0xFF; g->io[0x205] = (v >> 8) & 0x7F; return;  /* WAITCNT */
     case 0x208: g->ime = v & 1; return;                   /* IME */
+    case 0x300:                                           /* POSTFLG (byte bajo) + HALTCNT (byte alto) */
+        g->io[0x300] = v & 0xFF;
+        g->io[0x301] = v >> 8;
+        g->cst.halt = true;
+        if (v & 0x8000) g->cst.stopped = true;
+        return;
     default:
         g->io[reg] = v & 0xFF; g->io[reg+1] = v >> 8; return;
     }
 }
 
 /* =========================================================================
- * DMA engine
+ * DMA engine (GBATEK: GBA DMA Transfers)
  * ========================================================================= */
 void dma_run(GBA *g, int ch) {
     DmaChan *d = &g->dma[ch];
     if (!d->enabled) return;
-    uint32_t unit = d->word ? 4 : 2;
-    uint32_t count = d->count & 0xFFFF;
-    if (count == 0) count = (ch == 3) ? 0x10000 : 0x4000;
 
-    /* EEPROM is bit-serial and only reachable through DMA. The transfer
-       count tells the chip which phase it is in, so notify it before the
-       first halfword. 32-bit transfers never touch it. */
-    if (g->save_type == SAVE_EEPROM && !d->word &&
-        (eeprom_addr_in_range(g, d->dst) || eeprom_addr_in_range(g, d->src)))
+    /* Timing 3 en DMA1/2 = modo FIFO de sonido: siempre 4 palabras de 32 bit,
+       destino fijo, el contador DMAxCNT_L se ignora. */
+    bool fifo = (d->timing == 3) && (ch == 1 || ch == 2);
+    uint32_t unit = (d->word || fifo) ? 4 : 2;
+    uint32_t count;
+    if (fifo) count = 4;
+    else if (ch == 3) { count = d->count & 0xFFFF; if (!count) count = 0x10000; }
+    else              { count = d->count & 0x3FFF; if (!count) count = 0x4000; }
+
+    uint32_t src = d->src & ~(unit - 1);
+    uint32_t dst = d->dst & ~(unit - 1);
+
+    /* EEPROM es bit-serie y solo accesible por DMA de 16 bit: el recuento le dice
+       en que fase del protocolo esta. */
+    if (g->save_type == SAVE_EEPROM && !fifo && !d->word &&
+        (eeprom_addr_in_range(g, dst) || eeprom_addr_in_range(g, src)))
         eeprom_dma_begin(g, count);
 
-    /* Sound FIFO mode (channels 1/2 to 0x040000A0/A4): each 32-bit word
-       contributes its low byte to the corresponding FIFO. */
-    if ((ch == 1 || ch == 2) && (d->dst & 0x0FFFFFFF) >= 0x040000A0 &&
-        (d->dst & 0x0FFFFFFF) <= 0x040000A7 && d->word) {
-        uint8_t bytes[0x10000];
-        uint32_t src = d->src;
-        for (uint32_t i = 0; i < count; i++) {
-            uint32_t w = gba_read32(g, src);
-            bytes[i] = (uint8_t)(w & 0xFF);
-            src += 4;
-        }
-        apu_fifo_write(g, (d->dst & 0x0FFFFFFF) == 0x040000A4, bytes, (int)count);
-        g->apu.fifo_acc_a = 0;   /* transfer is instant */
-        if (d->irq_enable) g->if_reg |= (IF_DMA0 << ch);
-        if (!d->repeat) d->enabled = false;
-        return;
-    }
-
-    uint32_t src = d->src, dst = d->dst;
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t v = d->word ? gba_read32(g, src) : gba_read16(g, src);
-        if (d->word) gba_write32(g, dst, v); else gba_write16(g, dst, (uint16_t)v);
-        /* Address control: 0 increment, 1 decrement, 2 fixed, 3 increment/reload. */
-        if (d->src_ctl == 0 || d->src_ctl == 3) src += unit;
-        else if (d->src_ctl == 1) src -= unit;
-        if (d->dst_ctl == 0 || d->dst_ctl == 3) dst += unit;
-        else if (d->dst_ctl == 1) dst -= unit;
+        if (unit == 4) gba_write32(g, dst, gba_read32(g, src));
+        else           gba_write16(g, dst, gba_read16(g, src));
+        /* src: 0 incrementa, 1 decrementa, 2 fijo, 3 prohibido (se trata como incremento) */
+        if (d->src_ctl == 1) src -= unit;
+        else if (d->src_ctl != 2) src += unit;
+        /* dst: 0 incrementa, 1 decrementa, 2 fijo, 3 incrementa + recarga al repetir */
+        if (!fifo) {
+            if (d->dst_ctl == 1) dst -= unit;
+            else if (d->dst_ctl != 2) dst += unit;
+        }
     }
-    if (d->repeat) {
-        if (d->src_ctl == 3) d->src = d->src_latch;
-        else d->src = src;
-        if (d->dst_ctl == 3) d->dst = d->dst_latch;
-        else d->dst = dst;
+    d->src = src;
+    d->dst = dst;
+    if (d->irq_enable) g->if_reg |= (uint16_t)(IF_DMA0 << ch);
+
+    if (d->repeat && d->timing != 0) {
+        if (d->dst_ctl == 3 && !fifo)
+            d->dst = d->dst_latch & (ch == 3 ? 0x0FFFFFFFu : 0x07FFFFFFu);
     } else {
-        d->src = src;
-        d->dst = dst;
+        d->enabled = false;
     }
-    if (d->irq_enable) g->if_reg |= (IF_DMA0 << ch);
-    if (!d->repeat) d->enabled = false;
 }
 
 void dma_trigger(GBA *g, int timing) {
@@ -347,55 +266,109 @@ void dma_trigger(GBA *g, int timing) {
     }
 }
 
-/* =========================================================================
- * Timers
- * ========================================================================= */
-void io_update_timers(GBA *g, uint32_t cycles) {
-    for (int i = 0; i < 4; i++) {
-        Timer *t = &g->timer[i];
-        if (!t->enabled || t->count_up) continue;
-        uint32_t inc = cycles / (uint32_t)t->prescaler;
-        uint32_t cnt = t->counter + inc;
-        if (cnt > 0xFFFF) {
-            t->counter = (uint16_t)((cnt & 0xFFFF) + t->reload);
-            if (t->irq_enable) g->if_reg |= (IF_TIMER0 << i);
-            if (i < 3) g->timer[i+1].counter++;   /* cascade */
-        } else t->counter = (uint16_t)cnt;
+/* El FIFO A/B pide datos (<= 16 bytes en cola): dispara el DMA1/DMA2 cuyo destino sea el FIFO. */
+void dma_fifo_request(GBA *g, int fifo) {
+    uint32_t target = fifo ? 0x040000A4u : 0x040000A0u;
+    for (int ch = 1; ch <= 2; ch++) {
+        DmaChan *d = &g->dma[ch];
+        if (d->enabled && d->timing == 3 && (d->dst & 0x0FFFFFFFu) == target) {
+            dma_run(g, ch);
+            return;
+        }
     }
 }
 
+/* =========================================================================
+ * Timers (GBATEK: GBA Timers)
+ * ========================================================================= */
+static void timer_add(GBA *g, int i, uint32_t ticks);
+
+static void timer_overflow(GBA *g, int i, uint32_t n) {
+    Timer *t = &g->timer[i];
+    if (t->irq_enable) g->if_reg |= (uint16_t)(IF_TIMER0 << i);
+    if (i < 2) apu_timer_overflow(g, i, n);          /* reloj de los FIFOs de Direct Sound */
+    if (i < 3) {                                     /* cascada: solo si el siguiente esta en count-up */
+        Timer *nt = &g->timer[i + 1];
+        if (nt->enabled && nt->count_up) timer_add(g, i + 1, n);
+    }
+}
+
+static void timer_add(GBA *g, int i, uint32_t ticks) {
+    Timer *t = &g->timer[i];
+    uint32_t cnt = (uint32_t)t->counter + ticks;
+    if (cnt <= 0xFFFF) { t->counter = (uint16_t)cnt; return; }
+    uint32_t period = 0x10000u - t->reload;          /* 1 .. 0x10000 */
+    uint32_t over = cnt - 0x10000u;
+    uint32_t n = 1 + over / period;                  /* desbordamientos en este paso */
+    t->counter = (uint16_t)(t->reload + over % period);
+    timer_overflow(g, i, n);
+}
+
+void io_update_timers(GBA *g, uint32_t cycles) {
+    for (int i = 0; i < 4; i++) {
+        Timer *t = &g->timer[i];
+        if (!t->enabled) continue;
+        if (i > 0 && t->count_up) continue;          /* avanza solo por cascada */
+        uint32_t ps = t->prescaler ? (uint32_t)t->prescaler : 1u;
+        t->clock += cycles;                          /* acumulador: no se pierde el resto */
+        uint32_t ticks = t->clock / ps;
+        t->clock -= ticks * ps;
+        if (ticks) timer_add(g, i, ticks);
+    }
+}
+
+/* KEYCNT: bit 14 = IRQ, bit 15 = 0 OR / 1 AND, bits 0-9 = teclas elegidas.
+   key_input es activo en bajo, asi que se invierte para trabajar con "pulsadas". */
 void io_trigger_keypad(GBA *g, uint32_t cycles) {
     (void)cycles;
     uint16_t en = (uint16_t)(g->io[0x132] | (g->io[0x133] << 8));
-    if (!(en & 0x4000)) return;                  /* IRQ disabled */
-    uint16_t cnt = (uint16_t)(g->key_input & 0x3FF);
+    if (!(en & 0x4000)) return;
+    uint16_t pressed = (uint16_t)(~g->key_input & 0x3FF);
     uint16_t req = en & 0x3FF;
-    bool and_mode = en & 0x8000;
-    bool hit = and_mode ? ((cnt & req) == req) : ((cnt & req) != 0);
+    bool and_mode = (en & 0x8000) != 0;
+    bool hit = and_mode ? ((pressed & req) == req) : ((pressed & req) != 0);
     if (hit) g->if_reg |= IF_KEYPAD;
 }
 
 /* =========================================================================
  * Memory map
  * ========================================================================= */
+
+/* Bus abierto del cartucho: fuera de la ROM se lee (direccion/2) & 0xFFFF (GBATEK). */
+static uint16_t rom_open16(uint32_t addr) { return (uint16_t)((addr >> 1) & 0xFFFF); }
+
+static uint16_t rom_read16(GBA *g, uint32_t addr) {
+    uint32_t off = addr & 0x01FFFFFEu;
+    return off + 1 < g->rom_size ? rd16_al(g->rom + off) : rom_open16(addr);
+}
+
+/* SRAM / Flash viven en un bus de 8 bit: las lecturas de 16/32 bit repiten el byte. */
+static uint8_t backup_read8(GBA *g, uint32_t addr) {
+    if (flash_in_use(g)) return flash_read(g, addr);
+    return g->save_mem[addr & 0x7FFF];
+}
+static void backup_write8(GBA *g, uint32_t addr, uint8_t v) {
+    if (flash_in_use(g)) { flash_write(g, addr, v); return; }
+    if (g->save_type == SAVE_NONE) gba_set_savetype(g, SAVE_SRAM);   /* ROM sin etiqueta: asumir SRAM */
+    g->save_mem[addr & 0x7FFF] = v;
+    g->save_dirty = true;
+}
+
 uint32_t gba_read32(GBA *g, uint32_t addr) {
     switch (addr >> 24) {
     case 0x00: return rd32_al(g->bios + (addr & 0x3FFC));
     case 0x02: return rd32_al(g->ewram + (addr & 0x3FFFC));
     case 0x03: return rd32_al(g->iwram + (addr & 0x7FFC));
-    case 0x04: return io_read16(g, addr) | ((uint32_t)io_read16(g, addr + 2) << 16);
+    case 0x04: return io_read16(g, addr & ~3u) | ((uint32_t)io_read16(g, (addr & ~3u) + 2) << 16);
     case 0x05: return rd32_al(g->pal + (addr & 0x3FC));
-    case 0x06: return rd32_al(g->vram + (addr & 0x17FFC));
+    case 0x06: { uint32_t o = addr & 0x1FFFC; if (o >= 0x18000) o -= 0x8000; return rd32_al(g->vram + o); }
     case 0x07: return rd32_al(g->oam + (addr & 0x3FC));
     case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D: {
-        if (eeprom_addr_in_range(g, addr)) return 0;  /* EEPROM reads are bit-serial via DMA */
-        uint32_t off = (addr - 0x08000000) & (g->rom_mask & ~3u);
-        return off < g->rom_size ? rd32_al(g->rom + off) : 0;
+        if (eeprom_addr_in_range(g, addr)) return 0;  /* EEPROM: bit-serie, solo por DMA de 16 bit */
+        uint32_t a = addr & ~3u;
+        return (uint32_t)rom_read16(g, a) | ((uint32_t)rom_read16(g, a + 2) << 16);
     }
-    case 0x0E: {
-        if (flash_in_use(g)) return rd32_al(g->save_mem + (g->flash.bank * 0x10000) + (addr & 0xFFFC));
-        return rd32_al(g->save_mem + (addr & 0x1FFFC));
-    }
+    case 0x0E: case 0x0F: return (uint32_t)backup_read8(g, addr) * 0x01010101u;
     default: return 0;
     }
 }
@@ -407,17 +380,12 @@ uint16_t gba_read16(GBA *g, uint32_t addr) {
     case 0x03: return rd16_al(g->iwram + (addr & 0x7FFE));
     case 0x04: return io_read16(g, addr);
     case 0x05: return rd16_al(g->pal + (addr & 0x3FE));
-    case 0x06: return rd16_al(g->vram + (addr & 0x17FFE));
+    case 0x06: { uint32_t o = addr & 0x1FFFE; if (o >= 0x18000) o -= 0x8000; return rd16_al(g->vram + o); }
     case 0x07: return rd16_al(g->oam + (addr & 0x3FE));
-    case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D: {
+    case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D:
         if (eeprom_addr_in_range(g, addr)) return (uint16_t)(eeprom_read_bit(g) & 1);
-        uint32_t off = (addr - 0x08000000) & (g->rom_mask & ~1u);
-        return off < g->rom_size ? rd16_al(g->rom + off) : 0;
-    }
-    case 0x0E: {
-        if (flash_in_use(g)) return (uint16_t)(flash_read(g, addr) | (flash_read(g, addr + 1) << 8));
-        return rd16_al(g->save_mem + (addr & 0x1FFFE));
-    }
+        return rom_read16(g, addr & ~1u);
+    case 0x0E: case 0x0F: return (uint16_t)(backup_read8(g, addr) * 0x0101u);
     default: return 0;
     }
 }
@@ -429,15 +397,15 @@ uint8_t gba_read8(GBA *g, uint32_t addr) {
     case 0x03: return g->iwram[addr & 0x7FFF];
     case 0x04: { uint16_t v = io_read16(g, addr & ~1u); return (uint8_t)((addr & 1) ? (v >> 8) : v); }
     case 0x05: return g->pal[addr & 0x3FF];
-    case 0x06: return g->vram[addr & 0x17FFF];
+    case 0x06: { uint32_t o = addr & 0x1FFFF; if (o >= 0x18000) o -= 0x8000; return g->vram[o]; }
     case 0x07: return g->oam[addr & 0x3FF];
     case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D: {
         if (eeprom_addr_in_range(g, addr))
             return (addr & 1) ? 0 : eeprom_read_bit(g);   /* bit 0 of each halfword */
-        uint32_t off = (addr - 0x08000000) & g->rom_mask;
-        return off < g->rom_size ? g->rom[off] : 0;
+        uint16_t h = rom_read16(g, addr & ~1u);
+        return (uint8_t)((addr & 1) ? (h >> 8) : h);
     }
-    case 0x0E: return flash_in_use(g) ? flash_read(g, addr) : g->save_mem[addr & 0x1FFFF];
+    case 0x0E: case 0x0F: return backup_read8(g, addr);
     default: return 0;
     }
 }
@@ -446,20 +414,14 @@ void gba_write32(GBA *g, uint32_t addr, uint32_t v) {
     switch (addr >> 24) {
     case 0x02: wr32_al(g->ewram + (addr & 0x3FFFC), v); return;
     case 0x03: wr32_al(g->iwram + (addr & 0x7FFC), v); return;
-    case 0x04: io_write16(g, addr, v & 0xFFFF); io_write16(g, addr + 2, v >> 16); return;
+    case 0x04: io_write16(g, addr & ~3u, v & 0xFFFF); io_write16(g, (addr & ~3u) + 2, v >> 16); return;
     case 0x05: wr32_al(g->pal + (addr & 0x3FC), v); return;
-    case 0x06: wr32_al(g->vram + (addr & 0x17FFC), v); return;
+    case 0x06: { uint32_t o = addr & 0x1FFFC; if (o >= 0x18000) o -= 0x8000; wr32_al(g->vram + o, v); return; }
     case 0x07: wr32_al(g->oam + (addr & 0x3FC), v); return;
-    case 0x0D: return;   /* EEPROM writes go through DMA; the rest is ROM */
-    case 0x0E:
-        if (flash_in_use(g)) {
-            flash_write(g, addr, (uint8_t)v);
-            flash_write(g, addr + 1, (uint8_t)(v >> 8));
-            flash_write(g, addr + 2, (uint8_t)(v >> 16));
-            flash_write(g, addr + 3, (uint8_t)(v >> 24));
-            return;
-        }
-        wr32_al(g->save_mem + (addr & 0x1FFFC), v); return;
+    case 0x0D: return;   /* EEPROM solo por DMA de 16 bit; el resto es ROM */
+    case 0x0E: case 0x0F:
+        /* bus de 8 bit: se escribe un solo byte, el que corresponde a la linea de direccion */
+        backup_write8(g, addr, (uint8_t)(v >> ((addr & 3) * 8))); return;
     default: return;   /* ROM write-protected */
     }
 }
@@ -470,51 +432,80 @@ void gba_write16(GBA *g, uint32_t addr, uint16_t v) {
     case 0x03: wr16_al(g->iwram + (addr & 0x7FFE), v); return;
     case 0x04: io_write16(g, addr, v); return;
     case 0x05: wr16_al(g->pal + (addr & 0x3FE), v); return;
-    case 0x06: wr16_al(g->vram + (addr & 0x17FFE), v); return;
+    case 0x06: { uint32_t o = addr & 0x1FFFE; if (o >= 0x18000) o -= 0x8000; wr16_al(g->vram + o, v); return; }
     case 0x07: wr16_al(g->oam + (addr & 0x3FE), v); return;
     case 0x0D:
-        if (eeprom_addr_in_range(g, addr)) {   /* one protocol bit per halfword */
+        if (eeprom_addr_in_range(g, addr)) {   /* un bit de protocolo por halfword */
             eeprom_write_bit(g, (uint8_t)(v & 1));
             if (g->eeprom.dirty) { g->save_dirty = true; g->eeprom.dirty = false; }
         }
         return;
-    case 0x0E:
-        if (flash_in_use(g)) {
-            flash_write(g, addr, (uint8_t)v);
-            flash_write(g, addr + 1, (uint8_t)(v >> 8));
-            return;
-        }
-        wr16_al(g->save_mem + (addr & 0x1FFFE), v); return;
+    case 0x0E: case 0x0F:
+        backup_write8(g, addr, (uint8_t)(v >> ((addr & 1) * 8))); return;
     default: return;
     }
+}
+
+/* Escritura de 8 bit en registros de I/O. Los registros de 16 bit se componen con
+   lectura-modificacion-escritura, salvo los que tienen efectos al escribir. */
+static void io_write8(GBA *g, uint32_t addr, uint8_t v) {
+    uint32_t reg = addr & 0x3FF;
+
+    if (reg == 0x300) { g->io[0x300] = v; return; }                 /* POSTFLG */
+    if (reg == 0x301) {                                             /* HALTCNT */
+        g->io[0x301] = v;
+        g->cst.halt = true;
+        if (v & 0x80) g->cst.stopped = true;
+        return;
+    }
+    if (reg >= 0x0A0 && reg <= 0x0A7) {                             /* FIFO A/B */
+        apu_fifo_write(g, reg >= 0x0A4, &v, 1);
+        return;
+    }
+    if (reg == 0x202 || reg == 0x203) {                             /* IF: write-1-to-clear, por byte */
+        g->if_reg &= (uint16_t)~((uint16_t)v << ((reg & 1) * 8));
+        return;
+    }
+    if (reg >= 0x100 && reg <= 0x10F && !(reg & 2)) {               /* TMnCNT_L: recarga, no contador */
+        Timer *tm = &g->timer[(reg - 0x100) >> 2];
+        if (reg & 1) tm->reload = (uint16_t)((tm->reload & 0x00FF) | (v << 8));
+        else         tm->reload = (uint16_t)((tm->reload & 0xFF00) | v);
+        return;
+    }
+    if (reg >= 0x0B0 && reg <= 0x0DF) {                             /* DMA: SAD/DAD/CNT_L son solo escritura */
+        int ch = (int)((reg - 0x0B0) / 12);
+        uint32_t off = (reg - 0x0B0) % 12;
+        DmaChan *d = &g->dma[ch];
+        if (off < 4)      { uint32_t s = off * 8;       d->src_latch = (d->src_latch & ~(0xFFu << s)) | ((uint32_t)v << s); return; }
+        else if (off < 8) { uint32_t s = (off - 4) * 8; d->dst_latch = (d->dst_latch & ~(0xFFu << s)) | ((uint32_t)v << s); return; }
+        else if (off < 10){ uint32_t s = (off - 8) * 8; d->count = (d->count & ~(0xFFu << s)) | ((uint32_t)v << s); return; }
+        /* CNT_H: lectura-modificacion-escritura normal */
+    }
+    uint16_t cur = io_read16(g, reg & ~1u);
+    if (reg & 1) cur = (uint16_t)((cur & 0x00FF) | (v << 8));
+    else         cur = (uint16_t)((cur & 0xFF00) | v);
+    io_write16(g, reg & ~1u, cur);
 }
 
 void gba_write8(GBA *g, uint32_t addr, uint8_t v) {
     switch (addr >> 24) {
     case 0x02: g->ewram[addr & 0x3FFFF] = v; return;
     case 0x03: g->iwram[addr & 0x7FFF] = v; return;
-    case 0x04: {
-                 /* HALTCNT (0x04000301). The BIOS Halt/IntrWait loops write
-                    it to suspend the CPU until an IRQ arrives; without it the
-                    BIOS never reaches the cartridge. Mask off the whole
-                    region nibble, not 0x0FFFFFFF, or the compare never hits. */
-                 if ((addr & 0x00FFFFFF) == 0x000301) {
-                     g->io[0x301] = v;
-                     g->cst.halt = true;
-                     if (v == 0x80) g->cst.stopped = true;
-                     return;
-                 }
-                 uint16_t cur = io_read16(g, addr & ~1u);
-                 if (addr & 1) cur = (uint16_t)((cur & 0x00FF) | (v << 8));
-                 else cur = (uint16_t)((cur & 0xFF00) | v);
-                 io_write16(g, addr & ~1u, cur); return; }
-    case 0x05: g->pal[addr & 0x3FF] = v; return;
-    case 0x06: g->vram[addr & 0x17FFF] = v; return;
-    case 0x07: g->oam[addr & 0x3FF] = v; return;
+    case 0x04: io_write8(g, addr, v); return;
+    case 0x05:
+        /* GBATEK: un byte escrito en la paleta se duplica en ambas mitades del halfword */
+        g->pal[addr & 0x3FE] = v; g->pal[(addr & 0x3FE) | 1] = v; return;
+    case 0x06: {
+        uint32_t o = addr & 0x1FFFF; if (o >= 0x18000) o -= 0x8000;
+        /* VRAM: en el area de BG (hasta 0x10000 en modos 0-2, 0x14000 en 3-5) el byte se
+           duplica; en el area de OBJ la escritura de 8 bit se ignora. */
+        uint32_t bg_end = (g->ppu.dispcnt & 7) >= 3 ? 0x14000u : 0x10000u;
+        if (o < bg_end) { g->vram[o & ~1u] = v; g->vram[o | 1u] = v; }
+        return;
+    }
+    case 0x07: return;                       /* OAM: escrituras de 8 bit ignoradas */
     case 0x0D: return;
-    case 0x0E:
-        if (flash_in_use(g)) { flash_write(g, addr, v); return; }
-        g->save_mem[addr & 0x1FFFF] = v; return;
+    case 0x0E: case 0x0F: backup_write8(g, addr, v); return;
     default: return;
     }
 }
