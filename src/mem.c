@@ -392,7 +392,10 @@ uint32_t gba_read32(GBA *g, uint32_t addr) {
         uint32_t off = (addr - 0x08000000) & (g->rom_mask & ~3u);
         return off < g->rom_size ? rd32_al(g->rom + off) : 0;
     }
-    case 0x0E: return rd32_al(g->save_mem + (addr & 0x1FFFC));
+    case 0x0E: {
+        if (flash_in_use(g)) return rd32_al(g->save_mem + (g->flash.bank * 0x10000) + (addr & 0xFFFC));
+        return rd32_al(g->save_mem + (addr & 0x1FFFC));
+    }
     default: return 0;
     }
 }
@@ -411,7 +414,10 @@ uint16_t gba_read16(GBA *g, uint32_t addr) {
         uint32_t off = (addr - 0x08000000) & (g->rom_mask & ~1u);
         return off < g->rom_size ? rd16_al(g->rom + off) : 0;
     }
-    case 0x0E: return rd16_al(g->save_mem + (addr & 0x1FFFE));
+    case 0x0E: {
+        if (flash_in_use(g)) return (uint16_t)(flash_read(g, addr) | (flash_read(g, addr + 1) << 8));
+        return rd16_al(g->save_mem + (addr & 0x1FFFE));
+    }
     default: return 0;
     }
 }
@@ -431,7 +437,7 @@ uint8_t gba_read8(GBA *g, uint32_t addr) {
         uint32_t off = (addr - 0x08000000) & g->rom_mask;
         return off < g->rom_size ? g->rom[off] : 0;
     }
-    case 0x0E: return g->save_mem[addr & 0x1FFFF];
+    case 0x0E: return flash_in_use(g) ? flash_read(g, addr) : g->save_mem[addr & 0x1FFFF];
     default: return 0;
     }
 }
@@ -445,7 +451,15 @@ void gba_write32(GBA *g, uint32_t addr, uint32_t v) {
     case 0x06: wr32_al(g->vram + (addr & 0x17FFC), v); return;
     case 0x07: wr32_al(g->oam + (addr & 0x3FC), v); return;
     case 0x0D: return;   /* EEPROM writes go through DMA; the rest is ROM */
-    case 0x0E: wr32_al(g->save_mem + (addr & 0x1FFFC), v); return;
+    case 0x0E:
+        if (flash_in_use(g)) {
+            flash_write(g, addr, (uint8_t)v);
+            flash_write(g, addr + 1, (uint8_t)(v >> 8));
+            flash_write(g, addr + 2, (uint8_t)(v >> 16));
+            flash_write(g, addr + 3, (uint8_t)(v >> 24));
+            return;
+        }
+        wr32_al(g->save_mem + (addr & 0x1FFFC), v); return;
     default: return;   /* ROM write-protected */
     }
 }
@@ -464,7 +478,13 @@ void gba_write16(GBA *g, uint32_t addr, uint16_t v) {
             if (g->eeprom.dirty) { g->save_dirty = true; g->eeprom.dirty = false; }
         }
         return;
-    case 0x0E: wr16_al(g->save_mem + (addr & 0x1FFFE), v); return;
+    case 0x0E:
+        if (flash_in_use(g)) {
+            flash_write(g, addr, (uint8_t)v);
+            flash_write(g, addr + 1, (uint8_t)(v >> 8));
+            return;
+        }
+        wr16_al(g->save_mem + (addr & 0x1FFFE), v); return;
     default: return;
     }
 }
@@ -492,7 +512,9 @@ void gba_write8(GBA *g, uint32_t addr, uint8_t v) {
     case 0x06: g->vram[addr & 0x17FFF] = v; return;
     case 0x07: g->oam[addr & 0x3FF] = v; return;
     case 0x0D: return;
-    case 0x0E: g->save_mem[addr & 0x1FFFF] = v; return;
+    case 0x0E:
+        if (flash_in_use(g)) { flash_write(g, addr, v); return; }
+        g->save_mem[addr & 0x1FFFF] = v; return;
     default: return;
     }
 }

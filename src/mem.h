@@ -28,6 +28,12 @@ void eeprom_dma_begin(GBA *g, uint32_t count);
 void eeprom_write_bit(GBA *g, uint8_t bit);
 uint8_t eeprom_read_bit(GBA *g);
 
+/* parallel flash backup (0x0E000000 window) */
+void flash_init(GBA *g);
+bool flash_in_use(const GBA *g);
+uint8_t flash_read(GBA *g, uint32_t addr);
+void flash_write(GBA *g, uint32_t addr, uint8_t val);
+
 /* battery save file (path is the ROM path with a .sav suffix) */
 bool gba_save_battery(GBA *g, const char *rom_path);
 void gba_load_battery(GBA *g, const char *rom_path);

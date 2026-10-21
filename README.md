@@ -142,6 +142,18 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.7** — the BIOS decompression SWIs are implemented (`0x10`
+  BitUnPack, `0x11/0x12` LZ77 / LZ77UnCompVram, `0x13` Huffman,
+  `0x14/0x15` RLE, `0x16/0x17/0x18` difference filters). They were the
+  last missing piece of the boot path: Pokemon Emerald loads its whole
+  graphics set through `LZ77UnCompVram` (`SWI 0x12`) on the frame after
+  the BIOS hands off, and with no handler the transfer wrote nothing, so
+  VRAM stayed empty and the screen went black right after the logo. With
+  the decompressors in place the intro runs: DISPCNT and the framebuffer
+  now track a reference emulator through the whole boot animation
+  instead of freezing on a blank screen. Also lands the parallel flash
+  backup chip (JEDEC autoselect, program, sector/chip erase, bank
+  switch) that Emerald probes at startup.
 - **v1.4.6** — the black screen after the logo is fixed. The BIOS
   `Halt` / `IntrWait` helper suspends the CPU by writing HALTCNT at
   `0x04000301`, but the address test used the wrong mask

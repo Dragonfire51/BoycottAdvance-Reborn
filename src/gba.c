@@ -157,6 +157,7 @@ bool gba_load_rom(GBA *g, const char *path) {
     memset(g->save_mem, 0xFF, sizeof(g->save_mem));
     g->save_dirty = false;
     eeprom_init(g);
+    flash_init(g);
     gba_load_battery(g, path);
     return true;
 }
@@ -200,6 +201,7 @@ void gba_set_savetype(GBA *g, int type) {
                    type == SAVE_FLASH64  ? 0x10000 :
                    type == SAVE_SRAM     ? 0x8000  :
                    type == SAVE_EEPROM   ? EEPROM_SIZE : 0;
+    flash_init(g);
 }
 
 /* update keypad values */

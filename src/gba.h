@@ -13,7 +13,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define GBA_VERSION  "v1.4.6"
+#define GBA_VERSION  "v1.4.7"
 #define GBA_NAME     "BoycottAdvance Reborn"
 #define GBA_TITLE    GBA_NAME " " GBA_VERSION
 
@@ -72,6 +72,24 @@ typedef struct {
     uint16_t tx_count;
     bool     dirty;                 /* a write completed; save to disk */
 } Eeprom;
+
+/* Flash command state machine (SST 39VF512 / Macronix MX29L010 protocol).
+   Pokemon Emerald probes the chip with the JEDEC autoselect sequence and
+   refuses to initialise its save block unless a valid device ID comes back,
+   which is why the raw-array save window is not enough. */
+enum {
+    FLASH_READY, FLASH_CMD1, FLASH_CMD2, FLASH_AUTOSELECT,
+    FLASH_PROGRAM, FLASH_ERASE
+};
+
+typedef struct {
+    int      state;
+    int      command;               /* latched command (FLASH_CMD_*) */
+    int      bank;                  /* 1M parts: two 64K banks */
+    int      settle;                /* reads left reporting data# polling */
+    uint8_t  manufacturer;
+    uint8_t  device;
+} Flash;
 
 /* ---- Interrupt flags --------------------------------------------------- */
 #define IF_VBLANK 0x0001
@@ -238,6 +256,7 @@ typedef struct GBA {
     uint32_t save_size;
     int      save_type;           /* SAVE_* */
     Eeprom   eeprom;              /* serial EEPROM (save_type == SAVE_EEPROM) */
+    Flash    flash;               /* parallel flash (SAVE_FLASH64/128) */
     bool     save_dirty;          /* battery save needs flushing to disk */
 
     uint8_t  io[0x400];           /* I/O registers window */
