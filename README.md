@@ -142,6 +142,23 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.8** — fidelity pass over a clean re-implementation of the
+  GBA model, checked against GBATEK. The PPU register map for the
+  affine/rotation, window and blend registers is corrected, BG2/BG3
+  internal coordinates are kept at 28 bits, and DISPSTAT reports a
+  real HBlank flag. The APU was rewritten around the GBATEK register
+  layout: PSG channels run on exact `16*(2048-f)` / `8*(2048-f)`
+  clock dividers, the LFSR uses the `32`/`64*r << s` term, the FIFOs
+  are clocked by timer overflows, and the master volume now applies
+  SOUNDCNT_L. The BIOS `IntrWait` (SWI 0x04) implements the real
+  `clear`/`irq` semantics, `Div` (SWI 0x06) no longer has undefined
+  behaviour on `0x80000000 / -1` or `x / 0`, ARM and Thumb multiplies
+  only update N and Z (leaving C/V intact), and `MSR SPSR` is blocked
+  in USR/SYS mode where no SPSR exists. Save/state and the parallel
+  flash chip (byte program to the real destination, immediate bank
+  switch) are hardened, and the Windows binaries remain native (no
+  SDL2). Verified with Pokemon Emerald in fastboot and real-BIOS boot:
+  the display comes up (DISPCNT `1F40`) and the frame loop is stable.
 - **v1.4.7** — the BIOS decompression SWIs are implemented (`0x10`
   BitUnPack, `0x11/0x12` LZ77 / LZ77UnCompVram, `0x13` Huffman,
   `0x14/0x15` RLE, `0x16/0x17/0x18` difference filters). They were the
