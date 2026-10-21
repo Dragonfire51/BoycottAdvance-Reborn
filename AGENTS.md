@@ -16,6 +16,60 @@ Nota de acceso: el sitio devuelve **403** a `curl`/`wget` directos (bloqueo de
 user-agent). Descargarlo con la herramienta de extracción web (Tavily) o desde un
 navegador; no usar `curl` para leerlo.
 
+## Bootstrap del entorno (antes de tocar codigo)
+
+Claude Code arranca sin memoria de sesiones anteriores: el unico contexto
+persistente es este archivo. Leerlo entero al empezar.
+
+**Referencia mGBA (OBLIGATORIA)**: ademas de GBATEK, el codigo fuente de mGBA es
+la referencia de comportamiento para bugs de emulacion. Clonarlo una vez:
+
+```bash
+git clone --depth 1 https://github.com/mgba-emu/mgba /workspace/mgba
+```
+
+Metodo de depuracion probado: compilar el core de mGBA y el nuestro con el mismo
+ROM e instrumentar ambos para comparar estado **frame a frame** (DISPCNT, VRAM,
+paleta, OAM, framebuffer, histograma de SWI). Asi se localizo la causa real de la
+pantalla negra de Esmeralda (SWI de descompresion del BIOS sin implementar). No
+basta con leer mGBA: hay que differ el estado observable.
+
+**Dependencias** (una sola vez por entorno):
+
+```bash
+# Nucleo + build Linux (SDL2)
+sudo apt-get update && sudo apt-get install -y build-essential pkg-config libsdl2-dev
+
+# Cross-compile Windows nativo (GDI/D3D9/WinMM, sin SDL2)
+sudo apt-get install -y gcc-mingw-w64-i686 gcc-mingw-w64-x86-64
+```
+
+**Compilar los tres targets** (todos deben pasar sin errores antes de commitear):
+
+```bash
+make                              # Linux (usa SDL2)
+make -f Makefile.win32            # Windows x86_64 (PE32+, sin SDL2)
+make -f Makefile.win32 ARCH=i686  # Windows x86   (PE32,  sin SDL2)
+```
+
+Verificar que el binario Windows sea nativo (sin SDL2) y de subsistema GUI:
+
+```bash
+x86_64-w64-mingw32-objdump -p boycottadvance-reborn-x86_64.exe | grep -i "DLL Name"
+# esperado: KERNEL32, USER32, GDI32, SHELL32, d3d9, winmm, comdlg32, msvcrt
+```
+
+**Trampa de edicion**: las recetas de `Makefile` y `Makefile.win32` usan
+tabuladores reales. Si un editor los convierte a espacios, `make` falla con
+`missing separator`. No reformatear esos archivos.
+
+**Verificacion sin pantalla**: en este entorno no hay display ni hardware, asi que
+los bugs de video/sonido se verifican por instrumentacion (comparar registros y
+memoria contra mGBA / la referencia), no "a ojo". Aportar numeros antes/despues.
+
+**Regla de la rama Win32**: no introducir SDL2. La GUI es nativa (ventana GDI /
+Direct3D 9, audio WinMM/DirectSound, menus Win32 completos).
+
 ## Estado (v1.4.7; tags `Latest` = `v1.4.7`; version en src/gba.h)
 
 - **RELEASE v1.4.7 (publicado)**: fix del **pantalla negra tras el logo** (bug 1) — la causa real. En v1.4.6 se creyo resuelto por el fix de HALTCNT, pero al medir la referencia (`/workspace/h/refcore`, mGBA) contra nuestro core, el BIOS **si** entregaba el control pero el juego se quedaba con `DISPCNT=0000` para siempre: **faltaban las SWI de descompresion del BIOS**. Pokemon Emerald descomprime todos sus graficos con `SWI 0x12` (LZ77UnCompVram) en el frame siguiente al handoff; sin handler la transferencia no escribia nada, VRAM quedaba vacia y la pantalla negra. Implementadas en `src/bios.c`: `swi_bitunpack` (0x10), `swi_lz77` (0x11/0x12, variante VRAM con writes de 16 bits y step=2), `swi_huffuncomp` (0x13), `swi_rluncomp` (0x14/0x15), `swi_diffunfilter` (0x16/0x17/0x18) + `swi_read_len` (longitud de 3 bytes LE) y retorno de la longitud descomprimida en `r0`. Verificado con `ourstats` contra `refdisp`: antes del fix `DISPCNT=0000` fijo a f4000+; despues el intro corre y la secuencia DISPCNT (`0000 -> 0080 -> 1002 -> 9802 -> 0140 -> 1F40`) y el framebuffer acompanan a la referencia (f1900 nz=251, f2000+ nz=4800, f3000 nz=38400). Incluye ademas el chip de **flash paralelo** (`src/flash.c`, JEDEC autoselect/program/sector-erase/bank-switch) que Emerald sondea al iniciar el guardado, y su enganche en `mem.c`/`gba.c`/`Makefile`/`Makefile.win32`. Proceso de publicacion: bump `GBA_VERSION` + README + dialogos de historial -> commit -> push `main` -> `git tag -a v1.4.7` + push (dispara `.github/workflows/build-binaries.yml`) -> `git tag -f Latest` + push -f y reemplazar los assets del release `Latest` via API.
