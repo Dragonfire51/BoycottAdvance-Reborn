@@ -62,6 +62,12 @@ jobs:
 
   macos:
     runs-on: macos-latest
+    # Homebrew on the macOS runner is slow enough to hit the default 6h
+    # ceiling only in pathological cases, but a hung `brew install` used to
+    # burn 15 minutes and then fail the whole run. Cap it so a stuck job
+    # fails fast and the release below can still publish the other builds.
+    timeout-minutes: 20
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Install SDL2
