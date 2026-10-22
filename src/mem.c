@@ -213,6 +213,7 @@ void io_write16(GBA *g, uint32_t addr, uint16_t v) {
         g->io[0x300] = v & 0xFF;
         g->io[0x301] = v >> 8;
         g->cst.halt = true;
+        g->cst.wait_mask = 0;   /* direct HALTCNT halt wakes on any IRQ */
         if (v & 0x8000) g->cst.stopped = true;
         return;
     default:
@@ -259,6 +260,11 @@ void dma_run(GBA *g, int ch) {
     }
     d->src = src;
     d->dst = dst;
+    /* GBATEK (DMA Transfers): 1 cycle per 32-bit unit, 2 per 16-bit unit.
+       Without this, DMA-mediated copying (ROM->EWRAM, VRAM fills) completes
+       in zero CPU cycles and games whose loaders rely on DMA finish in a
+       handful of frames instead of real time. */
+    gba_add_cycles(g, unit == 4 ? count : count * 2);
     if (d->irq_enable) g->if_reg |= (uint16_t)(IF_DMA0 << ch);
 
     if (d->repeat && d->timing != 0) {
@@ -465,6 +471,7 @@ static void io_write8(GBA *g, uint32_t addr, uint8_t v) {
     if (reg == 0x301) {                                             /* HALTCNT */
         g->io[0x301] = v;
         g->cst.halt = true;
+        g->cst.wait_mask = 0;
         if (v & 0x80) g->cst.stopped = true;
         return;
     }

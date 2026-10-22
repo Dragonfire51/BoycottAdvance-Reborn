@@ -142,6 +142,21 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.11** — games no longer run too fast, and the BIOS wait
+  interrupts wake on the right event. The BIOS SWIs (decompression,
+  `CpuSet`, `Div`) and the DMA channels charged no CPU cycles, so loaders
+  that copy large amounts of data finished almost instantly: Medabots AX
+  Rokusho entered gameplay on emulated frame 18 while mGBA needs 979.
+  SWI cycle costs and per-transfer DMA cycles are now accounted as GBATEK
+  describes ("CpuSet", "Div", "DMA Transfers"), and Medabots loading now
+  reaches gameplay on frame 973 with frames 100-899 identical to mGBA.
+  Pokemon Emerald follows the reference (576/600 identical DISPCNT
+  frames, steady-state 100%). `IntrWait`/`VBlankIntrWait` now sleep
+  until only the awaited interrupt flag is raised: an unrelated IRQ no
+  longer re-enters the BIOS wait loop every scanline, keeping the
+  perceived clock in step with hardware. Verified with the fleroviux
+  gbatests CPU/PPU suite (99.6-100% identical VRAM vs mGBA).
+
 - **v1.4.10** — graphics fix for Pokemon Emerald: vertical white/green
   bands over the scene. The BIOS decompression SWIs wrote one halfword
   per output byte in their VRAM variants and stepped the destination by

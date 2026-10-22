@@ -77,6 +77,53 @@ Direct3D 9, audio WinMM/DirectSound, menus Win32 completos).
 - GitHub ya marca `v1.4.10` como *latest* del repo (el problema de v1.4.1 con el release viejo marcado como latest queda resuelto).
 - Contenido: fix de descompresion a VRAM (barras verticales de Esmeralda) + los fixes de CPU ya en el arbol (FIQ bancado r8-r12, `user_reg()` para LDM/STM con bit S, MUL{S}/MULS solo N/Z, retorno por SPSR, MSR SPSR bloqueado en USR) + escalado con aspecto 3:2.
 - **OJO al versionar**: v1.4.9 ya estaba publicado (keypad + clamp de ventanas), asi que este release es v1.4.10. Antes de hacer bump, comprobar `git tag` y `/releases`: si el tag existe, NO reescribirlo.
+## FIX velocidad Medabots + sleep selectivo (SESION 2026-10-22) — "Medabots demasiado rapido"
+
+**Sintoma reportado por el usuario**: Medabots AX Rokusho entraba al gameplay en ~f18
+(decenas de veces mas rapido que mGBA, que llega a f979).
+
+**Causa raiz**: el nucleo **no cobraba ciclos de CPU por las SWI de BIOS ni por las DMA**.
+Las SWI de descompresion ("SWI 0x12" de Medabots, que copia ~50KB a VRAM/EWRAM) terminaban en
+casi 0 ciclos y las **DMA** (ROM->EWRAM de las cabeceras, fills de VRAM) escribian al instante
+sin avanzar `g->cycle`. Con todo el arranque "gratis", el juego pasaba 18 frames emulados y
+entraba al gameplay.
+
+**Arreglos** (GBATEK como referencia):
+- `src/bios.c`: costes de ciclos por SWI — `CpuSet` (30+12*n), `Div` (4+13*loops+7), LZ77/RL/Huff
+  (20+6*total), `DiffUnFilter` (16+8*total). Nueva llamada `gba_add_cycles()` (src/arm.c) para
+  cargar ciclos desde el HLE del BIOS sin acoplarse a `arm_execute`.
+- `src/mem.c` `dma_run()`: cobra `count` ciclos (unidad 32-bit) o `count*2` (16-bit), GBATEK
+  "DMA Transfers".
+- `src/gba.h`/`src/arm.c`/`src/gba.c`/`src/mem.c`/`src/bios.c`: reemplazo de `bool intr_wait`
+  por `uint16_t cst.wait_mask`. **Solo la SWI que se espera despierta a la CPU**: `swi_intr_wait`
+  (0x04) pone `wait_mask=r1&0x3FFF`; `swi_vblank_intr_wait` (0x05) `wait_mask=IF_VBLANK`;
+  `Halt`/`Stop`/HALTCNT directo ponen `wait_mask=0` (cualquier IRQ despierta, GBATEK). En
+  `arm_execute()`, una CPU halteada con `wait_mask!=0` solo despierta cuando el flag esperado
+  llega; si no, duerme el resto del frame. Antes, cualquier IRQ (p.ej. timer/serial) hacia
+  reintentar el bucle del BIOS una vez por scanline y el reloj percibido se destemplaba.
+- `tools/headharness.c`/`tools/mgbaharness.c`: comparacion frame a frame de DISPCNT, dumps de
+  VRAM/paleta/OAM y render por capas (OBJ-only/BG-only) contra mGBA.
+
+**Verificacion (differ contra mGBA, mismos ROMs)**:
+- Medabots: transiciones DISPCNT `mgba [(0,0000),(18,0140),(596,3140),(976,3040),(979,3F40)]`
+  vs `nuestro [(0,0000),(15,0140),(591,3140),(971,3040),(973,3F40)]` — el arranque ya entra al
+  gameplay en f973 (antes f18), frames 100-899 **100% identicos**, 0-99 al 97% y 900-999 al 92%.
+  El "demasiado rapido" queda resuelto.
+- Emerald: `mgba [0080@0,0140@12,1F40@207]` vs `nuestro [0080@0,0140@11,1F40@186]`; frames
+  300-599 **100% identicos** (576/600 globales).
+- gbatests (`/workspace/gbatests`, fleroviux): arm/bios/thumb/nes/unsafe/save al 99.6% y
+  memory/ppu al 100% de VRAM identica a mGBA — sin regresiones de CPU/SWI/DMA.
+- Los tres targets compilan limpios (Linux `make`, win64/win32 `Makefile.win32`, subsistema GUI,
+  sin SDL2). OJO: `make -f Makefile.win32 clean` borra ambos .exe y los `src/*.o` estan
+  compartidos con make de Linux — alternar builds sin `clean` produce objetos contaminados
+  (errores de link con SDL en win32); siempre `clean` entre targets. Nota de entorno: este
+  sandbox pierde /tmp, los mingw-w64 y pkg-config/libsdl2-dev entre sesiones; reinstalar con
+  apt si `make`/`Makefile.win32` fallan por toolchain ausente, y para el harness mGBA enlazar
+  `-L/usr/lib/chromium -lGLESv2 -lEGL` con symlinks versionados `libGLESv2.so.2`/`libEGL.so.1`
+  (libmgba.so referencia GLES2 aunque solo usemos el core) + `--unresolved-symbols=ignore-in-shared-libs`.
+- La causa percibida "Medabots graficos corruptos" (BG regs leyendo 0000) era un falso positivo
+  del harness (leia `g->io[0x008]` en vez de `g->ppu.bgcnt[]`); los registros BG/scroll/rot
+  coinciden ya con mGBA y el renderer por capas pinta contenido de ambos tipos.
 
 ## FIX decompresion a VRAM (SESION 2026-10-22) — barras verticales en Esmeralda
 

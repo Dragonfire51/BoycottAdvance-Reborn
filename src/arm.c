@@ -35,6 +35,7 @@ static inline void set_pc(GBA *g, uint32_t v) { g->cpu.r[15] = v & ~1u; }
 static inline uint32_t get_cpsr(GBA *g) { return g->cpu.cpsr; }
 static inline void set_cpsr(GBA *g, uint32_t v) { g->cpu.cpsr = v; }
 static inline void add_cycles(GBA *g, uint32_t n) { g->cycle += n; }
+void gba_add_cycles(GBA *g, uint32_t n) { add_cycles(g, n); }
 
 static inline uint32_t rotr(uint32_t v, uint32_t s) {
     s &= 31;
@@ -813,6 +814,23 @@ void thumb_exec(GBA *g) {
 void arm_execute(GBA *g, uint32_t max_cycles) {
     uint32_t start = g->cycle;
     while (g->cycle - start < max_cycles) {
+        /* SWI 04h/05h (IntrWait/VBlankIntrWait): only the awaited IRQ releases
+           the halt.  Unrelated IRQs are ignored by the BIOS wait loop, so the
+           game handler must not run while we are waiting (GBATEK SWI 04h/05h). */
+        if (g->cst.halt && g->cst.wait_mask) {
+            if (g->if_reg & g->cst.wait_mask) {
+                uint16_t done = g->cst.wait_mask;
+                g->cst.wait_mask = 0;
+                g->cst.halt = false;
+                /* Leave the awaited flag set: the game's own IRQ/VBlank
+                   handler (running after the SWI returns) clears it. */
+                (void)done;
+            } else {
+                g->cycle = start + max_cycles;      /* duerme hasta la IRQ esperada */
+                break;
+            }
+        }
+
         /* Una CPU en halt despierta en cuanto hay una IRQ habilitada (IE & IF),
            sin importar IME ni el bit I del CPSR; IME/I solo gobiernan el salto al vector. */
         if (g->cst.halt && (g->if_reg & g->ie & 0x3FFF)) g->cst.halt = false;

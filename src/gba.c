@@ -52,6 +52,7 @@ void gba_reset(GBA *g) {
     g->frame_count = 0;
     g->cst.halt = false;
     g->cst.stopped = false;
+    g->cst.wait_mask = 0;
     g->ime = false;
     g->if_reg = 0;
     g->ie = 0;
@@ -240,7 +241,9 @@ static void run_frame_core(GBA *g) {
         if (line == 159) {
             if (g->ppu.dispstat & 0x0008) g->if_reg |= IF_VBLANK;
             g->frame_count++;
-            if (g->cst.halt) g->cst.halt = false;   /* VBlankIntrWait satisfied */
+            /* VBlankIntrWait satisfied; a wait on another mask is woken by
+               arm_execute when its own flag comes up. */
+            if (g->cst.halt && g->cst.wait_mask == 0) g->cst.halt = false;
             dma_trigger(g, 1);                      /* VBlank-scheduled DMA */
         }
         /* VCount match IRQ */

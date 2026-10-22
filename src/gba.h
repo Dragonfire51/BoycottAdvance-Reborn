@@ -16,7 +16,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define GBA_VERSION  "v1.4.10"
+#define GBA_VERSION  "v1.4.11"
 #define GBA_NAME     "BoycottAdvance Reborn"
 #define GBA_TITLE    GBA_NAME " " GBA_VERSION
 
@@ -123,7 +123,7 @@ typedef struct {
     bool irq_pending;
     bool halt;
     bool stopped;
-    bool intr_wait;          /* SWI 04h/05h en curso (se re-ejecuta hasta cumplirse) */
+    uint16_t wait_mask;      /* IRQs awaited by SWI 04h/05h; 0 = any IRQ wakes */
 } CpuState;
 
 /* ---- Timers (GBATEK: TMxCNT_L = reload/counter, TMxCNT_H = control) ------ */
@@ -328,6 +328,8 @@ void apu_close(void);
 void apu_reset(GBA *g);
 void apu_step(GBA *g, uint32_t cycles);                 /* genera muestras al ring */
 void apu_mix(GBA *g, int16_t *stream, int nframes);     /* callback de audio */
+int  apu_available(void);                              /* muestras listas en el ring */
+int  apu_drain(int16_t *stream, int maxframes);          /* vacia el ring (tests) */
 void apu_fifo_write(GBA *g, int ch, const uint8_t *bytes, int nbytes);
 void apu_timer_overflow(GBA *g, int timer, uint32_t n);
 uint16_t apu_read_reg(GBA *g, uint32_t reg);

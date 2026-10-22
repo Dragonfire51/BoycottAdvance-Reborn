@@ -1,0 +1,143 @@
+/* Headless harness: load a ROM, run N frames, report CPU/ppu/apu state and
+ * optionally dump VRAM/palette/OAM/screen to a file for pixel comparison. */
+#include "gba.h"
+#include "arm.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(int argc, char **argv) {
+    if (argc < 4) {
+        fprintf(stderr, "usage: %s <rom> <frames> <cmd> [arg]\n", argv[0]);
+        return 2;
+    }
+    const char *rom = argv[1];
+    int nframes = atoi(argv[2]);
+    const char *cmd = argv[3];
+
+    GBA *g = calloc(1, sizeof(GBA));
+    if (!gba_load_rom(g, rom)) { fprintf(stderr, "load fail\n"); return 1; }
+    gba_reset(g);
+
+    for (int f = 0; f < nframes; f++) {
+        gba_run_frame(g);
+        if (f < 4000) printf("f%d %04X\n", f, g->ppu.dispcnt);
+    }
+
+    printf("frame_count=%d cycle=%u cpu_pc=%08X cpsr=%08X mode=%d thumb=%d\n",
+           (int)g->frame_count, (unsigned)g->cycle, g->cpu.r[15], g->cpu.cpsr,
+           g->cpu.cpsr & 0x1F, (g->cpu.cpsr >> 5) & 1);
+    printf("dispcnt=%04X dispstat=%04X vcount=%u if=%04X ie=%04X ime=%d key=%04X\n",
+           g->ppu.dispcnt, g->ppu.dispstat, (unsigned)g->ppu.vcount,
+           g->if_reg, g->ie, g->ime, g->key_input);
+    {
+        static const uint32_t offs[8] = {0x008,0x00A,0x00C,0x00E,0x010,0x012,0x014,0x016};
+        printf("bgcnt:");
+        for (int i = 0; i < 4; i++) printf(" bg%d=%04X", i, g->ppu.bgcnt[i]);
+        printf("\n");
+        printf("scroll:");
+        for (int i = 0; i < 4; i++) printf(" bg%d=%04X/%04X", i, g->ppu.bghofs[i], g->ppu.bgvofs[i]);
+        printf("\n");
+        printf("rot:");
+        for (int i = 0; i < 2; i++) printf(" bg%d: pa=%04X pb=%04X pc=%04X pd=%04X xy=%08X/%08X",
+            2+i, (uint16_t)g->ppu.pa[i], (uint16_t)g->ppu.pb[i],
+            (uint16_t)g->ppu.pc[i], (uint16_t)g->ppu.pd[i],
+            (unsigned)g->ppu.refx[i], (unsigned)g->ppu.refy[i]);
+        printf("\n");
+        printf("win/bld: winh=%04X/%04X winv=%04X/%04X winin=%04X winout=%04X bldcnt=%04X blda=%04X bldy=%04X\n",
+            g->ppu.winh[0], g->ppu.winh[1], g->ppu.winv[0], g->ppu.winv[1],
+            g->ppu.winin, g->ppu.winout, g->ppu.bldcnt, g->ppu.bldalpha, g->ppu.bldy);
+    }
+    printf("apu: master=%d sample_acc=%llu ring_avail=%d lfsr=%04X\n",
+           g->apu.master, (unsigned long long)g->apu.sample_acc,
+           apu_available(), g->apu.lfsr);
+    printf("timers:");
+    for (int i = 0; i < 4; i++) printf(" t%d=%04X", i, g->io[0x100 + i * 2] | (g->io[0x101 + i * 2] << 8));
+    printf(" dma:");
+    for (int i = 0; i < 4; i++) printf(" d%d=src%08X/dst%08X/cnt%04X/on%d", i,
+           (unsigned)g->dma[i].src, (unsigned)g->dma[i].dst,
+           (unsigned)g->dma[i].count, g->dma[i].enabled);
+    printf("\n");
+
+    if (!strcmp(cmd, "dump")) {
+        /* arg = prefix; write vram.bin, pal.bin, oam.bin, screen.bin */
+        char p[512];
+        snprintf(p, sizeof(p), "%s.vram.bin", argv[4]);
+        FILE *f = fopen(p, "wb"); fwrite(g->vram, 1, sizeof(g->vram), f); fclose(f);
+        snprintf(p, sizeof(p), "%s.pal.bin", argv[4]);
+        f = fopen(p, "wb"); fwrite(g->pal, 1, sizeof(g->pal), f); fclose(f);
+        snprintf(p, sizeof(p), "%s.oam.bin", argv[4]);
+        f = fopen(p, "wb"); fwrite(g->oam, 1, sizeof(g->oam), f); fclose(f);
+        snprintf(p, sizeof(p), "%s.screen.bin", argv[4]);
+        f = fopen(p, "wb"); fwrite(g->ppu.frame, 1, sizeof(g->ppu.frame), f); fclose(f);
+        printf("dumped %s.{vram,pal,oam,screen}.bin\n", argv[4]);
+    } else if (!strcmp(cmd, "audio")) {
+        /* print audio regs / fifo state */
+        printf("audio regs: 60=%04X 62=%04X 64=%04X 68=%04X 6C=%04X 70=%04X 72=%04X 74=%04X 78=%04X 7C=%04X 80=%04X 82=%04X 84=%04X 88=%04X\n",
+               apu_read_reg(g, 0x60), apu_read_reg(g, 0x62), apu_read_reg(g, 0x64),
+               apu_read_reg(g, 0x68), apu_read_reg(g, 0x6C), apu_read_reg(g, 0x70),
+               apu_read_reg(g, 0x72), apu_read_reg(g, 0x74), apu_read_reg(g, 0x78),
+               apu_read_reg(g, 0x7C), apu_read_reg(g, 0x80), apu_read_reg(g, 0x82),
+               apu_read_reg(g, 0x84), apu_read_reg(g, 0x88));
+        printf("fifoA held=%d len=%d head=%d | fifoB held=%d len=%d head=%d\n",
+               g->apu.fifo_held[0], g->apu.fifo_len[0], g->apu.fifo_head[0],
+               g->apu.fifo_held[1], g->apu.fifo_len[1], g->apu.fifo_head[1]);
+        for (int i = 0; i < 4; i++) {
+            ApuCh *c = &g->apu.ch[i];
+            printf("ch%d on=%d vol=%d env_t=%d len=%d pos=%d cc=%llu\n", i, c->on, c->vol,
+                   c->env_t, c->len, c->pos, (unsigned long long)c->cc);
+        }
+    } else if (!strcmp(cmd, "layers")) {
+        /* Render one frame with only OBJ (dispcnt clears BG bits) or only BG.
+           Writes obj.ppm / bg.ppm. */
+        uint16_t dc = g->ppu.dispcnt;
+        ppu_frame_start(g);
+        g->ppu.dispcnt = dc & ~0x0F00;           /* OBJ still on, BG off */
+        for (int yy = 0; yy < SCREEN_H; yy++) ppu_render_line(g, yy);
+        FILE* fo = fopen("/tmp/obj.ppm", "wb"); fprintf(fo, "P6\n240 160\n255\n");
+        for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
+            uint16_t c = g->ppu.frame[i];
+            unsigned char rgb[3] = { ((c & 0x1F) << 3) | (((c & 0x1F) >> 2)),
+                                     (((c >> 5) & 0x1F) << 3) | ((((c >> 5) & 0x1F) >> 2)),
+                                     (((c >> 10) & 0x1F) << 3) | ((((c >> 10) & 0x1F) >> 2)) };
+            fwrite(rgb, 1, 3, fo);
+        }
+        fclose(fo);
+        g->ppu.dispcnt = dc | 0x0F00;            /* BG on, OBJ off */
+        ppu_frame_start(g);
+        for (int yy = 0; yy < SCREEN_H; yy++) ppu_render_line(g, yy);
+        FILE* fb = fopen("/tmp/bg.ppm", "wb"); fprintf(fb, "P6\n240 160\n255\n");
+        for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
+            uint16_t c = g->ppu.frame[i];
+            unsigned char rgb[3] = { ((c & 0x1F) << 3) | (((c & 0x1F) >> 2)),
+                                     (((c >> 5) & 0x1F) << 3) | ((((c >> 5) & 0x1F) >> 2)),
+                                     (((c >> 10) & 0x1F) << 3) | ((((c >> 10) & 0x1F) >> 2)) };
+            fwrite(rgb, 1, 3, fb);
+        }
+        fclose(fb);
+        puts("wrote /tmp/obj.ppm /tmp/bg.ppm");
+    } else if (!strcmp(cmd, "shot")) {
+        /* arg = output .ppm; RGB555 has R in low bits */
+        FILE *f = fopen(argv[4], "wb");
+        fprintf(f, "P6\n240 160\n255\n");
+        for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
+            uint16_t c = g->ppu.frame[i];
+            uint8_t r =  (c      & 0x1F) << 3;
+            uint8_t g2 = ((c >> 5) & 0x1F) << 3;
+            uint8_t b =  ((c >> 10) & 0x1F) << 3;
+            unsigned char rgb[3] = { r | (r >> 5), g2 | (g2 >> 5), b | (b >> 5) };
+            fwrite(rgb, 1, 3, f);
+        }
+        fclose(f);
+        printf("wrote %s\n", argv[4]);
+    } else if (!strcmp(cmd, "raw")) {
+        FILE *f = fopen(argv[4], "w");
+        for (int i = 0; i < 0x400; i++) fprintf(f, "%02X", g->io[i]);
+        fprintf(f, "|");
+        for (int i = 0; i < 0x400; i++) fprintf(f, "%08X", (unsigned)g->ppu.bgx[0] + i); /* placeholder */
+        fclose(f);
+        printf("raw io written\n");
+    }
+    free(g);
+    return 0;
+}

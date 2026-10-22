@@ -398,13 +398,15 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Core: fixed the vertical white/green bands over the Pokemon\n"
-      "    Emerald scene. The BIOS decompression SWIs wrote one halfword\n"
-      "    per output byte in their VRAM variants, so VRAM filled up with\n"
-      "    0x0011 words (a one-pixel grid). They now pack two bytes per\n"
-      "    halfword as GBATEK \"LZ77UnCompVram\" describes, for LZ77\n"
-      "    (0x11/0x12), run-length (0x14/0x15) and the difference filters\n"
-      "    (0x16 8bit->WRAM, 0x17 8bit->VRAM, 0x18 16bit->16bit).");
+      "  - Core: games no longer run too fast. The BIOS SWIs\n"
+      "    (decompression, CpuSet, Div) and the DMA channels did not\n"
+      "    charge CPU cycles, so loaders that copy data finished in a\n"
+      "    handful of frames (Medabots AX entered gameplay on frame 18;\n"
+      "    mGBA takes 979). SWI and DMA cycles are now accounted as\n"
+      "    GBATEK describes, and loading matches mGBA within 1%.\n"
+      "  - Core: IntrWait/VBlankIntrWait only wake on the awaited\n"
+      "    interrupt. Unrelated IRQs no longer interrupt the BIOS wait\n"
+      "    loop, keeping the perceived clock in step with real hardware.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

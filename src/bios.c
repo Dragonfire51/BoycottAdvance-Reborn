@@ -4,6 +4,7 @@
  */
 #include "gba.h"
 #include "mem.h"
+#include "arm.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -108,10 +109,12 @@ static void swi_register_ram_reset(GBA *g) {
 }
 static void swi_halt(GBA *g) {
     g->cst.halt = true;
+    g->cst.wait_mask = 0;       /* plain Halt: any unmasked IRQ wakes */
 }
 static void swi_stop(GBA *g) {
     g->cst.halt = true;
     g->cst.stopped = true;
+    g->cst.wait_mask = 0;
 }
 void swi_intr_wait(GBA *g) {
     /* SWI 0x04: IntrWait(clear, irq).  r0 bit0 = clear flags first,
@@ -122,34 +125,45 @@ void swi_intr_wait(GBA *g) {
     int clear = (int)(g->cpu.r[0] & 1);
     uint32_t mask = g->cpu.r[1] & 0x3FFF;
     if (clear) {
-        g->if_reg &= ~(uint16_t)mask;
-        g->cst.halt = true;
+        g->if_reg &= (uint16_t)~mask;
     } else {
         if (g->if_reg & mask) return;   /* ya hay una IRQ esperada */
-        g->cst.halt = true;
     }
+    /* GBATEK (SWI 04h IntrWait): the CPU sleeps until one of the awaited
+       IRQs is raised. Unlike plain Halt, an unrelated IRQ must NOT wake it:
+       the BIOS loop re-checks the mask and re-halts. The wait_mask reserves
+       this path so only the awaited source releases the halt. */
+    g->cst.wait_mask = (uint16_t)mask;
+    g->cst.halt = true;
 }
 static void swi_vblank_intr_wait(GBA *g) {
-    /* SWI 0x05: VBlankIntrWait. Equivalent to IntrWait(1,1).
-       Halt until the VBlank IRQ condition is met; the frame loop clears
-       halt as soon as IF_VBLANK is raised. */
+    /* SWI 0x05: VBlankIntrWait. Equivalente a IntrWait(1,1): descarta un
+       VBlank ya pendiente y duerme hasta el siguiente. GBATEK SWI 05h. */
+    g->if_reg &= (uint16_t)~IF_VBLANK;
+    g->cst.wait_mask = IF_VBLANK;
     g->cst.halt = true;
 }
 void swi_div32(GBA *g) {
     int32_t a = (int32_t)g->cpu.r[0];
     int32_t b = (int32_t)g->cpu.r[1];
-    if (b == 0) { g->cpu.r[0] = (uint32_t)a; g->cpu.r[1] = (uint32_t)a; g->cpu.r[3] = 0; return; }
-    if (b == -1 && a == INT32_MIN) {
+    uint32_t cycles = 4 + 13 + 7;   /* fallback: one loop */
+    if (b == 0) { g->cpu.r[0] = (uint32_t)a; g->cpu.r[1] = (uint32_t)a; g->cpu.r[3] = 0; }
+    else if (b == -1 && a == INT32_MIN) {
         /* GBATEK: 0x80000000 / -1 yields 0x80000000 with remainder 0
            on ARM7TDMI; the C division would be undefined behaviour. */
         g->cpu.r[0] = (uint32_t)INT32_MIN;
         g->cpu.r[1] = 0;
         g->cpu.r[3] = 0;
-        return;
+    } else {
+        g->cpu.r[0] = (uint32_t)(a / b);
+        g->cpu.r[3] = (uint32_t)(a % b);
+        g->cpu.r[1] = (uint32_t)(a % b);
+        int loops = (b != 0) ? __builtin_clz((uint32_t)(b < 0 ? -b : b)) -
+                              __builtin_clz((uint32_t)(a < 0 ? -a : a)) : 1;
+        if (loops < 1) loops = 1;
+        cycles = 4 + 13 * loops + 7;
     }
-    g->cpu.r[0] = (uint32_t)(a / b);
-    g->cpu.r[3] = (uint32_t)(a % b);
-    g->cpu.r[1] = (uint32_t)(a % b);
+    gba_add_cycles(g, cycles);
 }
 static void swi_div_arm(GBA *g) { swi_div32(g); }
 static void swi_sqrt(GBA *g) {
@@ -181,6 +195,8 @@ static void swi_cpu_set(GBA *g) {
             dst += 2;
         }
     }
+    /* GBATEK (BIOS Functions, CpuSet): 2 cycles per 16-bit word, 1 per 32-bit */
+    gba_add_cycles(g, is32 ? count : count * 2);
 }
 static void swi_cpu_fast_set(GBA *g) {
     uint32_t src = g->cpu.r[0];
@@ -204,6 +220,8 @@ static void swi_cpu_fast_set(GBA *g) {
             dst += 2;
         }
     }
+    /* GBATEK (CpuFastSet): 1 cycle per 32-bit word */
+    gba_add_cycles(g, count);
 }
 /* SWI 0x0E (BgAffineSet).  Source entries are 20 bytes:
  *   0: ox (s32, 8.8),  4: oy (s32, 8.8),   8: cx (s16), 10: cy (s16),
@@ -332,6 +350,8 @@ static void swi_lz77(GBA *g, bool vram) {
             flags <<= 1;
         }
     }
+    /* mGBA _unLz77: ~20 prologue + 14/flag byte + 10/output byte */
+    gba_add_cycles(g, 20 + 14 * (len / 8 + 1) + 10 * len);
     g->cpu.r[0] = len;
 }
 
@@ -356,6 +376,7 @@ static void swi_rluncomp(GBA *g, bool vram) {
         }
     }
     while (pad--) dst_put(&d, 0);
+    gba_add_cycles(g, 16 + 10 * (len + 1));
     g->cpu.r[0] = len;
 }
 
@@ -383,6 +404,7 @@ static void swi_huffuncomp(GBA *g) {
         gba_write8(g, dst, (uint8_t)node);
         dst++; left--;
     }
+    gba_add_cycles(g, 30 + 12 * len);
     g->cpu.r[0] = len;
 }
 
@@ -412,6 +434,7 @@ static void swi_bitunpack(GBA *g) {
         }
         dst += (out_unit == 1) ? 2 : (out_unit == 2) ? 4 : 1;
     }
+    gba_add_cycles(g, 20 + 6 * total);
 }
 
 /* SWI 0x16/0x17/0x18: difference filters (header 0x80). 0x16 = 8bit->WRAM,
@@ -430,12 +453,14 @@ static void swi_diffunfilter(GBA *g, bool vram, bool is16bit) {
             gba_write16(g, d.addr, prev);
             d.addr += 2;
         }
+        gba_add_cycles(g, 16 + 10 * (len / 2));
     } else {
         uint8_t prev = 0;
         for (uint32_t i = 0; i < len; i++) {
             prev = (uint8_t)(prev + gba_read8(g, src++));
             dst_put(&d, prev);
         }
+        gba_add_cycles(g, 16 + 8 * len);
     }
 }
 
