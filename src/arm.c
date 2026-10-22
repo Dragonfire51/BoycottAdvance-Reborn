@@ -97,6 +97,14 @@ static int bank_of(uint32_t cpsr) {
 static void change_mode(GBA *g, uint32_t new_cpsr) {
     int ob = bank_of(get_cpsr(g)), nb = bank_of(new_cpsr);
     if (ob == nb) { set_cpsr(g, new_cpsr); return; }
+    /* FIQ banks r8-r12 as well as r13/r14 (GBATEK "CPU Registers"). */
+    if (ob == BANK_FIQ || nb == BANK_FIQ) {
+        for (int i = 0; i < 5; i++) {
+            uint32_t t = g->cpu.r[8 + i];
+            g->cpu.r[8 + i] = g->cpu.bank[nb][i];
+            g->cpu.bank[ob][i] = t;
+        }
+    }
     g->cpu.bank[ob][5] = g->cpu.r[13];
     g->cpu.bank[ob][6] = g->cpu.r[14];
     set_cpsr(g, new_cpsr);
@@ -118,6 +126,23 @@ static void enter_exception(GBA *g, uint32_t mode, uint32_t lr_val, uint32_t pc_
 }
 
 /* Tras restaurar el CPSR desde SPSR el PC debe alinearse segun el estado resultante. */
+/* User-bank view of a register, for LDM/STM with the S bit and no PC in the
+ * list: the transfer uses the User mode registers, not the current bank
+ * (GBATEK "ARM Block Data Transfer"; gba-tests #511/#512). */
+static uint32_t user_reg(GBA *g, int k) {
+    if (bank_of(get_cpsr(g)) != BANK_USR && k >= 8 && k <= 14)
+        return g->cpu.bank[BANK_USR][k - 8];
+    return k == 15 ? r15(g) + 12 : g->cpu.r[k];
+}
+static void set_user_reg(GBA *g, int k, uint32_t v) {
+    if (bank_of(get_cpsr(g)) != BANK_USR && k >= 8 && k <= 14) {
+        g->cpu.bank[BANK_USR][k - 8] = v;
+        return;
+    }
+    if (k == 15) set_pc(g, v & ~3u);
+    else         g->cpu.r[k] = v;
+}
+
 static void branch_restore(GBA *g, uint32_t target) {
     set_pc(g, target & (thumb_mode(g) ? ~1u : ~3u));
 }
@@ -376,7 +401,7 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
                 uint32_t val;
                 if (k == rn && w)  val = first ? base : newbase;    /* Rn en la lista: viejo si es el primero, si no el nuevo */
                 else if (k == 15)  val = r15(g) + 12;
-                else               val = g->cpu.r[k];
+                else               val = sbit ? user_reg(g, k) : g->cpu.r[k];
                 gba_write32(g, addr, val);
                 addr += 4; first = false;
             }
@@ -386,6 +411,7 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
             for (int k = 0; k < 16; k++) if (reglist & (1u << k)) {
                 uint32_t val = gba_read32(g, addr & ~3u);
                 if (k == 15) { pcval = val; loaded_pc = true; }
+                else if (sbit) set_user_reg(g, k, val);
                 else g->cpu.r[k] = val;
                 addr += 4;
             }
@@ -459,11 +485,14 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
         default:  break;
         }
         bool write = !(opc >= 0x8 && opc <= 0xB);
-        if (s && rd == 15 && write) {
-            /* Rd=PC con S: CPSR = SPSR del modo actual (retorno de excepcion); los flags
-               aritmeticos normales no se tocan. */
+        if (s && rd == 15) {
+            /* Rd=PC con S: CPSR = SPSR del modo actual (retorno de excepcion);
+               los flags aritmeticos normales no se tocan.  Las formas "malas"
+               CMP/CMN/TST/TEQ con Rd=PC (gba-tests #234) tambien cambian de
+               modo en el ARM7TDMI, pero no escriben PC. */
             change_mode(g, g->cpu.spsr[bank_of(get_cpsr(g))]);
-            branch_restore(g, res);
+            if (write) branch_restore(g, res);
+            else       set_pc(g, r15(g) + 4);
             add_cycles(g, 3);
             return;
         }
@@ -791,6 +820,14 @@ void arm_execute(GBA *g, uint32_t max_cycles) {
         /* La IRQ tiene prioridad. IF NO se confirma aqui: el handler lo borra escribiendo 1. */
         if (g->ime && (g->if_reg & g->ie & 0x3FFF) && !(g->cpu.cpsr & CPSR_I)) {
             g->cst.halt = false;
+            /* HLE (no BIOS dump): the BIOS dispatcher reads the user handler
+               from [0x03FFFFFC] and jumps to it. A ROM that arms an interrupt
+               before installing a handler would jump to address 0 and run
+               garbage. Acknowledge the pending sources instead. */
+            if (!g->bios_loaded && gba_read32(g, 0x03FFFFFC) == 0) {
+                g->if_reg = 0;
+                continue;
+            }
             /* GBATEK (ARM CPU Exceptions): LR_irq = direccion de la siguiente instruccion + 4,
                tambien en estado Thumb (se vuelve con SUBS PC,LR,#4). */
             enter_exception(g, 0x12, g->cpu.r[15] + 4, 0x18);

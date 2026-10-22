@@ -61,6 +61,9 @@ static Config cfg;
 static GBA   *g;
 static int    g_paused;
 
+/* GBA frame rate: 16.777216 MHz / (228 lines * 1232 cycles) = 59.7275 Hz. */
+#define GBA_FRAME_MS 16.7427
+
 /* ------------------------------------------------------------------ window */
 static HWND        g_hwnd;
 static HINSTANCE   g_inst;
@@ -499,6 +502,18 @@ static void poll_joy_capture(void) {
     }
 }
 
+/* Resize the window so the *client area* is exactly SCREEN_W x SCREEN_H times
+ * the zoom. SetWindowPos takes window dimensions: sizing it with the bare
+ * client size crops the picture by the frame/caption width. */
+static void resize_for_zoom(void) {
+    if (g_fs) return;                       /* fullscreen: client = screen */
+    RECT r = { 0, 0, SCREEN_W * cfg.zoom, SCREEN_H * cfg.zoom };
+    AdjustWindowRectEx(&r, (DWORD)GetWindowLongPtrA(g_hwnd, GWL_STYLE), TRUE,
+                       (DWORD)GetWindowLongPtrA(g_hwnd, GWL_EXSTYLE));
+    SetWindowPos(g_hwnd, NULL, 0, 0, r.right - r.left, r.bottom - r.top,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 static void do_action(int id) {
     switch (id) {
     case M_LOADROM:  gui_native_open_rom(); break;
@@ -512,8 +527,7 @@ static void do_action(int id) {
     case M_EXIT:     g_quit = 1; PostMessage(g_hwnd, WM_CLOSE, 0, 0); break;
     case M_ZOOM1: case M_ZOOM2: case M_ZOOM3: case M_ZOOM4:
         cfg.zoom = id-M_ZOOM1+1; cfg.scalemode = 0;
-        SetWindowPos(g_hwnd, NULL, 0, 0, SCREEN_W*cfg.zoom, SCREEN_H*cfg.zoom,
-                     SWP_NOMOVE|SWP_NOZORDER);
+        resize_for_zoom();
         break;
     case M_FLASHID:  cfg.flashid = (cfg.flashid+1)%3; break;
     case M_SCANLINE: cfg.scanline = !cfg.scanline; break;
@@ -633,22 +647,28 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 static void compose_frame(FB *fb, float fps) {
     fb_fill(fb, 0xFF000000);
     int aw = fb->w, ah = fb->h;
-    int dstx, dsty, dstw, dsth;
+    /* Scale factor that keeps the 3:2 aspect. "Fit to window" uses the
+     * largest whole multiple; a fixed zoom is reduced when the client area
+     * is smaller, so the picture is never cropped. */
+    double s;
     if (cfg.scalemode == 1) {
-        int s = (aw/SCREEN_W < ah/SCREEN_H) ? aw/SCREEN_W : ah/SCREEN_H;
-        if (s<1) s=1;
-        dstw = SCREEN_W*s; dsth = SCREEN_H*s;
-        dstx = (aw-dstw)/2; dsty = (ah-dsth)/2;
+        double sx = (double)aw / SCREEN_W, sy = (double)ah / SCREEN_H;
+        s = sx < sy ? sx : sy;
     } else {
-        dstw = SCREEN_W*cfg.zoom; dsth = SCREEN_H*cfg.zoom;
-        dstx = (aw-dstw)/2; if (dstx<0) dstx=0;
-        dsty = 0;
+        s = cfg.zoom;
+        double sx = (double)aw / SCREEN_W, sy = (double)ah / SCREEN_H;
+        double lim = sx < sy ? sx : sy;
+        if (s > lim) s = lim;
     }
+    int dstw = (int)(SCREEN_W * s), dsth = (int)(SCREEN_H * s);
+    if (dstw < 1) dstw = 1;
+    if (dsth < 1) dsth = 1;
+    int dstx = (aw - dstw) / 2, dsty = (ah - dsth) / 2;
     fb_blit_frame(fb, dstx, dsty, dstw, dsth, g->ppu.frame, cfg.scanline);
 
     if (cfg.showfps) {
         char t[64];
-        if (cfg.showfps_pct) snprintf(t,sizeof t,"%d%%",(int)(fps*100/60));
+        if (cfg.showfps_pct) snprintf(t,sizeof t,"%d%%",(int)(fps*100.0/59.7275));
         else snprintf(t,sizeof t,"%.0f fps",fps);
         fb_text(fb, fb->w-(int)strlen(t)*8-6, 4, t, 0xFFFFFF00);
     }
@@ -706,11 +726,12 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     {
         wchar_t wtitle[128];
         MultiByteToWideChar(CP_UTF8, 0, GBA_TITLE, -1, wtitle, 128);
+        RECT r = { 0, 0, SCREEN_W * cfg.zoom, SCREEN_H * cfg.zoom };
+        AdjustWindowRectEx(&r, WS_OVERLAPPEDWINDOW, TRUE, 0);
         g_hwnd = CreateWindowExW(0, wc.lpszClassName, wtitle,
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT, CW_USEDEFAULT,
-            SCREEN_W*cfg.zoom + GetSystemMetrics(SM_CXFIXEDFRAME)*2,
-            SCREEN_H*cfg.zoom + GetSystemMetrics(SM_CYCAPTION) + GetSystemMetrics(SM_CYFIXEDFRAME)*2,
+            r.right - r.left, r.bottom - r.top,
             NULL, NULL, inst, NULL);
     }
     if (!g_hwnd) { MessageBoxA(NULL, "Cannot create window.", GBA_NAME, MB_OK|MB_ICONERROR); free(g); return 1; }
@@ -779,14 +800,19 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
         compose_frame(&fb, fps);
         vid_present(video, fb.px, fb.w, fb.h);
 
-        /* FPS counting + frame throttle. */
+        /* FPS counting + frame throttle.  The GBA runs 59.7275 Hz, i.e.
+         * 16.7427 ms per frame.  The counter must be re-read *after* the
+         * Sleep, otherwise the sleep time is not attributed to this frame
+         * and the loop skips every other delay (~150% speed). */
         QueryPerformanceCounter(&t1);
         framecount++;
         double dt = (double)(t1.QuadPart - t_fps.QuadPart) / (double)freq.QuadPart;
         if (dt >= 0.5) { fps = framecount / (float)dt; framecount = 0; t_fps = t1; }
         double frame_ms = (double)(t1.QuadPart - t_frame.QuadPart) * 1000.0 / (double)freq.QuadPart;
-        if (cfg.autothrottle && !g_paused && frame_ms < (1000.0/60.0))
-            Sleep((DWORD)(1000.0/60.0 - frame_ms));
+        if (cfg.autothrottle && !g_paused && g->rom_size > 0 && frame_ms < GBA_FRAME_MS) {
+            Sleep((DWORD)(GBA_FRAME_MS - frame_ms));
+            QueryPerformanceCounter(&t1);
+        }
         t_frame = t1;
     }
 

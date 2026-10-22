@@ -740,21 +740,28 @@ int main(int argc, char **argv) {
         int mh = gui_active ? 0 : MENUBAR_H;   /* native GUI has its own bar */
         int aw = fb.w, ah = fb.h - mh;
         int dstx, dsty, dstw, dsth;
-        if (cfg.scalemode == 1) {                 /* fit to window */
-            int s = (aw/SCREEN_W < ah/SCREEN_H) ? aw/SCREEN_W : ah/SCREEN_H;
-            if (s<1) s=1;
-            dstw = SCREEN_W*s; dsth = SCREEN_H*s;
-            dstx = (aw-dstw)/2; dsty = mh+(ah-dsth)/2;
-        } else {
-            dstw = SCREEN_W*cfg.zoom; dsth = SCREEN_H*cfg.zoom;
-            dstx = (aw-dstw)/2; if (dstx<0) dstx=0;
-            dsty = mh;
+        {   /* keep the 3:2 aspect and never crop the picture */
+            double s;
+            if (cfg.scalemode == 1) {
+                double sx = (double)aw / SCREEN_W, sy = (double)ah / SCREEN_H;
+                s = sx < sy ? sx : sy;
+            } else {
+                s = cfg.zoom;
+                double sx = (double)aw / SCREEN_W, sy = (double)ah / SCREEN_H;
+                double lim = sx < sy ? sx : sy;
+                if (s > lim) s = lim;
+            }
+            dstw = (int)(SCREEN_W * s); dsth = (int)(SCREEN_H * s);
+            if (dstw < 1) dstw = 1;
+            if (dsth < 1) dsth = 1;
+            dstx = (aw - dstw) / 2;
+            dsty = mh + (ah - dsth) / 2;
         }
         fb_blit_frame(&fb, dstx, dsty, dstw, dsth, g->ppu.frame, cfg.scanline);
 
         if (cfg.showfps) {
             char t[64];
-            if (cfg.showfps_pct) snprintf(t,sizeof t,"%d%%",(int)(fps*100/60));
+            if (cfg.showfps_pct) snprintf(t,sizeof t,"%d%%",(int)(fps*100.0/59.7275));
             else snprintf(t,sizeof t,"%.0f fps",fps);
             fb_text(&fb, fb.w-text_w(t)-6, mh+4, t, 0xFFFFFF00);
         }
@@ -796,7 +803,11 @@ int main(int argc, char **argv) {
 
         uint32_t now = SDL_GetTicks();
         if (cfg.autothrottle && !g_paused) {
-            if (now-last < 16) SDL_Delay(16-(now-last));
+            /* 16.7427 ms = 59.7275 Hz; re-read the clock after the delay so
+             * the wait is counted in this frame (otherwise every other
+             * delay is skipped and the game runs ~1.5x too fast). */
+            double el = (double)(now - last);
+            if (el < 16.7427) SDL_Delay((uint32_t)(16.7427 - el));
             last = SDL_GetTicks();
         }
         fps_n++;

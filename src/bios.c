@@ -291,13 +291,25 @@ static uint32_t swi_read_len(GBA *g, uint32_t *src) {
     return len;
 }
 
-/* SWI 0x11/0x12: LZ77. The VRAM variant writes one byte per halfword. */
+/* Decompression destination that writes bytes into VRAM as 16-bit units.
+ * GBATEK ("LZ77UnCompVram"): the byte stream is packed two bytes per
+ * halfword, so the address advances one byte per output byte. Writing one
+ * halfword per byte (as an earlier version did) spreads the data over twice
+ * the range and leaves half of VRAM untouched. */
+typedef struct { GBA *g; uint32_t addr; bool vram; uint8_t half; } Dst;
+static void dst_put(Dst *d, uint8_t v) {
+    if (!d->vram) { gba_write8(d->g, d->addr, v); d->addr++; return; }
+    if (d->addr & 1) gba_write16(d->g, d->addr ^ 1u, (uint16_t)(d->half | (v << 8)));
+    else             d->half = v;
+    d->addr++;
+}
+
+/* SWI 0x11/0x12: LZ77 (header 0x10). */
 static void swi_lz77(GBA *g, bool vram) {
     uint32_t src = g->cpu.r[0];
-    uint32_t dst = g->cpu.r[1];
     src++;                                  /* header 0x10 */
     uint32_t len = swi_read_len(g, &src);
-    uint32_t step = vram ? 2 : 1;
+    Dst d = { g, g->cpu.r[1], vram, 0 };
     uint32_t left = len;
     while (left > 0) {
         uint8_t flags = gba_read8(g, src++);
@@ -308,14 +320,14 @@ static void swi_lz77(GBA *g, bool vram) {
                 uint32_t count = (b1 >> 4) + 3;
                 uint32_t disp = (((b1 & 0xF) << 8) | b2) + 1;
                 for (uint32_t k = 0; k < count && left > 0; k++) {
-                    uint8_t v = gba_read8(g, dst - disp * step);
-                    if (vram) gba_write16(g, dst, v); else gba_write8(g, dst, v);
-                    dst += step; left--;
+                    uint8_t v = gba_read8(g, d.addr - disp);
+                    dst_put(&d, v);
+                    left--;
                 }
             } else {
                 uint8_t v = gba_read8(g, src++);
-                if (vram) gba_write16(g, dst, v); else gba_write8(g, dst, v);
-                dst += step; left--;
+                dst_put(&d, v);
+                left--;
             }
             flags <<= 1;
         }
@@ -323,35 +335,27 @@ static void swi_lz77(GBA *g, bool vram) {
     g->cpu.r[0] = len;
 }
 
-/* SWI 0x14/0x15: run-length. Header 0x30. */
+/* SWI 0x14/0x15: run-length (header 0x30). */
 static void swi_rluncomp(GBA *g, bool vram) {
     uint32_t src = g->cpu.r[0];
-    uint32_t dst = g->cpu.r[1];
     src++;                                  /* header 0x30 */
     uint32_t len = swi_read_len(g, &src);
-    uint32_t step = vram ? 2 : 1;
+    Dst d = { g, g->cpu.r[1], vram, 0 };
     uint32_t left = len;
+    /* VRAM output is padded up to a whole halfword after the payload. */
+    uint32_t pad = vram ? ((4 - (len & 3)) & 3) : 0;
     while (left > 0) {
         uint8_t flags = gba_read8(g, src++);
-        for (int i = 0; i < 8 && left > 0; i++) {
-            if (flags & 0x80) {
-                uint32_t count = (gba_read8(g, src++) & 0x7F) + 3;
-                uint8_t v = gba_read8(g, src++);
-                for (uint32_t k = 0; k < count && left > 0; k++) {
-                    if (vram) gba_write16(g, dst, v); else gba_write8(g, dst, v);
-                    dst += step; left--;
-                }
-            } else {
-                uint32_t count = (gba_read8(g, src++) & 0x7F) + 1;
-                for (uint32_t k = 0; k < count && left > 0; k++) {
-                    uint8_t v = gba_read8(g, src++);
-                    if (vram) gba_write16(g, dst, v); else gba_write8(g, dst, v);
-                    dst += step; left--;
-                }
-            }
-            flags <<= 1;
+        if (flags & 0x80) {
+            uint32_t count = (flags & 0x7F) + 3;
+            uint8_t v = gba_read8(g, src++);
+            for (uint32_t k = 0; k < count && left > 0; k++, left--) dst_put(&d, v);
+        } else {
+            uint32_t count = (flags & 0x7F) + 1;
+            for (uint32_t k = 0; k < count && left > 0; k++, left--) dst_put(&d, gba_read8(g, src++));
         }
     }
+    while (pad--) dst_put(&d, 0);
     g->cpu.r[0] = len;
 }
 
@@ -410,26 +414,27 @@ static void swi_bitunpack(GBA *g) {
     }
 }
 
-/* SWI 0x16/0x17/0x18: difference filters. Header 0x80. */
+/* SWI 0x16/0x17/0x18: difference filters (header 0x80). 0x16 = 8bit->WRAM,
+ * 0x17 = 8bit->VRAM, 0x18 = 16bit->16bit (GBATEK "Diff8bitUnFilterWram",
+ * "Diff8bitUnFilterVram", "Diff16bitUnFilter"). */
 static void swi_diffunfilter(GBA *g, bool vram, bool is16bit) {
-    uint32_t src = g->cpu.r[0];
-    uint32_t dst = g->cpu.r[1];
+    uint32_t src = g->cpu.r[0] & ~3u;
     src++;                                  /* header 0x80 */
     uint32_t len = swi_read_len(g, &src);
+    Dst d = { g, g->cpu.r[1], vram, 0 };
     if (is16bit) {
-        uint32_t prev = 0;
+        uint16_t prev = 0;
         for (uint32_t i = 0; i < len / 2; i++) {
             prev = (uint16_t)(prev + gba_read16(g, src));
             src += 2;
-            gba_write16(g, dst, (uint16_t)prev);
-            dst += 2;
+            gba_write16(g, d.addr, prev);
+            d.addr += 2;
         }
     } else {
         uint8_t prev = 0;
         for (uint32_t i = 0; i < len; i++) {
             prev = (uint8_t)(prev + gba_read8(g, src++));
-            if (vram) gba_write16(g, dst, prev); else gba_write8(g, dst, prev);
-            dst++;
+            dst_put(&d, prev);
         }
     }
 }
@@ -463,9 +468,9 @@ void gba_swi(GBA *g, uint32_t comment) {
     case 0x13: swi_huffuncomp(g); break;
     case 0x14: swi_rluncomp(g, false); break;
     case 0x15: swi_rluncomp(g, true); break;
-    case 0x16: swi_diffunfilter(g, false, true); break;
-    case 0x17: swi_diffunfilter(g, false, false); break;
-    case 0x18: swi_diffunfilter(g, true, false); break;
+    case 0x16: swi_diffunfilter(g, false, false); break;
+    case 0x17: swi_diffunfilter(g, true,  false); break;
+    case 0x18: swi_diffunfilter(g, true,  true);  break;
     default: break;
     }
     /* clear halt if we just returned from a wait that should continue */
