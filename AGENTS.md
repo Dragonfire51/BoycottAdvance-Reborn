@@ -70,6 +70,14 @@ memoria contra mGBA / la referencia), no "a ojo". Aportar numeros antes/despues.
 **Regla de la rama Win32**: no introducir SDL2. La GUI es nativa (ventana GDI /
 Direct3D 9, audio WinMM/DirectSound, menus Win32 completos).
 
+## RELEASE v1.4.10 (publicado 2026-10-22)
+
+- **Tag** `v1.4.10` = `758207e` (main), tag rodante `Latest` movido al mismo commit.
+- **Releases**: `v1.4.10` (id 420224236) y `Latest` (id 413237927, renombrado a "Latest (v1.4.10)"), ambos con los 5 assets.
+- GitHub ya marca `v1.4.10` como *latest* del repo (el problema de v1.4.1 con el release viejo marcado como latest queda resuelto).
+- Contenido: fix de descompresion a VRAM (barras verticales de Esmeralda) + los fixes de CPU ya en el arbol (FIQ bancado r8-r12, `user_reg()` para LDM/STM con bit S, MUL{S}/MULS solo N/Z, retorno por SPSR, MSR SPSR bloqueado en USR) + escalado con aspecto 3:2.
+- **OJO al versionar**: v1.4.9 ya estaba publicado (keypad + clamp de ventanas), asi que este release es v1.4.10. Antes de hacer bump, comprobar `git tag` y `/releases`: si el tag existe, NO reescribirlo.
+
 ## FIX decompresion a VRAM (SESION 2026-10-22) — barras verticales en Esmeralda
 
 **Sintoma**: bandas verticales blancas/verdes encima del escenario de Pokemon Esmeralda.
