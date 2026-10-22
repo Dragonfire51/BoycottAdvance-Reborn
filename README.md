@@ -142,6 +142,20 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.10** — graphics fix for Pokemon Emerald: vertical white/green
+  bands over the scene. The BIOS decompression SWIs wrote one halfword
+  per output byte in their VRAM variants and stepped the destination by
+  two bytes, spreading the stream over twice the range and leaving the
+  odd byte of every halfword unwritten (VRAM ended up full of `0x0011`
+  words, i.e. a one-pixel grid). GBATEK "LZ77UnCompVram" packs two bytes
+  into each halfword, so a shared destination helper now packs the byte
+  pairs for LZ77 (`0x11`/`0x12`), run-length (`0x14`/`0x15`, with the
+  trailing halfword padding) and the difference filters, whose dispatch
+  also passed the wrong width flags (`0x16` is 8-bit to WRAM, `0x17`
+  8-bit to VRAM, `0x18` 16-bit to 16-bit). Verified by diffing against
+  mGBA on the same ROM: VRAM differing bytes at frame 900 went from
+  30905 to 0, and the framebuffer shows the scene.
+
 - **v1.4.9** — fix for the console input and the window feature
   registers. The keypad mask is now kept active-low exactly like the
   real `KEYINPUT` register (a double inversion used to report "all
