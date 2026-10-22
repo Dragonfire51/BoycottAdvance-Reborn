@@ -209,7 +209,9 @@ void gba_set_savetype(GBA *g, int type) {
 
 /* update keypad values */
 void gba_update_keypad(GBA *g, uint16_t keys) {
-    g->key_input = (uint16_t)(~keys) & 0x3FF;  /* 0 = pressed */
+    /* `keys` ya es activo en bajo (0 = pulsado), igual que KEYINPUT:
+       se guarda tal cual, sin invertir (GBATEK). */
+    g->key_input = (uint16_t)(keys & 0x3FF);
     io_trigger_keypad(g, 0);
 }
 

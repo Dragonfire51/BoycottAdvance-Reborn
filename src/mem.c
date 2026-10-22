@@ -162,10 +162,20 @@ void io_write16(GBA *g, uint32_t addr, uint16_t v) {
     case 0x03E: p->bgy[1] = sext28(((uint32_t)p->bgy[1] & 0xFFFFu) | ((uint32_t)(v & 0x0FFF) << 16)); p->refy[1] = p->bgy[1]; return;
     /* ventanas / mosaic / blend (GBATEK: WININ 0x48, WINOUT 0x4A, MOSAIC 0x4C,
        BLDCNT 0x50, BLDALPHA 0x52, BLDY 0x54) */
-    case 0x040: p->winh[0] = v; return;
-    case 0x042: p->winh[1] = v; return;
-    case 0x044: p->winv[0] = v; return;
-    case 0x046: p->winv[1] = v; return;
+    case 0x040: case 0x042: {   /* WIN0H/WIN1H: X2>240 o X1>X2 => X2=240 (GBATEK) */
+        int w = (reg == 0x040) ? 0 : 1;
+        uint8_t x2 = v & 0xFF, x1 = (v >> 8) & 0xFF;
+        if (x2 > 240 || x1 > x2) x2 = 240;
+        p->winh[w] = (uint16_t)((x1 << 8) | x2);
+        return;
+    }
+    case 0x044: case 0x046: {   /* WIN0V/WIN1V: Y2>160 o Y1>Y2 => Y2=160 (GBATEK) */
+        int w = (reg == 0x044) ? 0 : 1;
+        uint8_t y2 = v & 0xFF, y1 = (v >> 8) & 0xFF;
+        if (y2 > 160 || y1 > y2) y2 = 160;
+        p->winv[w] = (uint16_t)((y1 << 8) | y2);
+        return;
+    }
     case 0x048: p->winin = v & 0x3F3F; return;
     case 0x04A: p->winout = v & 0x3F3F; return;
     case 0x04C: p->mosaic = v; return;
