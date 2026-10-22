@@ -398,21 +398,13 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Core: fidelity pass against GBATEK. The PPU affine / window / blend\n"
-      "    register map is corrected and internal BG2/BG3 coordinates stay at\n"
-      "    28 bits; DISPSTAT now reports a real HBlank flag.\n"
-      "  - Audio: the APU was rewritten around the GBATEK register layout with\n"
-      "    exact duty/wave clock dividers, a 512 Hz frame sequencer, timer\n"
-      "    driven FIFOs and a lock-free ring buffer for the audio thread.\n"
-      "  - Core: BIOS IntrWait (SWI 0x04) now honours the clear / irq\n"
-      "    parameters, and Div (SWI 0x06) no longer has undefined behaviour\n"
-      "    on 0x80000000 / -1 or a zero divisor.\n"
-      "  - Core: ARM and Thumb multiply instructions update only N and Z;\n"
-      "    MSR SPSR is blocked in USR/SYS mode where no SPSR exists.\n"
-      "  - Core: the parallel flash chip programs to the real destination\n"
-      "    and applies a bank switch immediately, as the hardware does.\n"
-      "  - Verified with Pokemon Emerald (fastboot and real BIOS boot): the\n"
-      "    display comes up and the frame loop is stable.");
+      "  - Core: fixed a double inversion of the keypad. The mask is active-\n"
+      "    low like the real KEYINPUT register, so releasing every button no\n"
+      "    longer reads as \"all buttons held\" (a directional pad stuck on,\n"
+      "    e.g. Eragon scrolling up/down on its own).\n"
+      "  - Core: WIN0H/WIN1H now clamp X2>240 or X1>X2 to X2=240, and\n"
+      "    WIN0V/WIN1V clamp Y2>160 to Y2=160, as the GBA hardware does\n"
+      "    (GBATEK LCD I/O Window Feature).");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

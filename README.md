@@ -142,6 +142,15 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.9** — fix for the console input and the window feature
+  registers. The keypad mask is now kept active-low exactly like the
+  real `KEYINPUT` register (a double inversion used to report "all
+  buttons held" when nothing was pressed, which made a directional pad
+  act as permanently pressed). `WIN0H`/`WIN1H` clamp `X2 > 240` or
+  `X1 > X2` to `X2 = 240`, and `WIN0V`/`WIN1V` clamp `Y2 > 160` to
+  `Y2 = 160`, matching the on-chip window hardware (GBATEK "LCD I/O
+  Window Feature").
+
 - **v1.4.8** — fidelity pass over a clean re-implementation of the
   GBA model, checked against GBATEK. The PPU register map for the
   affine/rotation, window and blend registers is corrected, BG2/BG3
