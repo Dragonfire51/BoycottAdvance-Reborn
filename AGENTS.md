@@ -70,6 +70,37 @@ memoria contra mGBA / la referencia), no "a ojo". Aportar numeros antes/despues.
 **Regla de la rama Win32**: no introducir SDL2. La GUI es nativa (ventana GDI /
 Direct3D 9, audio WinMM/DirectSound, menus Win32 completos).
 
+## FIX decompresion a VRAM (SESION 2026-10-22) — barras verticales en Esmeralda
+
+**Sintoma**: bandas verticales blancas/verdes encima del escenario de Pokemon Esmeralda.
+
+**Causa raiz**: las SWI de descompresion del BIOS (`src/bios.c`) escribian **un halfword por byte**
+en las variantes VRAM y avanzaban el destino **2 bytes por byte**. Resultado: el flujo quedaba
+esparcido al doble de rango y el byte impar de cada halfword sin escribir (patron `0x0011`
+repetido en VRAM, que es literalmente una rejilla de 1 pixel, o sea las barras).
+
+**Arreglo**: helper `Dst`/`dst_put()` que empaqueta dos bytes por halfword (GBATEK
+"LZ77UnCompVram": un byte de salida por byte de destino). Aplicado a `swi_lz77` (0x11/0x12),
+`swi_rluncomp` (0x14/0x15, con el padding de halfword posterior) y `swi_diffunfilter`
+(0x16 = 8bit->WRAM, 0x17 = 8bit->VRAM, 0x18 = 16bit->16bit; el dispatch previo pasaba los flags
+equivocados). Fuente alineada a 4 en los filtros.
+
+**Verificacion (differ contra mGBA, mismo ROM)**: VRAM en el frame 900 pasó de **30905 bytes
+distintos a 0**; paleta y OAM ya coincidian (`0` y `40` bytes). El primer frame divergente era
+f10, justo cuando corre `SWI 0x12` (`src=0x08DC3E1C -> dst=0x06000000`, len 1248). El PPU ya era
+correcto: renderizando *sus* datos de referencia pintaba la escena bien.
+
+**Los zip `files.zip` / `Claude_Fixes.zip` del repo son copias ANTIGUAS**: no contienen ningun
+arreglo que falte aqui. `flash.c` es identico; `apu.c` del zip es el diseno viejo (campos
+`ch1_on`/`nr12`, sin ring buffer) y sus 11 fixes A1-A11 ya estan reimplementados en el `apu.c`
+actual (FIFO con signo, L/R por bit, volumen maestro, square 16*P, wave 8*P, LFSR, envolventes,
+ciclos fraccionarios). `mem.c` del zip NO tiene el clamp de ventanas y `arm.c` del zip NO tiene
+FIQ banked / `user_reg()` / MULS N-Z / retorno por SPSR. Los `.zip` se pueden borrar del repo.
+
+**Metodo util**: `mCoreInitConfig()` es obligatorio antes de `mCoreLoadFile()` en mGBA; luego
+`core->getPixels()` + `busRead8()` para volcar VRAM/paleta/OAM de referencia y diferenciar
+contra `g->vram`.
+
 ## Estado (v1.4.8; cambios de fidelidad GBATEK sobre el zip de Claude)
 
 **FIXES DE FIDELIDAD GBATEK (v1.4.8, aplicados sobre el commit "Files fixed by Claude"):**
