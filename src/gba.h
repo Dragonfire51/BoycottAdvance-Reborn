@@ -181,6 +181,7 @@ typedef struct {
     int      sweep_t, shadow;
     bool     sweep_on;
     uint32_t lfsr;
+    uint8_t  lfsr_out;       /* nivel actual del generador de ruido (bit de carry) */
     uint64_t fs_cc;          /* frame sequencer 512 Hz, 16.16 */
     int      fs_step;
     uint64_t sample_acc;     /* ciclos*44100 pendientes de convertir en muestras */

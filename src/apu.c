@@ -100,7 +100,7 @@ void apu_close(void) { }
 void apu_reset(GBA *g) {
     memset(&g->apu, 0, sizeof(g->apu));
     g->apu.bias = 0x0200;                                   /* SOUNDBIAS por defecto */
-    g->apu.lfsr = 0x7FFF;
+    g->apu.lfsr = 0x4000;      /* GBATEK: valor inicial 15 bit */
 }
 
 /* ---------------------------------------------------------------- FIFOs */
@@ -189,7 +189,10 @@ static void trigger_noise(Apu *a) {
     c->len = 64 - (a->r4l & 63);
     if (c->len == 0) c->len = 64;
     c->cc = 0;
-    a->lfsr = 0x7FFF;
+    /* GBATEK 400007Ch: "The initial value when (re-)starting the sound is
+       X=40h (7bit) or X=4000h (15bit)" */
+    a->lfsr = (a->r4h & 0x08) ? 0x40 : 0x4000;
+    a->lfsr_out = 0;
 }
 
 uint16_t apu_read_reg(GBA *g, uint32_t reg) {
@@ -380,12 +383,16 @@ static void gen_sample(Apu *a, int16_t *outl, int16_t *outr) {
             uint64_t steps = c->cc / per;
             c->cc %= per;
             for (uint64_t k = 0; k < steps; k++) {
-                uint32_t x = (a->lfsr ^ (a->lfsr >> 1)) & 1;
-                a->lfsr = (a->lfsr >> 1) | (x << 14);
-                if (a->r4h & 8) a->lfsr = (a->lfsr & ~0x40u) | (x << 6);    /* modo de 7 bit */
+                /* GBATEK "Noise Random Generator":
+                   15bit: X=X SHR 1, IF carry THEN Out=HIGH, X=X XOR 6000h
+                    7bit: X=X SHR 1, IF carry THEN Out=HIGH, X=X XOR 60h   */
+                uint32_t carry = a->lfsr & 1;
+                a->lfsr >>= 1;
+                if (carry) a->lfsr ^= (a->r4h & 0x08) ? 0x60u : 0x6000u;
+                a->lfsr_out = (uint8_t)carry;
             }
         }
-        if (c->on && !(a->lfsr & 1)) out[3] = c->vol;
+        if (c->on && a->lfsr_out) out[3] = c->vol;
     }
 
     /* mezcla PSG: SOUNDCNT_L bits 0-2 = vol R, 4-6 = vol L, 8-11 = canales a R, 12-15 = a L */

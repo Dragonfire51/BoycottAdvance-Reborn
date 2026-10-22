@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
     for (int f = 0; f < nframes; f++) {
         core->runFrame(core);
         if (nframes <= 4000)
-            printf("mf%d %04X\n", f, core->rawRead16(core, 0x04000000, 0));
+            printf("mf%d %04X\nsf%d", f, core->rawRead16(core, 0x04000000, 0), f); for (uint32_t a = 0x04000060; a <= 0x040000A8; a += 2) printf(" %03X=%04X", a&0x3FF, core->rawRead16(core, a, 0)); printf("\n");
         if (core->getAudioBuffer) {
             static int16_t pcm[4096 * 2];
             struct mAudioBuffer* ab = core->getAudioBuffer(core);
@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
             for (int x = 0; x < 240; x++) {
                 uint32_t c = p[y * (stride / 4) + x];
                 unsigned char rgb[3];
-                rgb[0] = (c >> 16) & 0xFF; rgb[1] = (c >> 8) & 0xFF; rgb[2] = c & 0xFF;
+                rgb[0] = c & 0xFF; rgb[1] = (c >> 8) & 0xFF; rgb[2] = (c >> 16) & 0xFF; /* mColor is 0x00BBGGRR */
                 fwrite(rgb, 1, 3, f);
             }
         fclose(f);
@@ -103,8 +103,8 @@ int main(int argc, char** argv) {
     printf("frameCounter=%u frameCycles=%d freq=%d\n",
            core->frameCounter(core), core->frameCycles(core), core->frequency(core));
     printf("audio16 io:\n");
-    for (uint32_t a = 0x04000060; a <= 0x040000A7; a += 2) {
-        printf("%03X=%04X\n", a, core->rawRead16(core, a, 0));
+    for (uint32_t a = 0x04000060; a <= 0x040000A8; a += 2) {
+        printf(" %03X=%04X", a&0x3FF, core->rawRead16(core, a, 0)); if(a==0x040000A8) printf("\n");
     }
     {
         static const uint32_t bg_offs[8] = {0x008,0x00A,0x00C,0x00E,0x010,0x012,0x014,0x016};

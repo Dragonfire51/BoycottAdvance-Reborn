@@ -108,10 +108,7 @@ static void render_affine_bg(GBA *g, int bgn, int y) {
     }
     int32_t pa = p->pa[a], pc = p->pc[a];
     int32_t rx = p->refx[a], ry = p->refy[a];
-    if (mos_v > 1) {                                /* sample the first line of the mosaic row */
-        rx -= p->pb[a] * (y % mos_v);
-        ry -= p->pd[a] * (y % mos_v);
-    }
+    if (mos_v > 1) ry -= p->pd[a] * (y % mos_v);    /* first line of the mosaic row */
     for (int x = 0; x < SCREEN_W; x++) {
         int xs = x - (x % mos_h);
         int32_t sx = (rx + pa * xs) >> 8;
