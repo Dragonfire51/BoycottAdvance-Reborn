@@ -70,6 +70,14 @@ memoria contra mGBA / la referencia), no "a ojo". Aportar numeros antes/despues.
 **Regla de la rama Win32**: no introducir SDL2. La GUI es nativa (ventana GDI /
 Direct3D 9, audio WinMM/DirectSound, menus Win32 completos).
 
+## RELEASE v1.4.11 (publicado 2026-10-22)
+
+- **Tag** `v1.4.11` = commit `134ecab` (main); tag rodante `Latest` movido al mismo commit (`git tag -f Latest && git push -f origin Latest`). GitHub Actions (`build-binaries.yml`, disparado por el push del tag `v1.4.11`) publico el release `v1.4.11` (id 421109179) con sus 5 assets.
+- **Assets de `Latest` reemplazados via API** (release id 413237927, renombrada de "Latest (v1.4.10)" a "Latest (v1.4.11)"): borrar los 5 viejos (DELETE por `asset.url`) y subir los de v1.4.11 descargandolos del release nuevo (GET con `Accept: application/octet-stream`). **OJO**: la subida de assets NO va a `api.github.com` sino a `uploads.github.com` (`POST /repos/{owner}/{repo}/releases/{id}/assets?name=...`); a `api.github.com` da 404.
+- **Todas las versiones antiguas marcadas como pre-release** via API (`PATCH /releases/{id}` con `{"prerelease": true}`): v1.2.0..v1.4.10 (16 releases). Quedan como normales solo `v1.4.11` y `Latest`.
+- **OJO credenciales git**: el remote `origin` llevaba un token antiguo incrustado (`https://ghu_...@github.com/...`) que provoco prompt de password y push rechazado. Fix: `git remote set-url origin "https://${GITHUB_TOKEN}@github.com/Dragonfire51/BoycottAdvance-Reborn.git"`. Si vuelve a pedir password al hacer push, re-aplicar eso. Tambien: si el remote `main` avanzo (commit ajeno, p.ej. "TEST ROMs"), `git fetch origin && git rebase origin/main` antes de push.
+- Contenido de la version: cobro de ciclos de CPU para las SWI de BIOS (`CpuSet`, `Div`, LZ77/RL/Huff, `DiffUnFilter`) via `gba_add_cycles()`, cobro de ciclos por transferencia DMA (`mem.c`, GBATEK "DMA Transfers"), y `wait_mask` selectivo para `IntrWait`/`VBlankIntrWait` (solo la IRQ esperada despierta). Verificacion: Medabots AX entra al gameplay en f973 vs f979 de mGBA (antes f18), frames 100-899 100% identicos; Emerald 576/600 frames DISPCNT identicos.
+
 ## RELEASE v1.4.10 (publicado 2026-10-22)
 
 - **Tag** `v1.4.10` = `758207e` (main), tag rodante `Latest` movido al mismo commit.
