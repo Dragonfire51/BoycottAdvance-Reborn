@@ -31,6 +31,8 @@ int main(int argc, char** argv) {
     core->init(core);
 
     mCoreConfigInit(&core->config, "core");
+    const char* skipbios = getenv("SKIPBIOS");
+    if (skipbios) mCoreConfigSetValue(&core->config, "skipBios", skipbios);
 
     static mColor fb[240 * 160];
     if (core->setVideoBuffer) {

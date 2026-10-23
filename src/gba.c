@@ -98,11 +98,16 @@ void gba_reset(GBA *g) {
        deadlocks. Leaving VBlank armed (DISPSTAT bit 3 + IE bit 0 + IME) and
        the display in forced blank mirrors the hardware and lets the queue
        drain. The IRQ vector points at the BIOS default handler so the first
-       VBlank before the game installs its own handler is harmless. */
-    g->ppu.dispcnt |= 0x0080;            /* forced blank */
-    g->ppu.dispstat |= 0x0008;           /* VBlank IRQ enable */
-    g->ie |= 0x0001;                     /* IE: VBlank */
-    g->ime = true;
+       VBlank before the game installs its own handler is harmless.
+
+       BA_NO_PREARM=1 disables this pre-arming for A/B testing: mGBA and real
+       hardware boot with IME=0 and let the ROM arm interrupts itself. */
+    if (!getenv("BA_NO_PREARM")) {
+        g->ppu.dispcnt |= 0x0080;            /* forced blank */
+        g->ppu.dispstat |= 0x0008;           /* VBlank IRQ enable */
+        g->ie |= 0x0001;                     /* IE: VBlank */
+        g->ime = true;
+    }
     gba_write8(g, 0x04000300, 1);        /* POSTFLG: BIOS has run */
     /* Point the IRQ vector at the BIOS default handler, as the real BIOS does.
        Only meaningful when a BIOS image is mapped: with fast boot and no dump
@@ -267,6 +272,12 @@ static void run_frame_core(GBA *g) {
         apu_step(g, hblank_cycles);
     }
     g->ppu.vcount = 0;
+    /* Between frames the scanline status bits must be clear: the real LCD
+       leaves VBlank/HBlank/VCount flags at 0 when line 0 starts. Keeping
+       HBlank set here (as the loop leaves it on the last VBlank line) made
+       games that time their boot with DISPSTAT see a spurious HBlank every
+       frame boundary. */
+    g->ppu.dispstat &= 0xFFF8;
 }
 
 void gba_run_frame(GBA *g) {
