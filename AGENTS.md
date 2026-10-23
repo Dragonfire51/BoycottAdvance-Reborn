@@ -70,6 +70,21 @@ memoria contra mGBA / la referencia), no "a ojo". Aportar numeros antes/despues.
 **Regla de la rama Win32**: no introducir SDL2. La GUI es nativa (ventana GDI /
 Direct3D 9, audio WinMM/DirectSound, menus Win32 completos).
 
+## RELEASE v1.4.13 (publicado 2026-10-23)
+
+- **Tag** `v1.4.13` = commit `f11007a` (main); tag rodante `Latest` movido al mismo commit (`git tag -f Latest && git push -f origin Latest`).
+- **Publicacion manual de assets**: el workflow `build-binaries.yml` (run 40032122931, disparado por el push del tag) se quedo **atascado >35 min** en el paso "Install mingw and zip" de los dos jobs de Windows (`apt-get` del runner, problema de infraestructura, no del codigo). Los jobs `linux` y `macos` si completaron. Como el release quedaba sin publicar, se publicaron los 5 assets **a mano via API** con los binarios compilados y verificados en local (linux/macos ademas desde los artefactos de CI):
+  - `POST /releases` con `tag_name=v1.4.13` -> release id 422374127; 5 assets subidos a `uploads.github.com`.
+  - Release rodante `Latest` (id 413237927) renombrado a "Latest (v1.4.13)", borrados los 5 assets viejos (DELETE) y subidos los nuevos.
+  - `v1.4.12` y `v1.4.11` marcados `prerelease=true` (queda como estable solo `v1.4.13` + `Latest`).
+  - Run atascado cancelado (`POST /actions/runs/{id}/cancel`).
+  - **Leccion**: si el runner de GitHub vuelve a colgarse en `apt-get`, no esperar; publicar con los binarios locales (`make`, `make -f Makefile.win32` x86_64 + i686) porque reproducen exactamente los assets del CI (mismo Makefile).
+- Contenido:
+  - **`src/ppu.c`**: `render_objs` usa `obj_base = (mode >= 3) ? 0x14000 : 0x10000`. En modos bitmap (3/4/5) la VRAM de OBJ empieza en `0x06014000` (GBATEK), asi que los tiles 512-1023 se leen del slot correcto en vez de envolver a `0x06010000`. El commit anterior (67b714d) tenia `0x10000` fijo, incorrecto para bitmap.
+  - **`src/mem.c`**: registros de ventana en las direcciones GBATEK (`WININ=0x040`, `WIN0H=0x044`, `WIN0V=0x048`).
+  - **`tools/`**: nuevos harnesses de comparacion de framebuffer `synt_our.c` / `synt_ref.c` y `gen_blend_test.py` (genera ROMs sinteticos modo 3/4 con blend/BLDY).
+- Verificado: los tres targets compilan **sin warnings** (`make`, `make -f Makefile.win32` y `ARCH=i686`); los PE son subsistema GUI=2 con solo DLLs nativas (KERNEL32/USER32/GDI32/SHELL32/d3d9/winmm/comdlg32/msvcrt, **sin SDL2**).
+
 ## RELEASE v1.4.12 (publicado 2026-10-23)
 
 - **Tag** `v1.4.12` = commit `37e2443` (main); tag rodante `Latest` movido al mismo commit (`git tag -f Latest && git push -f origin Latest`). GitHub Actions (`build-binaries.yml`, disparado por el push del tag `v1.4.12`) publico el release `v1.4.12` con sus 5 assets (run 39897449744, success).
