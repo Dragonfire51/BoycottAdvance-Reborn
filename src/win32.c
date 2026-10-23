@@ -351,15 +351,11 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Core: games no longer run too fast. The BIOS SWIs\n"
-      "    (decompression, CpuSet, Div) and the DMA channels did not\n"
-      "    charge CPU cycles, so loaders that copy data finished in a\n"
-      "    handful of frames (Medabots AX entered gameplay on frame 18;\n"
-      "    mGBA takes 979). SWI and DMA cycles are now accounted as\n"
-      "    GBATEK describes, and loading matches mGBA within 1%.\n"
-      "  - Core: IntrWait/VBlankIntrWait only wake on the awaited\n"
-      "    interrupt. Unrelated IRQs no longer interrupt the BIOS wait\n"
-      "    loop, keeping the perceived clock in step with real hardware.";
+      "  - Video: OBJ mosaic now renders per GBATEK. The per-object\n"
+      "    mosaic bit (attr0 bit 12) and the OBJ H/V sizes from the\n"
+      "    MOSAIC register (bits 8-15) are honoured, the grid is aligned\n"
+      "    to the screen, and each mosaic block is colorized by its\n"
+      "    upper-left covered pixel, matching mGBA's software renderer.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

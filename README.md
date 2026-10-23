@@ -142,6 +142,11 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.12** — the OBJ mosaic effect now renders per GBATEK: the
+  per-object mosaic bit (`attr0` bit 12) and the OBJ H/V block sizes from
+  the MOSAIC register (bits 8–15) are honoured, the grid is aligned to the
+  screen and each block is colorized by its upper-left covered pixel,
+  matching mGBA's software renderer.
 - **v1.4.11** — games no longer run too fast, and the BIOS wait
   interrupts wake on the right event. The BIOS SWIs (decompression,
   `CpuSet`, `Div`) and the DMA channels charged no CPU cycles, so loaders

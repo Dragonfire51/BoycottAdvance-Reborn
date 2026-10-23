@@ -70,6 +70,22 @@ memoria contra mGBA / la referencia), no "a ojo". Aportar numeros antes/despues.
 **Regla de la rama Win32**: no introducir SDL2. La GUI es nativa (ventana GDI /
 Direct3D 9, audio WinMM/DirectSound, menus Win32 completos).
 
+## RELEASE v1.4.12 (publicado 2026-10-23)
+
+- **Tag** `v1.4.12` = commit `37e2443` (main); tag rodante `Latest` movido al mismo commit (`git tag -f Latest && git push -f origin Latest`). GitHub Actions (`build-binaries.yml`, disparado por el push del tag `v1.4.12`) publico el release `v1.4.12` con sus 5 assets (run 39897449744, success).
+- Contenido: **OBJ mosaic implementado en `render_objs` (src/ppu.c)** segun GBATEK ("Mosaic Function", seccion OBJ) y contrastado contra el renderer software de mGBA (`software-obj.c` + `video-software.c`):
+  - Activacion por OBJ: `attr0` bit 12 (`Mosaic`).
+  - Tamano por OBJ: registro `MOSAIC` bits **8-11** = OBJ H-Size (−1), bits **12-15** = OBJ V-Size (−1); deshabilitado si el OBJ no tiene el bit.
+  - **Cuadricula alineada a pantalla** (como mGBA): el bloque se engancha en `outX % mosaicH == 0` y `mosaicY = y - (y % mosaicV)`.
+  - Cada pixel es colorizado por el **pixel superior-izquierdo** del bloque que lo cubre (GBATEK).
+  - El bloque vertical se engancha por **scanline** y se sujeta a las filas visibles del sprite (`if (mos_y < ypos) mos_y = ypos; if (mos_y >= ypos+bh) mos_y = ypos+bh-1`), igual que el clamp de mGBA (`video-software.c:1043-1049`).
+  - Affine OBJ: el transform se muestrea en el **origen del bloque** (screen-aligned).
+  - Los mosaics de OBJ no-rotados mantienen h/v-flip correcto.
+  - `tools/test_obj_mosaic.c`: test sintetico (OBJ 16x16 con mosaic en X=40,Y=20) que togglea el bit 12 de attr0 y verifica que cambian los pixeles renderizados (CRC mosaic `BA8F8CB0` vs normal `F1ED8DD1`).
+  - Sin regresion en los 3 test ROMs: Emerald, Medabots AX, Fire Emblem mantienen registros DISPCNT/BLDCNT/BLDY identicos antes/despues.
+- Ademas: fix de `-Wformat-truncation` en `path_abspath` (`src/main.c`: `snprintf("%.*s", outsz-1, ...)`).
+- Verificado: `make` limpiо (sin warnings); `make -f Makefile.win32` y `ARCH=i686` compilan **sin warnings** y producen PE32/PE32+ de subsistema GUI=2 con solo DLLs nativas (KERNEL32/USER32/GDI32/SHELL32/d3d9/winmm/comdlg32/msvcrt, **sin SDL2**).
+
 ## RELEASE v1.4.11 (publicado 2026-10-22)
 
 - **Tag** `v1.4.11` = commit `134ecab` (main); tag rodante `Latest` movido al mismo commit (`git tag -f Latest && git push -f origin Latest`). GitHub Actions (`build-binaries.yml`, disparado por el push del tag `v1.4.11`) publico el release `v1.4.11` (id 421109179) con sus 5 assets.
