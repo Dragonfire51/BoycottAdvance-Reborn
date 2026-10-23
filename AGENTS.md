@@ -70,6 +70,31 @@ memoria contra mGBA / la referencia), no "a ojo". Aportar numeros antes/despues.
 **Regla de la rama Win32**: no introducir SDL2. La GUI es nativa (ventana GDI /
 Direct3D 9, audio WinMM/DirectSound, menus Win32 completos).
 
+**REGLA DE REFERENCIA (obligatoria)**: para la correccion de registros, timings y
+renderizado, la referencia es **GBATEK** (`https://problemkaputt.de/gbatek.txt`),
+NO el codigo de mGBA. mGBA se usa solo como comparador de salida (framebuffer),
+nunca como especificacion: copiar sus trucos/desvios ha introducido regresiones
+(ver v1.4.13 -> v1.4.14). Antes de cambiar un offset o una tabla, citar la linea
+de GBATEK y anotar el numero de registro exacto.
+
+**Verificacion de offsets**: contrastar SIEMPRE contra la tabla del "GBA I/O Map"
+de GBATEK. Mapa de ventanas correcto: WIN0H `0x040`, WIN1H `0x042`, WIN0V
+`0x044`, WIN1V `0x046`, WININ `0x048`, WINOUT `0x04A`, MOSAIC `0x04C`,
+BLDCNT `0x050`, BLDALPHA `0x052`, BLDY `0x054`. (El commit 8653e81 de v1.4.13
+los desplazo +4 bytes y rompio todas las capas con ventana.)
+
+## RELEASE v1.4.14 (publicado 2026-10-23)
+
+- **Tag** `v1.4.14` = commit `43e704e` (main); tag rodante `Latest` movido al mismo commit. Publicado con 5 assets (release id 422393808 + Latest id 413237927).
+- **TAGS Y RELEASES ANTIGUOS BORRADOS** por peticion del usuario (sus compilaciones no funcionan bien): quedan solo las tags `v1.4.14` y `Latest`, y solo los releases `v1.4.14` y `Latest`. Los releases v1.2.0..v1.4.13 y sus tags se eliminaron via API.
+- Contenido (todo verificado contra GBATEK):
+  - **`src/mem.c` (REGLA DE LA REGRESION)**: restaurados los offsets de ventana. El bloque vuelve a WIN0H/WIN1H/WIN0V/WIN1V = 0x40/42/44/46 y WININ/WINOUT = 0x48/4A. El commit 8653e81 de v1.4.13 lo habia desplazado +4 bytes, corrompiendo cajas de dialogo, menus y fundidos en Pokemon Esmeralda, Medabots AX y Fire Emblem. `mem.c` queda funcionalmente identico a v1.4.12.
+  - **`src/apu.c`**: tabla de duty PSG segun GBATEK (`{0x80,0xC0,0xF0,0xFC}`, pulso HIGH en el primer paso). La tabla de Pan Docs (`{01,81,87,7E}`) tenia el pulso desfasado 4 pasos => timbre erroneo en los blips de menu.
+  - **`src/ppu.c`**: en modos bitmap 3-5 el tile de OBJ indexa el area de 16K en `0x06014000` con mascara de 9 bits (slot 0-511), sin underflow; modos 0-2 usan 10 bits sobre `0x06010000`.
+  - **`src/gba.c`**: el flag VBlank de DISPSTAT se pone en lineas 160..226 (no en la 227).
+- **No es bug**: el destello blanco al final de la intro del BIOS es autentico (el BIOS real hace fade a blanco antes del handoff al cartucho). Confirmado: ocurre igual en v1.4.12.
+- Binarios: los 3 targets compilan sin warnings (`make`, `make -f Makefile.win32`, `ARCH=i686`). Windows nativo sin SDL2.
+
 ## RELEASE v1.4.13 (publicado 2026-10-23)
 
 - **Tag** `v1.4.13` = commit `f11007a` (main); tag rodante `Latest` movido al mismo commit (`git tag -f Latest && git push -f origin Latest`).
