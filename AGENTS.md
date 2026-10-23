@@ -259,3 +259,10 @@ Atrapa la primera exec en IWRAM e imprime ring buffer + registros.
   - `2d-wrap`: 128 px (0.33%) de delta de color en un sprite envuelto (rojo vs verde del baseline). No es bug claro: el baseline no esta alineado al frame (el test anima VRAM/paleta), el sprite se renderiza en posicion y forma correctas.
   - `blend/disabled-bg-semitrans-blend`: fondo modo4+fade coincide (diferencias de +-1 canal = artefacto de tone-map 555<->888), pero ~800 px de OBJ colorido (verde/rojo) que mGBA dibuja y nosotros no, con VRAM OBJ supuestamente vacia: sospechoso de pagina del bitmap o prioridad OBJ/BG en modo 4. PENDIENTE de resolver.
 - Recordatorio: convertir RGB555 a RGB888 con `(c&31)<<3|(c&31)>>2` para comparar con baselines PNG; un delta de 1 en 8-bit NO es divergencia real de render.
+
+## FIX 2026-10: direcciones de los registros de ventana (WINx) en mem.c
+
+- **Bug**: `io_write16` mapeaba WIN0H/WIN1H en 0x040/0x042, WIN0V/WIN1V en 0x044/0x046 y WININ/WINOUT en 0x048/0x04A (desplazado 8 bytes).
+- **GBATEK**: WININ=0x040, WINOUT=0x042, WIN0H=0x044, WIN1H=0x046, WIN0V=0x048, WIN1V=0x04A. Corregido en `src/mem.c` (reads y writes).
+- Impacto: juegos que escriben ventanas en la horquilla 0x40-0x4A ahora configuran la ventana real; antes la ventana salia deformada (x/y intercambiados) y podia aplicar blend/BG wrong dentro de WIN0.
+- Regresion: Medabots AX 0.00%, Pokemon Esmeralda 0.00%, FE identico a previo (screen 0% diff). Test 2d-wrap sin regresion (sigue alineado al frame).
