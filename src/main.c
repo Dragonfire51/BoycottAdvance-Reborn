@@ -254,8 +254,8 @@ static void path_abspath(const char *in, char *out, size_t outsz) {
     if (!n || n >= outsz) snprintf(out, outsz, "%s", in);
 #else
     char tmp[PATH_MAX];
-    if (realpath(in, tmp)) snprintf(out, outsz, "%s", tmp);
-    else snprintf(out, outsz, "%s", in);
+    if (realpath(in, tmp)) snprintf(out, outsz, "%.*s", (int)(outsz - 1), tmp);
+    else snprintf(out, outsz, "%.*s", (int)(outsz - 1), in);
 #endif
 }
 static void rom_dir_enter(const char *dir) {

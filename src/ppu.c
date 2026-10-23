@@ -185,6 +185,23 @@ static void render_objs(GBA *g, int y) {
         int tstep = pal256 ? 2 : 1;                        /* 8x8 tile = 1 or 2 32-byte slots */
         int row_stride = one_d ? (w >> 3) * tstep : 32;
 
+        /* OBJ mosaic (GBATEK "Mosaic Function"): per-OBJ enable in attr0 bit 12,
+         * sizes from the MOSAIC register bits 8-15 (minus 1). The mosaic grid is
+         * aligned to the screen (as mGBA): a pixel is colorized by the upper-left
+         * covered pixel of its block, and the vertical block is latched per
+         * scanline and clamped to the sprite's on-screen rows. */
+        bool obj_mos = a0 & 0x1000;
+        int mh = obj_mos ? ((p->mosaic >> 8) & 0xF) + 1 : 1;
+        int mv = obj_mos ? ((p->mosaic >> 12) & 0xF) + 1 : 1;
+        int ry_eff = ry;
+        if (obj_mos && mv > 1) {
+            int mos_y = y - (y % mv);
+            if (mos_y < ypos && ypos < SCREEN_H) mos_y = ypos;
+            if (mos_y >= ypos + bh) mos_y = ypos + bh - 1;
+            ry_eff = (mos_y - ypos) & 0xFF;
+            if (ry_eff >= bh) ry_eff = bh - 1;
+        }
+
         int pa = 0, pb = 0, pc = 0, pd = 0;
         if (aff) {
             int grp = ((a1 >> 9) & 0x1F) * 32;
@@ -197,13 +214,21 @@ static void render_objs(GBA *g, int y) {
             if (scr_x < 0 || scr_x >= SCREEN_W) continue;
             int tx, ty;
             if (aff) {
-                int cx = bx - bw / 2, cy = ry - bh / 2;
+                /* screen-aligned: sample the transform at the block origin */
+                int obx = (mh > 1) ? bx - (scr_x % mh) : bx;
+                int cx = obx - bw / 2, cy = ry_eff - bh / 2;
                 tx = ((pa * cx + pb * cy) >> 8) + w / 2;
                 ty = ((pc * cx + pd * cy) >> 8) + h / 2;
                 if (tx < 0 || tx >= w || ty < 0 || ty >= h) continue;
             } else {
-                tx = (a1 & 0x1000) ? w - 1 - bx : bx;
-                ty = (a1 & 0x2000) ? h - 1 - ry : ry;
+                if (mh > 1) {
+                    int off = scr_x % mh;               /* block offset, scr_x >= 0 */
+                    tx = (a1 & 0x1000) ? (w - 1 - bx) + off : bx - off;
+                    if (tx < 0) tx = 0; else if (tx > w - 1) tx = w - 1;
+                } else {
+                    tx = (a1 & 0x1000) ? w - 1 - bx : bx;
+                }
+                ty = (a1 & 0x2000) ? h - 1 - ry_eff : ry_eff;
             }
             uint32_t slot = (uint32_t)(tno + (ty >> 3) * row_stride + (tx >> 3) * tstep) & 0x3FF;
             uint32_t tbase = obj_base + slot * 32;
