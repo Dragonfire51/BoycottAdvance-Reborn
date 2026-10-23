@@ -160,7 +160,8 @@ static void render_objs(GBA *g, int y) {
 
     int mode = p->dispcnt & 7;
     bool one_d = p->dispcnt & 0x40;
-    uint32_t obj_base = (mode >= 3) ? 0x14000 : 0x10000;   /* NOT dispcnt bit 5 */
+    uint32_t obj_base = 0x10000;                          /* OBJ VRAM base regardless of mode
+                                                           * (GBATEK: 0x06010000, 16K) */
 
     for (int o = 0; o < 128; o++) {
         uint16_t a0 = oam16(g, o * 8), a1 = oam16(g, o * 8 + 2), a2 = oam16(g, o * 8 + 4);
@@ -231,6 +232,9 @@ static void render_objs(GBA *g, int y) {
                 ty = (a1 & 0x2000) ? h - 1 - ry_eff : ry_eff;
             }
             uint32_t slot = (uint32_t)(tno + (ty >> 3) * row_stride + (tx >> 3) * tstep) & 0x3FF;
+            /* Bitmap modes: tile numbers 512-1023 map to OBJ VRAM 0..16K-1
+             * (GBATEK "OBJ Tiles 06010000h"; tile 512 is the first slot). */
+            if (mode >= 3) slot -= 512;
             uint32_t tbase = obj_base + slot * 32;
             int px = tx & 7, py = ty & 7, c, palidx;
             if (pal256) {

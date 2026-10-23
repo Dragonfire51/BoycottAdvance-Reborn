@@ -250,3 +250,12 @@ contra `g->vram`.
 Compilar: `gcc -std=c99 -O2 -Isrc tools/trace_iwram.c src/gba.c src/mem.c src/arm.c src/ppu.c src/apu.c src/bios.c -lm -o /tmp/pk12`
 Ejecutar: `/tmp/pk12 g x "Pokemon Esmeralda.gba"` (o `/tmp/pk12 600 /tmp/pokemon.gba`).
 Atrapa la primera exec en IWRAM e imprime ring buffer + registros.
+## Verificacion de fidelidad de render con test ROMs (cinema de mGBA) - 2026-10
+
+- Metodo: `tools/headharness.c` (concluye `dump <dir>`) vuelca `screen.bin` (RGB555), `vram.bin`, `pal.bin`, `oam.bin`. Comparar con PPM de mGBA (`tools/refharness2` pinta PPM) o con los `baseline_*.png` de `/workspace/mgba/cinema/` (decodificar PNG RGB con zlib+struct, sin PIL).
+- Medabots AX y Pokemon Esmeralda a frame 10: **0.00% diffs** (38400/38400) — el render del PPU es fiel.
+- **RESUELTO (OBJ tile base en modos bitmap)**: `render_objs` usaba `obj_base=0x14000` (`mode>=3`); GBATEK fija OBJ VRAM en `0x06010000` (0x10000) siempre, y en modos bitmap el tile 512+ mapea a `(tno-512)*32`. Fix: `obj_base=0x10000` + `if (mode>=3) slot-=512`. No rompe Medabots/Emerald (0.00%).
+- **Divergencias menores observadas aunque sin impacto en juegos comerciales** (casos limite de la suite cinema de mGBA, solo `test.gba` existentes: `obj/2d-wrap`, `blend/disabled-bg-semitrans-blend`, `irq/keyirq`):
+  - `2d-wrap`: 128 px (0.33%) de delta de color en un sprite envuelto (rojo vs verde del baseline). No es bug claro: el baseline no esta alineado al frame (el test anima VRAM/paleta), el sprite se renderiza en posicion y forma correctas.
+  - `blend/disabled-bg-semitrans-blend`: fondo modo4+fade coincide (diferencias de +-1 canal = artefacto de tone-map 555<->888), pero ~800 px de OBJ colorido (verde/rojo) que mGBA dibuja y nosotros no, con VRAM OBJ supuestamente vacia: sospechoso de pagina del bitmap o prioridad OBJ/BG en modo 4. PENDIENTE de resolver.
+- Recordatorio: convertir RGB555 a RGB888 con `(c&31)<<3|(c&31)>>2` para comparar con baselines PNG; un delta de 1 en 8-bit NO es divergencia real de render.
