@@ -71,6 +71,36 @@ int main(int argc, char **argv) {
         snprintf(p, sizeof(p), "%s.screen.bin", argv[4]);
         f = fopen(p, "wb"); fwrite(g->ppu.frame, 1, sizeof(g->ppu.frame), f); fclose(f);
         printf("dumped %s.{vram,pal,oam,screen}.bin\n", argv[4]);
+    } else if (!strcmp(cmd, "findshot")) {
+        /* arg = output .ppm; run frames, capture the first frame where the
+           display leaves forced blank (DISPCNT bit 7 clear) with >1000
+           non-black pixels. This is the boot-agnostic "screen on" point. */
+        FILE *fo = NULL;
+        for (int f = 0; f < nframes && !fo; f++) {
+            gba_run_frame(g);
+            if ((g->ppu.dispcnt & 0x0080) == 0) {
+                int nonblack = 0;
+                for (int i = 0; i < SCREEN_W * SCREEN_H; i++)
+                    if (g->ppu.frame[i]) nonblack++;
+                if (nonblack > 1000) {
+                    char p[512];
+                    snprintf(p, sizeof(p), "%s", argv[4]);
+                    fo = fopen(p, "wb");
+                    fprintf(fo, "P6\n240 160\n255\n");
+                    for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
+                        uint16_t c = g->ppu.frame[i];
+                        uint8_t r = (c & 0x1F) << 3;
+                        uint8_t g2 = ((c >> 5) & 0x1F) << 3;
+                        uint8_t b = ((c >> 10) & 0x1F) << 3;
+                        unsigned char rgb[3] = { r | (r >> 5), g2 | (g2 >> 5), b | (b >> 5) };
+                        fwrite(rgb, 1, 3, fo);
+                    }
+                    fclose(fo);
+                    printf("screen-on at frame %d\n", f);
+                }
+            }
+        }
+        if (!fo) printf("no screen-on frame in %d frames\n", nframes);
     } else if (!strcmp(cmd, "audio")) {
         /* print audio regs / fifo state */
         printf("audio regs: 60=%04X 62=%04X 64=%04X 68=%04X 6C=%04X 70=%04X 72=%04X 74=%04X 78=%04X 7C=%04X 80=%04X 82=%04X 84=%04X 88=%04X\n",

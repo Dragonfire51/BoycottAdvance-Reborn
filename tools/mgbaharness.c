@@ -49,8 +49,35 @@ int main(int argc, char** argv) {
     }
 
     long aenergy = 0; size_t atotal = 0;
+    const char* findshot = getenv("FIND_SHOT");
     for (int f = 0; f < nframes; f++) {
         core->runFrame(core);
+        if (findshot && f > 0) {
+            if (!(core->rawRead16(core, 0x04000000, 0) & 0x0080)) {
+                const void* pix; size_t stride;
+                core->getPixels(core, &pix, &stride);
+                const uint32_t* p = pix;
+                int nonblack = 0;
+                for (int i = 0; i < 240 * 160; i++)
+                    if (((const uint32_t*)p)[i]) nonblack++;
+                if (nonblack > 1000) {
+                    FILE* fo = fopen(argv[4], "wb");
+                    if (fo) {
+                        fprintf(fo, "P6\n240 160\n255\n");
+                        for (int y = 0; y < 160; y++)
+                            for (int x = 0; x < 240; x++) {
+                                uint32_t c = p[y * (stride / 4) + x];
+                                unsigned char rgb[3];
+                                rgb[0] = c & 0xFF; rgb[1] = (c >> 8) & 0xFF; rgb[2] = (c >> 16) & 0xFF;
+                                fwrite(rgb, 1, 3, fo);
+                            }
+                        fclose(fo);
+                    }
+                    printf("screen-on at frame %d\n", f);
+                    break;
+                }
+            }
+        }
         if (nframes <= 4000) {
             printf("mf%d %04X\n", f, core->rawRead16(core, 0x04000000, 0));
         }
