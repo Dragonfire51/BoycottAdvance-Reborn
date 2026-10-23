@@ -398,17 +398,21 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Video: OBJ character base in bitmap modes (3/4/5) now reads\n"
-      "    OBJ VRAM at 0x06014000 (GBATEK), so sprites whose tile number\n"
-      "    is 512-1023 are fetched from the correct slot instead of\n"
-      "    wrapping to 0x06010000.\n"
-      "  - Video: window registers fixed to the GBATEK addresses\n"
-      "    (WININ=0x040, WIN0H=0x044, WIN0V=0x048).\n"
-      "  - Video: OBJ mosaic now renders per GBATEK. The per-object\n"
-      "    mosaic bit (attr0 bit 12) and the OBJ H/V sizes from the\n"
-      "    MOSAIC register (bits 8-15) are honoured, the grid is aligned\n"
-      "    to the screen, and each mosaic block is colorized by its\n"
-      "    upper-left covered pixel, matching mGBA's software renderer.");
+      "  - Video: window registers restored to the GBATEK addresses.\n"
+      "    v1.4.13 had them shifted by 4 bytes (WIN0H/WIN1H/WIN0V/\n"
+      "    WIN1V at 0x40/42/44/46, WININ/WINOUT at 0x48/4A), which\n"
+      "    corrupted every windowed layer: dialogue boxes, menus and\n"
+      "    fade transitions in Pokemon Emerald, Medabots AX and Fire\n"
+      "    Emblem. They now match GBATEK exactly again.\n"
+      "  - Audio: PSG wave duty patterns corrected per GBATEK. The old\n"
+      "    Pan Docs table ({01,81,87,7E}) produced split pulses, so\n"
+      "    menu blips and short tones had the wrong timbre.\n"
+      "  - Video: OBJ tiles in bitmap modes 3-5 index the 16K OBJ area\n"
+      "    at 0x06014000 with a 9-bit slot (GBATEK), no underflow.\n"
+      "  - Video: DISPSTAT VBlank flag is set on lines 160..226 only,\n"
+      "    not on line 227 (GBATEK).\n"
+      "  - Video: OBJ mosaic renders per GBATEK (per-object bit, screen\n"
+      "    aligned grid, upper-left colour source).");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

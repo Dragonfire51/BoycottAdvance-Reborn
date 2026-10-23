@@ -230,10 +230,12 @@ static void render_objs(GBA *g, int y) {
                 }
                 ty = (a1 & 0x2000) ? h - 1 - ry_eff : ry_eff;
             }
-            uint32_t slot = (uint32_t)(tno + (ty >> 3) * row_stride + (tx >> 3) * tstep) & 0x3FF;
-            /* Bitmap modes: tile numbers 512-1023 map to OBJ VRAM 0..16K-1
-             * (GBATEK "OBJ Tiles 06010000h"; tile 512 is the first slot). */
-            if (mode >= 3) slot -= 512;
+            /* Tile index within the OBJ character area. BG modes 0-2 have a
+             * 32K area at 0x06010000 (1024 tiles, 10-bit index); bitmap modes
+             * 3-5 only 16K at 0x06014000, and tile numbers 512-1023 map to
+             * slots 0-511 there (GBATEK "VRAM - Character Data"). */
+            uint32_t slot = (uint32_t)(tno + (ty >> 3) * row_stride + (tx >> 3) * tstep);
+            slot = (mode >= 3) ? ((slot - 512) & 0x1FF) : (slot & 0x3FF);
             uint32_t tbase = obj_base + slot * 32;
             int px = tx & 7, py = ty & 7, c, palidx;
             if (pal256) {

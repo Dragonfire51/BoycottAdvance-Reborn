@@ -18,7 +18,13 @@
 /* ciclos de CPU por muestra de salida en punto fijo 16.16 */
 #define STEP_FP  ((CPU_HZ << 16) / SAMPLE_RATE)
 
-static const uint8_t DUTY[4] = { 0x01, 0x81, 0x87, 0x7E };   /* MSB = primer paso */
+/* Wave Duty (GBATEK 4000062h), leido del bit 7 (primer paso) al bit 0:
+ *   0 = 12.5% "-_______"   1 = 25% "--______"
+ *   2 = 50%   "----____"   3 = 75% "------__"
+ * El pulso HIGH arranca en el primer paso de la ventana, tal como lo dibuja
+ * GBATEK. La tabla de Pan Docs ({01,81,87,7E}) tiene el mismo ciclo pero
+ * desfasado 4 pasos: el pulso cae al final de la ventana. Se usa la de GBATEK. */
+static const uint8_t DUTY[4] = { 0x80, 0xC0, 0xF0, 0xFC };
 
 /* ---------------------------------------------------------------- ring buffer */
 #define RING_FRAMES 8192u                   /* potencia de 2 */

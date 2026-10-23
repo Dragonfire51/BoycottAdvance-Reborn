@@ -234,10 +234,10 @@ static void run_frame_core(GBA *g) {
         int vm = (g->ppu.dispstat >> 8) & 0xFF;
         g->ppu.vcount = (uint16_t)line;
 
-        /* DISPSTAT bits 0-1: bit0 VBlank (lineas 160-227), bit1 HBlank en la
+        /* DISPSTAT bits 0-1: bit0 VBlank (lineas 160-226), bit1 HBlank en la
            parte no visible; bit2 VCount match.  Bit1 lo mantiene el nucleo. */
         uint16_t st = (uint16_t)(g->ppu.dispstat & 0xFFF8);
-        if (line >= 160) st |= 0x0001;                      /* VBlank */
+        if (line >= 160 && line <= 226) st |= 0x0001;        /* VBlank (160..226, no 227) */
         if (line == vm)  st |= 0x0004;                      /* VCount match */
         g->ppu.dispstat = st;
 
