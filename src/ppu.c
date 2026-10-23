@@ -160,8 +160,7 @@ static void render_objs(GBA *g, int y) {
 
     int mode = p->dispcnt & 7;
     bool one_d = p->dispcnt & 0x40;
-    uint32_t obj_base = 0x10000;                          /* OBJ VRAM base regardless of mode
-                                                           * (GBATEK: 0x06010000, 16K) */
+    uint32_t obj_base = (mode >= 3) ? 0x14000 : 0x10000;  /* OBJ char base in bitmap modes (GBATEK) */
 
     for (int o = 0; o < 128; o++) {
         uint16_t a0 = oam16(g, o * 8), a1 = oam16(g, o * 8 + 2), a2 = oam16(g, o * 8 + 4);

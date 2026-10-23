@@ -16,7 +16,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define GBA_VERSION  "v1.4.12"
+#define GBA_VERSION  "v1.4.13"
 #define GBA_NAME     "BoycottAdvance Reborn"
 #define GBA_TITLE    GBA_NAME " " GBA_VERSION
 

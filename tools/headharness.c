@@ -21,7 +21,7 @@ int main(int argc, char **argv) {
 
     for (int f = 0; f < nframes; f++) {
         gba_run_frame(g);
-        if (f < 4000) printf("f%d %04X\n", f, g->ppu.dispcnt);
+                if (f < 4000) printf("f%d dispcnt=%04X bldcnt=%04X\n", f, g->ppu.dispcnt, g->ppu.bldcnt);
     }
 
     printf("frame_count=%d cycle=%u cpu_pc=%08X cpsr=%08X mode=%d thumb=%d\n",
@@ -71,6 +71,55 @@ int main(int argc, char **argv) {
         snprintf(p, sizeof(p), "%s.screen.bin", argv[4]);
         f = fopen(p, "wb"); fwrite(g->ppu.frame, 1, sizeof(g->ppu.frame), f); fclose(f);
         printf("dumped %s.{vram,pal,oam,screen}.bin\n", argv[4]);
+    } else if (!strcmp(cmd, "renderstate")) {
+        /* arg = prefix: load vram/pal/oam + regs, render one frame, save screen.
+         * regs file format (text, one per line): name=value in hex, names as in
+         * the ppu struct: dispcnt dispstat bgcnt0..3 bghofs0..3 bgvofs0..3
+         * winh0 winh1 winv0 winv1 winin winout bldcnt bldalpha bldy */
+        char p[512];
+        snprintf(p, sizeof(p), "%s.vram.bin", argv[4]);
+        FILE *f = fopen(p, "rb"); if (f) { fread(g->vram, 1, sizeof(g->vram), f); fclose(f); }
+        snprintf(p, sizeof(p), "%s.pal.bin", argv[4]);
+        f = fopen(p, "rb"); if (f) { fread(g->pal, 1, sizeof(g->pal), f); fclose(f); }
+        snprintf(p, sizeof(p), "%s.oam.bin", argv[4]);
+        f = fopen(p, "rb"); if (f) { fread(g->oam, 1, sizeof(g->oam), f); fclose(f); }
+        snprintf(p, sizeof(p), "%s.regs", argv[4]);
+        f = fopen(p, "r");
+        if (f) {
+            char k[32]; unsigned v;
+            while (fscanf(f, "%31[a-zA-Z0-9_]=%x", k, &v) == 2) {
+                if (!strcmp(k, "dispcnt")) g->ppu.dispcnt = v;
+                else if (!strcmp(k, "dispstat")) g->ppu.dispstat = v;
+                else if (!strcmp(k, "bgcnt0")) g->ppu.bgcnt[0] = v;
+                else if (!strcmp(k, "bgcnt1")) g->ppu.bgcnt[1] = v;
+                else if (!strcmp(k, "bgcnt2")) g->ppu.bgcnt[2] = v;
+                else if (!strcmp(k, "bgcnt3")) g->ppu.bgcnt[3] = v;
+                else if (!strcmp(k, "bghofs0")) g->ppu.bghofs[0] = v;
+                else if (!strcmp(k, "bghofs1")) g->ppu.bghofs[1] = v;
+                else if (!strcmp(k, "bghofs2")) g->ppu.bghofs[2] = v;
+                else if (!strcmp(k, "bghofs3")) g->ppu.bghofs[3] = v;
+                else if (!strcmp(k, "bgvofs0")) g->ppu.bgvofs[0] = v;
+                else if (!strcmp(k, "bgvofs1")) g->ppu.bgvofs[1] = v;
+                else if (!strcmp(k, "bgvofs2")) g->ppu.bgvofs[2] = v;
+                else if (!strcmp(k, "bgvofs3")) g->ppu.bgvofs[3] = v;
+                else if (!strcmp(k, "winh0")) g->ppu.winh[0] = v;
+                else if (!strcmp(k, "winh1")) g->ppu.winh[1] = v;
+                else if (!strcmp(k, "winv0")) g->ppu.winv[0] = v;
+                else if (!strcmp(k, "winv1")) g->ppu.winv[1] = v;
+                else if (!strcmp(k, "winin")) g->ppu.winin = v;
+                else if (!strcmp(k, "winout")) g->ppu.winout = v;
+                else if (!strcmp(k, "bldcnt")) g->ppu.bldcnt = v;
+                else if (!strcmp(k, "bldalpha")) g->ppu.bldalpha = v;
+                else if (!strcmp(k, "bldy")) g->ppu.bldy = v;
+            }
+            fclose(f);
+        }
+        ppu_render_frame(g);
+        snprintf(p, sizeof(p), "%s.render.screen.bin", argv[4]);
+        f = fopen(p, "wb"); fwrite(g->ppu.frame, 1, sizeof(g->ppu.frame), f); fclose(f);
+        snprintf(p, sizeof(p), "%s.render.dbspcnt", argv[4]);
+        f = fopen(p, "wb"); fwrite(&g->ppu.dispcnt, 2, 1, f); fclose(f);
+        printf("rendered %s.render.screen.bin (dispcnt=%04X)\n", argv[4], g->ppu.dispcnt);
     } else if (!strcmp(cmd, "findshot")) {
         /* arg = output .ppm; run frames, capture the first frame where the
            display leaves forced blank (DISPCNT bit 7 clear) with >1000

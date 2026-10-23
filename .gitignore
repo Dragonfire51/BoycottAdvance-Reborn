@@ -5,3 +5,6 @@ boycottadvance-reborn-*.exe
 *.ppm
 boycottadvance-reborn.ini
 *.res
+
+# local test ROMs
+/tmp_*.gba

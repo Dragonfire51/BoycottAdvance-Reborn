@@ -351,6 +351,12 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
+      "  - Video: OBJ character base in bitmap modes (3/4/5) now reads\n"
+      "    OBJ VRAM at 0x06014000 (GBATEK), so sprites whose tile number\n"
+      "    is 512-1023 are fetched from the correct slot instead of\n"
+      "    wrapping to 0x06010000.\n"
+      "  - Video: window registers fixed to the GBATEK addresses\n"
+      "    (WININ=0x040, WIN0H=0x044, WIN0V=0x048).\n"
       "  - Video: OBJ mosaic now renders per GBATEK. The per-object\n"
       "    mosaic bit (attr0 bit 12) and the OBJ H/V sizes from the\n"
       "    MOSAIC register (bits 8-15) are honoured, the grid is aligned\n"

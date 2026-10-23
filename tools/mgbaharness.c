@@ -96,22 +96,29 @@ int main(int argc, char** argv) {
     printf("audio total=%zu sr=%u aenergy=%ld\n", atotal, core->audioSampleRate(core), aenergy);
 
     if (argc > 4 && core->getPixels) {
-        const void* pix; size_t stride;
-        core->getPixels(core, &pix, &stride);
-        const uint32_t* p = pix;
         FILE* f = fopen(argv[4], "wb");
-        if (f) {
-            fprintf(f, "P6\n240 160\n255\n");
+        fprintf(f, "P6\n240 160\n255\n");
+        if (getenv("PPM_FROM_FB")) {
+            for (int i = 0; i < 240 * 160; i++) {
+                uint32_t c = fb[i];
+                unsigned char rgb[3];
+                rgb[0] = c & 0xFF; rgb[1] = (c >> 8) & 0xFF; rgb[2] = (c >> 16) & 0xFF;
+                fwrite(rgb, 1, 3, f);
+            }
+        } else {
+            const void* pix; size_t stride;
+            core->getPixels(core, &pix, &stride);
+            const uint32_t* p = pix;
             for (int y = 0; y < 160; y++)
                 for (int x = 0; x < 240; x++) {
                     uint32_t c = p[y * (stride / 4) + x];
                     unsigned char rgb[3];
-                    rgb[0] = c & 0xFF; rgb[1] = (c >> 8) & 0xFF; rgb[2] = (c >> 16) & 0xFF; /* mColor is 0x00BBGGRR */
+                    rgb[0] = c & 0xFF; rgb[1] = (c >> 8) & 0xFF; rgb[2] = (c >> 16) & 0xFF;
                     fwrite(rgb, 1, 3, f);
                 }
-            fclose(f);
-            printf("wrote %s\n", argv[4]);
         }
+        fclose(f);
+        printf("wrote %s\n", argv[4]);
     }
 
     const char* dd = getenv("DUMPDIR");
