@@ -12,3 +12,7 @@ boycottadvance-reborn.ini
 
 # local capture artifacts
 *.mp4
+
+# Python
+__pycache__/
+*.pyc
