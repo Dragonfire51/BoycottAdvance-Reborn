@@ -63,6 +63,7 @@ int main(int argc, char** argv) {
     }
 
     long aenergy = 0; size_t atotal = 0;
+    FILE* af = (argc > 3 && strcmp(argv[3], "/dev/null")) ? fopen(argv[3], "wb") : NULL;
     const char* findshot = getenv("FIND_SHOT");
     const char* reglog = getenv("REGLOG");
     FILE* rf = reglog ? fopen(reglog, "w") : NULL;
@@ -137,9 +138,11 @@ int main(int argc, char** argv) {
             while ((got = mAudioBufferRead(ab, pcm, 4096)) > 0) {
                 for (size_t i = 0; i < got * 2; i++) aenergy += (long)pcm[i] * pcm[i];
                 atotal += got;
+                if (af) fwrite(pcm, sizeof(int16_t) * 2, got, af);
             }
         }
     }
+    if (af) fclose(af);
     printf("audio total=%zu sr=%u aenergy=%ld\n", atotal, core->audioSampleRate(core), aenergy);
 
     if (argc > 4 && core->getPixels) {

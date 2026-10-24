@@ -22,8 +22,19 @@ int main(int argc, char **argv) {
     g->bios_fastboot = true;   /* same HLE boot as the app default */
     gba_reset(g);
 
+    /* PCMDUMP=<path>: write the APU stream as raw s16le stereo, so it can be
+       compared sample-by-sample against mGBA's audio output. */
+    FILE *pcm = NULL;
+    if (getenv("PCMDUMP")) pcm = fopen(getenv("PCMDUMP"), "wb");
+
     for (int f = 0; f < nframes; f++) {
         gba_run_frame(g);
+        if (pcm) {
+            int16_t buf[4096];
+            int n;
+            while ((n = apu_drain(buf, 2048)) > 0)
+                fwrite(buf, sizeof(int16_t) * 2, (size_t)n, pcm);
+        }
         if (getenv("REGLOG") && f < 4000) {
             printf("f%d dispcnt=%04X dispstat=%04X if=%04X ie=%04X ime=%d",
                    f, g->ppu.dispcnt, g->ppu.dispstat, g->if_reg, g->ie, g->ime ? 1 : 0);
@@ -45,6 +56,7 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (pcm) fclose(pcm);
     printf("frame_count=%d cycle=%u cpu_pc=%08X cpsr=%08X mode=%d thumb=%d\n",
            (int)g->frame_count, (unsigned)g->cycle, g->cpu.r[15], g->cpu.cpsr,
            g->cpu.cpsr & 0x1F, (g->cpu.cpsr >> 5) & 1);
