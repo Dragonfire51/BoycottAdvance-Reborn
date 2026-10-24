@@ -334,3 +334,18 @@ Atrapa la primera exec en IWRAM e imprime ring buffer + registros.
   y el link de i686 fallaba con "file format not recognized" al enlazar objetos x86_64.
 - Verificado con MinGW: los .exe importan solo comdlg32, d3d9, GDI32, KERNEL32,
   msvcrt, SHELL32, USER32 y WINMM. Cero simbolos SDL. `-Wall -Wextra` sin warnings.
+
+## 2026-10: audio nativo Win32 - waveOutWrite fuera del callback
+
+- `wave_proc` (WOM_DONE) llamaba `waveOutWrite` dentro del propio callback. MSDN
+  prohibe invocar cualquier funcion waveOut desde un callback; varios drivers
+  corrompen el stream -> el tipico crujido/distorsion del audio nativo.
+- Arreglo: el callback solo hace `SetEvent(done)` (evento auto-reset); un hilo
+  dedicado mezcla el siguiente fragmento y lo reencola. `audio_close` para el hilo
+  antes de `waveOutReset` para que el drain no compita con el reencolado.
+
+## 2026-10: Esmeralda - el diff de la transicion es desfase, no render
+
+- Con VRAM/paleta/registros identicos, el diff de f190+ es fase: contenido identico
+  al alinear con delta +1..+2, y va creciendo hasta ~15 frames (mGBA congela la
+  pantalla de carga mientras nosotros avanzamos). Confirma la regla de fase anterior.
