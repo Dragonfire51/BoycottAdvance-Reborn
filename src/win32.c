@@ -86,32 +86,47 @@ typedef struct {
     WAVEHDR   hdr[AUDIO_FRAGS];
     int16_t  *buf[AUDIO_FRAGS];
     int       cur;
-    volatile int closing;   /* set before shutdown so the callback stops requeueing */
+    HANDLE    thread, done;   /* refill thread + WOM_DONE event */
+    volatile int closing;
 } Audio;
 static Audio g_audio;
+
+/* Fill a fragment from the APU (or silence when sound is off). */
+static void audio_fill(int16_t *dst) {
+    if (cfg.sound_enable && g) {
+        apu_mix(g, dst, AUDIO_SAMPLES);
+        if (cfg.reverse_stereo)
+            for (int i = 0; i < AUDIO_SAMPLES; i++) {
+                int16_t l = dst[i*2];
+                dst[i*2] = dst[i*2+1];
+                dst[i*2+1] = l;
+            }
+    } else {
+        memset(dst, 0, (size_t)AUDIO_SAMPLES * 2 * sizeof(int16_t));
+    }
+}
+
+/* waveOut notifies completion by signalling an auto-reset event. Mixing and
+ * re-queueing happen here, off the callback: MSDN forbids calling any waveOut
+ * function (waveOutWrite included) from a waveOut callback, and several
+ * drivers corrupt the stream when that rule is broken. */
+static DWORD WINAPI audio_thread(LPVOID param) {
+    Audio *a = (Audio *)param;
+    for (;;) {
+        WaitForSingleObject(a->done, 100);
+        if (a->closing) break;
+        audio_fill(a->buf[a->cur]);
+        waveOutWrite(a->hwo, &a->hdr[a->cur], sizeof(WAVEHDR));
+        a->cur = (a->cur + 1) % AUDIO_FRAGS;
+    }
+    return 0;
+}
 
 static void CALLBACK wave_proc(HWAVEOUT hwo, UINT uMsg, DWORD_PTR inst,
                                DWORD_PTR p1, DWORD_PTR p2) {
     (void)hwo; (void)p1; (void)p2;
     if (uMsg != WOM_DONE) return;
-    Audio *a = (Audio *)inst;
-    /* During shutdown the buffers must not be re-queued, otherwise
-       waveOutReset can never drain and waveOutClose deadlocks. */
-    if (a->closing) return;
-    /* Mix in fresh audio for the finished fragment. */
-    if (cfg.sound_enable && g) {
-        apu_mix(g, a->buf[a->cur], AUDIO_SAMPLES);
-        if (cfg.reverse_stereo)
-            for (int i = 0; i < AUDIO_SAMPLES; i++) {
-                int16_t l = a->buf[a->cur][i*2];
-                a->buf[a->cur][i*2] = a->buf[a->cur][i*2+1];
-                a->buf[a->cur][i*2+1] = l;
-            }
-    } else {
-        memset(a->buf[a->cur], 0, (size_t)AUDIO_SAMPLES * 2 * sizeof(int16_t));
-    }
-    waveOutWrite(hwo, &a->hdr[a->cur], sizeof(WAVEHDR));
-    a->cur = (a->cur + 1) % AUDIO_FRAGS;
+    SetEvent(((Audio *)inst)->done);
 }
 
 static int audio_open(void) {
@@ -125,9 +140,14 @@ static int audio_open(void) {
     wf.nAvgBytesPerSec = wf.nSamplesPerSec * wf.nBlockAlign;
 
     memset(&g_audio, 0, sizeof g_audio);
+    g_audio.done = CreateEventW(NULL, FALSE, FALSE, NULL);
+    if (!g_audio.done) return -1;
     if (waveOutOpen(&g_audio.hwo, WAVE_MAPPER, &wf, (DWORD_PTR)wave_proc,
-                    (DWORD_PTR)&g_audio, CALLBACK_FUNCTION) != MMSYSERR_NOERROR)
+                    (DWORD_PTR)&g_audio, CALLBACK_FUNCTION) != MMSYSERR_NOERROR) {
+        CloseHandle(g_audio.done);
+        g_audio.done = NULL;
         return -1;
+    }
     for (int i = 0; i < AUDIO_FRAGS; i++) {
         g_audio.buf[i] = (int16_t *)calloc((size_t)AUDIO_SAMPLES * AUDIO_CHANNELS, sizeof(int16_t));
         g_audio.hdr[i].lpData = (LPSTR)g_audio.buf[i];
@@ -135,13 +155,20 @@ static int audio_open(void) {
         waveOutPrepareHeader(g_audio.hwo, &g_audio.hdr[i], sizeof(WAVEHDR));
         waveOutWrite(g_audio.hwo, &g_audio.hdr[i], sizeof(WAVEHDR));
     }
+    g_audio.thread = CreateThread(NULL, 0, audio_thread, &g_audio, 0, NULL);
     return 0;
 }
 static void audio_close(void) {
     if (!g_audio.hwo) return;
-    /* Stop the callback from re-queueing before resetting, or waveOutReset
-       never drains and waveOutClose blocks forever. */
+    /* Stop the refill thread before resetting, or it can re-queue a buffer
+       while waveOutReset is draining and waveOutClose then blocks. */
     g_audio.closing = 1;
+    if (g_audio.thread) {
+        if (g_audio.done) SetEvent(g_audio.done);   /* wake the thread promptly */
+        WaitForSingleObject(g_audio.thread, 1000);
+        CloseHandle(g_audio.thread);
+        g_audio.thread = NULL;
+    }
     waveOutReset(g_audio.hwo);
     for (int i = 0; i < AUDIO_FRAGS; i++) {
         if (g_audio.hdr[i].dwFlags & WHDR_PREPARED)
@@ -151,6 +178,7 @@ static void audio_close(void) {
     }
     waveOutClose(g_audio.hwo);
     g_audio.hwo = NULL;
+    if (g_audio.done) { CloseHandle(g_audio.done); g_audio.done = NULL; }
 }
 
 /* ------------------------------------------------------------------ keypad */
