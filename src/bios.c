@@ -467,6 +467,11 @@ static void swi_diffunfilter(GBA *g, bool vram, bool is16bit) {
 void gba_swi(GBA *g, uint32_t comment) {
     uint32_t swi_num = comment & 0xFF;
 
+    /* GBATEK: durante la ejecucion del handler del SWI, una lectura a la BIOS
+       devuelve el prefetch de 0x188+8. Como el SWI se emula (no se ejecuta el
+       vector real de la BIOS), hay que fijarlo aqui. */
+    g->bios_prefetch = 0xE3A02004u;
+
     /* Advance the program counter past the SWI instruction before running
        the handler. Handlers such as Halt/IntrWait set cst.halt, which the
        frame loop then uses to sleep the CPU until the next interrupt. */
@@ -542,4 +547,7 @@ void bios_install_stub(GBA *g) {
     bios_write32(g->bios + 0x134, 0xE510F004u);   /* ldr  pc, [r0, #-4] */
     bios_write32(g->bios + 0x138, 0xE8BD500Fu);   /* pop  {r0-r3, ip, lr} */
     bios_write32(g->bios + 0x13C, 0xE25EF004u);   /* subs pc, lr, #4 */
+    bios_write32(g->bios + 0x144, 0xE55EC002u);   /* ldrb ip, [lr, #-2]: valor que
+                                                     retiene el prefetcher al
+                                                     volver de la IRQ */
 }

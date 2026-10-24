@@ -117,6 +117,12 @@ void gba_reset(GBA *g) {
         gba_write32(g, 0x03FFFFFC, 0x00000300);  /* BIOS default IRQ handler */
     else
         bios_install_stub(g);        /* HLE stub so the first IRQ is harmless */
+
+    /* Tras el arranque real, el prefetcher de la BIOS retiene la palabra que
+       sigue a la ultima instruccion ejecutada en 0x0DC (vector de reset): una
+       lectura a la BIOS desde fuera devuelve [0x0E4] = E129F000. */
+    g->bios_last_pc = 0xFFFFFFFFu;
+    g->bios_prefetch = 0xE129F000u;
 }
 
 void gba_load_bios(GBA *g, const char *path) {

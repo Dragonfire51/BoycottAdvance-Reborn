@@ -34,6 +34,24 @@ static inline uint32_t r15(GBA *g) { return g->cpu.r[15]; }
 static inline void set_pc(GBA *g, uint32_t v) { g->cpu.r[15] = v & ~1u; }
 static inline uint32_t get_cpsr(GBA *g) { return g->cpu.cpsr; }
 static inline void set_cpsr(GBA *g, uint32_t v) { g->cpu.cpsr = v; }
+
+/* GBATEK: al salir de la BIOS, el prefetcher retiene la palabra que la BIOS
+   iba a ejecutar a continuacion (PC_BIOS + 8). Una lectura posterior a la BIOS
+   desde fuera de ella devuelve ese valor, no el contenido de la memoria. Se
+   comprobo contra mGBA: al saltar desde 0x0DC se retiene [0x0E4], desde 0x188
+   [0x190], desde 0x134 [0x13C] y desde 0x13C [0x144]. */
+static inline void bios_track_fetch(GBA *g) {
+    uint32_t pc = g->cpu.r[15];
+    if ((pc >> 24) == 0) {
+        g->bios_last_pc = pc;
+    } else if (g->bios_last_pc != 0xFFFFFFFFu) {
+        uint32_t src = (g->bios_last_pc + 8u) & 0x3FFCu;
+        g->bios_prefetch = g->bios[src] | ((uint32_t)g->bios[src + 1] << 8) |
+                           ((uint32_t)g->bios[src + 2] << 16) |
+                           ((uint32_t)g->bios[src + 3] << 24);
+        g->bios_last_pc = 0xFFFFFFFFu;
+    }
+}
 static inline void add_cycles(GBA *g, uint32_t n) { g->cycle += n; }
 void gba_add_cycles(GBA *g, uint32_t n) { add_cycles(g, n); }
 
@@ -525,6 +543,7 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
 }
 
 void arm_exec(GBA *g) {
+    bios_track_fetch(g);
     arm_exec_at(g, gba_read32(g, r15(g)));
 }
 
@@ -721,6 +740,14 @@ static void thumb_exec_at(GBA *g, uint16_t insn) {
         if (insn & 0x0400) {   /* formato 14 */
             if (insn & 0x0800) {   /* POP {..,pc} */
                 uint32_t sp = read_reg(g, 13);
+                if ((insn & 0xFF) == 0 && !(insn & 0x0100)) {
+                    /* ARM7TDMI "empty reglist" quirk: POP {} transfiere R15 y
+                       suma 0x40 a SP (equivale a LDMIA SP!,{R15} con base += 0x40). */
+                    uint32_t v = gba_read32(g, sp);
+                    write_reg(g, 13, sp + 0x40);
+                    set_pc(g, v & ~1u);
+                    add_cycles(g, 4); return;
+                }
                 for (int k = 0; k < 8; k++) if (insn & (1 << k)) { write_reg(g, k, gba_read32(g, sp)); sp += 4; }
                 if (insn & 0x0100) { uint32_t v = gba_read32(g, sp); sp += 4; write_reg(g, 13, sp); set_pc(g, v & ~1u); add_cycles(g, 4); return; }
                 write_reg(g, 13, sp);
@@ -806,6 +833,7 @@ static void thumb_exec_at(GBA *g, uint16_t insn) {
 }
 
 void thumb_exec(GBA *g) {
+    bios_track_fetch(g);
     thumb_exec_at(g, gba_read16(g, r15(g)));
 }
 

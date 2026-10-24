@@ -220,6 +220,10 @@ typedef struct GBA {
     bool     bios_fastboot;
     bool     bios_loaded;         /* se cargo un volcado real de la BIOS */
     bool     skip_intros;         /* SkipIntroHacks: enter ROM without BIOS wait */
+    uint32_t bios_prefetch;       /* GBATEK: valor que devuelve una lectura a la BIOS
+                                     desde fuera de ella (0x0DC+8, 0x188+8, 0x134+8) */
+    uint32_t bios_last_pc;        /* ultima PC ejecutada dentro de la BIOS; 0xFFFFFFFF
+                                     cuando no se esta ejecutando la BIOS */
 
     uint8_t  ewram[EWRAM_SIZE];   /* 0x02000000 */
     uint8_t  iwram[IWRAM_SIZE];   /* 0x03000000 */

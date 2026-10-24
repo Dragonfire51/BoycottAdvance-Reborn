@@ -372,7 +372,9 @@ static void backup_write8(GBA *g, uint32_t addr, uint8_t v) {
 
 uint32_t gba_read32(GBA *g, uint32_t addr) {
     switch (addr >> 24) {
-    case 0x00: return rd32_al(g->bios + (addr & 0x3FFC));
+    case 0x00:
+        if (g->bios_last_pc == 0xFFFFFFFFu) return g->bios_prefetch;
+        return rd32_al(g->bios + (addr & 0x3FFC));
     case 0x02: return rd32_al(g->ewram + (addr & 0x3FFFC));
     case 0x03: return rd32_al(g->iwram + (addr & 0x7FFC));
     case 0x04: return io_read16(g, addr & ~3u) | ((uint32_t)io_read16(g, (addr & ~3u) + 2) << 16);

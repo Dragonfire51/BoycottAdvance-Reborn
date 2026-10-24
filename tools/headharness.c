@@ -17,6 +17,9 @@ int main(int argc, char **argv) {
 
     GBA *g = calloc(1, sizeof(GBA));
     if (!gba_load_rom(g, rom)) { fprintf(stderr, "load fail\n"); return 1; }
+    const char *bios = getenv("BIOS");
+    if (bios) gba_load_bios(g, bios);
+    g->bios_fastboot = true;   /* same HLE boot as the app default */
     gba_reset(g);
 
     for (int f = 0; f < nframes; f++) {
@@ -70,7 +73,11 @@ int main(int argc, char **argv) {
         f = fopen(p, "wb"); fwrite(g->oam, 1, sizeof(g->oam), f); fclose(f);
         snprintf(p, sizeof(p), "%s.screen.bin", argv[4]);
         f = fopen(p, "wb"); fwrite(g->ppu.frame, 1, sizeof(g->ppu.frame), f); fclose(f);
-        printf("dumped %s.{vram,pal,oam,screen}.bin\n", argv[4]);
+        snprintf(p, sizeof(p), "%s.ewram.bin", argv[4]);
+        f = fopen(p, "wb"); fwrite(g->ewram, 1, sizeof(g->ewram), f); fclose(f);
+        snprintf(p, sizeof(p), "%s.iwram.bin", argv[4]);
+        f = fopen(p, "wb"); fwrite(g->iwram, 1, sizeof(g->iwram), f); fclose(f);
+        printf("dumped %s.{vram,pal,oam,screen,ewram,iwram}.bin\n", argv[4]);
     } else if (!strcmp(cmd, "renderstate")) {
         /* arg = prefix: load vram/pal/oam + regs, render one frame, save screen.
          * regs file format (text, one per line): name=value in hex, names as in
@@ -87,7 +94,7 @@ int main(int argc, char **argv) {
         f = fopen(p, "r");
         if (f) {
             char k[32]; unsigned v;
-            while (fscanf(f, "%31[a-zA-Z0-9_]=%x", k, &v) == 2) {
+            while (fscanf(f, " %31[a-zA-Z0-9_]=%x", k, &v) == 2) {
                 if (!strcmp(k, "dispcnt")) g->ppu.dispcnt = v;
                 else if (!strcmp(k, "dispstat")) g->ppu.dispstat = v;
                 else if (!strcmp(k, "bgcnt0")) g->ppu.bgcnt[0] = v;
@@ -111,6 +118,13 @@ int main(int argc, char **argv) {
                 else if (!strcmp(k, "bldcnt")) g->ppu.bldcnt = v;
                 else if (!strcmp(k, "bldalpha")) g->ppu.bldalpha = v;
                 else if (!strcmp(k, "bldy")) g->ppu.bldy = v;
+                else if (!strcmp(k, "mosaic")) g->ppu.mosaic = v;
+                else if (!strcmp(k, "bgx0")) g->ppu.refx[0] = v;
+                else if (!strcmp(k, "bgy0")) g->ppu.refy[0] = v;
+                else if (!strcmp(k, "pa0")) g->ppu.pa[0] = (int16_t)v;
+                else if (!strcmp(k, "pb0")) g->ppu.pb[0] = (int16_t)v;
+                else if (!strcmp(k, "pc0")) g->ppu.pc[0] = (int16_t)v;
+                else if (!strcmp(k, "pd0")) g->ppu.pd[0] = (int16_t)v;
             }
             fclose(f);
         }
