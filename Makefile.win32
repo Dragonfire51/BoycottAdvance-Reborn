@@ -25,7 +25,11 @@ LDLIBS  = -lwinmm -ld3d9 -lgdi32 -luser32 -lcomdlg32 -lm
 
 SRC = src/gba.c src/mem.c src/arm.c src/ppu.c src/apu.c src/bios.c \
       src/fb.c src/video.c src/gui.c src/eeprom.c src/flash.c src/win32.c
-OBJ = $(SRC:.c=.o) src/icon.res
+
+# Object files live in a per-architecture directory: x86_64 and i686 builds
+# share src/ but their objects are not interchangeable.
+OBJDIR = build/$(ARCH)
+OBJ = $(patsubst src/%.c,$(OBJDIR)/%.o,$(SRC)) $(OBJDIR)/icon.res
 
 TARGET = boycottadvance-reborn-$(ARCH).exe
 
@@ -34,13 +38,16 @@ all: $(TARGET)
 $(TARGET): $(OBJ)
 	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJ) $(LDLIBS) -o $@
 
-src/icon.res: src/icon.rc assets/icon.ico
+$(OBJDIR)/icon.res: src/icon.rc assets/icon.ico | $(OBJDIR)
 	$(RC) -O coff -i $< -o $@
 
-src/%.o: src/%.c
+$(OBJDIR)/%.o: src/%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
+
 clean:
-	rm -f $(OBJ) boycottadvance-reborn-x86_64.exe boycottadvance-reborn-i686.exe
+	rm -rf build boycottadvance-reborn-x86_64.exe boycottadvance-reborn-i686.exe
 
 .PHONY: all clean

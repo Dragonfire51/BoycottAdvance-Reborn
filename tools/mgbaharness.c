@@ -20,6 +20,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <mgba-util/vfs.h>
 
 int main(int argc, char** argv) {
     if (argc < 3) { fprintf(stderr, "usage: %s <rom> <frames> [audio.pcm] [frame.ppm]\n", argv[0]); return 2; }
@@ -40,6 +42,16 @@ int main(int argc, char** argv) {
     }
 
     if (!mCoreLoadFile(core, rom)) { fprintf(stderr, "load fail\n"); return 1; }
+    const char* biospath = getenv("BIOS");
+    if (biospath) {
+        struct VFile* vf = VFileOpen(biospath, O_RDONLY);
+        if (vf) {
+            core->loadBIOS(core, vf, 0);
+            printf("loaded BIOS %s\n", biospath);
+        } else {
+            fprintf(stderr, "cannot open BIOS %s\n", biospath);
+        }
+    }
     core->reset(core);
 
     if (getenv("FASTBOOT")) {
@@ -52,8 +64,43 @@ int main(int argc, char** argv) {
 
     long aenergy = 0; size_t atotal = 0;
     const char* findshot = getenv("FIND_SHOT");
+    const char* reglog = getenv("REGLOG");
+    FILE* rf = reglog ? fopen(reglog, "w") : NULL;
     for (int f = 0; f < nframes; f++) {
         core->runFrame(core);
+        if (rf) {
+            fprintf(rf, "f%d dispcnt=%04X dispstat=%04X if=%04X ie=%04X ime=%d",
+                    (int) core->frameCounter(core),
+                    core->rawRead16(core, 0x04000000, 0),
+                    core->rawRead16(core, 0x04000004, 0),
+                    core->rawRead16(core, 0x04000202, 0),
+                    core->rawRead16(core, 0x04000200, 0),
+                    core->rawRead16(core, 0x04000208, 0) & 0x80 ? 1 : 0);
+            fprintf(rf, " bgcnt=");
+            for (uint32_t a = 0x04000008; a <= 0x0400000E; a += 2)
+                fprintf(rf, "%04X,", core->rawRead16(core, a, 0));
+            fprintf(rf, " scroll=");
+            for (uint32_t a = 0x04000010; a <= 0x0400001E; a += 2)
+                fprintf(rf, "%04X,", core->rawRead16(core, a, 0));
+            fprintf(rf, " rot=");
+            for (uint32_t a = 0x04000020; a <= 0x0400003E; a += 2)
+                fprintf(rf, "%04X,", core->rawRead16(core, a, 0));
+            fprintf(rf, " win=%04X,%04X,%04X,%04X,%04X,%04X,%04X,%04X,%04X",
+                    core->rawRead16(core, 0x04000040, 0),
+                    core->rawRead16(core, 0x04000042, 0),
+                    core->rawRead16(core, 0x04000044, 0),
+                    core->rawRead16(core, 0x04000046, 0),
+                    core->rawRead16(core, 0x04000048, 0),
+                    core->rawRead16(core, 0x0400004A, 0),
+                    core->rawRead16(core, 0x0400004C, 0),
+                    core->rawRead16(core, 0x04000050, 0),
+                    core->rawRead16(core, 0x04000052, 0));
+            fprintf(rf, " oam0=%04X%04X%04X",
+                    core->rawRead16(core, 0x07000000, 0),
+                    core->rawRead16(core, 0x07000002, 0),
+                    core->rawRead16(core, 0x07000004, 0));
+            fprintf(rf, "\n");
+        }
         if (findshot && f > 0) {
             if (!(core->rawRead16(core, 0x04000000, 0) & 0x0080)) {
                 const void* pix; size_t stride;
@@ -136,6 +183,14 @@ int main(int argc, char** argv) {
         f = fopen(p, "wb");
         for (uint32_t a = 0x07000000; a < 0x07000400; a++) fputc(core->busRead8(core, a), f);
         fclose(f);
+        snprintf(p, sizeof(p), "%s/ewram.bin", dd);
+        f = fopen(p, "wb");
+        for (uint32_t a = 0x02000000; a < 0x02040000; a++) fputc(core->busRead8(core, a), f);
+        fclose(f);
+        snprintf(p, sizeof(p), "%s/iwram.bin", dd);
+        f = fopen(p, "wb");
+        for (uint32_t a = 0x03000000; a < 0x03008000; a++) fputc(core->busRead8(core, a), f);
+        fclose(f);
         puts("wrote dumps");
     }
 
@@ -162,6 +217,44 @@ int main(int argc, char** argv) {
                core->rawRead16(core, 0x04000202, 0), core->rawRead16(core, 0x04000200, 0),
                core->rawRead16(core, 0x04000208, 0) & 0x80 ? 1 : 0,
                core->rawRead16(core, 0x04000130, 0));
+    }
+
+    if (0) {
+        FILE* rf = fopen(getenv("REGLOG"), "a");
+        if (rf) {
+            fprintf(rf, "f%d dispcnt=%04X dispstat=%04X if=%04X ie=%04X ime=%d",
+                    (int) core->frameCounter(core),
+                    core->rawRead16(core, 0x04000000, 0),
+                    core->rawRead16(core, 0x04000004, 0),
+                    core->rawRead16(core, 0x04000202, 0),
+                    core->rawRead16(core, 0x04000200, 0),
+                    core->rawRead16(core, 0x04000208, 0) & 0x80 ? 1 : 0);
+            fprintf(rf, " bgcnt=");
+            for (uint32_t a = 0x04000008; a <= 0x0400000E; a += 2)
+                fprintf(rf, "%04X,", core->rawRead16(core, a, 0));
+            fprintf(rf, " scroll=");
+            for (uint32_t a = 0x04000010; a <= 0x0400001E; a += 2)
+                fprintf(rf, "%04X,", core->rawRead16(core, a, 0));
+            fprintf(rf, " rot=");
+            for (uint32_t a = 0x04000020; a <= 0x0400003E; a += 2)
+                fprintf(rf, "%04X,", core->rawRead16(core, a, 0));
+            fprintf(rf, " win=%04X,%04X,%04X,%04X,%04X,%04X,%04X,%04X,%04X",
+                    core->rawRead16(core, 0x04000040, 0),
+                    core->rawRead16(core, 0x04000042, 0),
+                    core->rawRead16(core, 0x04000044, 0),
+                    core->rawRead16(core, 0x04000046, 0),
+                    core->rawRead16(core, 0x04000048, 0),
+                    core->rawRead16(core, 0x0400004A, 0),
+                    core->rawRead16(core, 0x0400004C, 0),
+                    core->rawRead16(core, 0x04000050, 0),
+                    core->rawRead16(core, 0x04000052, 0));
+            fprintf(rf, " oam0=%04X%04X%04X",
+                    core->rawRead16(core, 0x07000000, 0),
+                    core->rawRead16(core, 0x07000002, 0),
+                    core->rawRead16(core, 0x07000004, 0));
+            fprintf(rf, "\n");
+            fclose(rf);
+        }
     }
     core->deinit(core);
     return 0;

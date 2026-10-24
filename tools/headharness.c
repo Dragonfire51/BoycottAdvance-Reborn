@@ -24,7 +24,25 @@ int main(int argc, char **argv) {
 
     for (int f = 0; f < nframes; f++) {
         gba_run_frame(g);
-                if (f < 4000) printf("f%d dispcnt=%04X bldcnt=%04X\n", f, g->ppu.dispcnt, g->ppu.bldcnt);
+        if (getenv("REGLOG") && f < 4000) {
+            printf("f%d dispcnt=%04X dispstat=%04X if=%04X ie=%04X ime=%d",
+                   f, g->ppu.dispcnt, g->ppu.dispstat, g->if_reg, g->ie, g->ime ? 1 : 0);
+            printf(" bgcnt=");
+            for (int i = 0; i < 4; i++) printf("%04X,", g->ppu.bgcnt[i]);
+            printf(" scroll=");
+            for (int i = 0; i < 4; i++)
+                printf("%04X,%04X,", g->ppu.bghofs[i], g->ppu.bgvofs[i]);
+            printf(" rot=");
+            for (int i = 0; i < 2; i++)
+                printf("%04X,%04X,%04X,%04X,%04X,%04X,", (uint16_t)g->ppu.pa[i], (uint16_t)g->ppu.pb[i],
+                       (uint16_t)g->ppu.pc[i], (uint16_t)g->ppu.pd[i], g->ppu.bgx[i], g->ppu.bgy[i]);
+            printf(" win=%04X,%04X,%04X,%04X,%04X,%04X,%04X,%04X,%04X",
+                   g->ppu.winh[0], g->ppu.winh[1], g->ppu.winv[0], g->ppu.winv[1],
+                   g->ppu.winin, g->ppu.winout, g->ppu.mosaic, g->ppu.bldcnt, g->ppu.bldalpha);
+            printf(" oam0=%04X%04X%04X\n",
+                   g->oam[0] | (g->oam[1] << 8), g->oam[2] | (g->oam[3] << 8),
+                   g->oam[4] | (g->oam[5] << 8));
+        }
     }
 
     printf("frame_count=%d cycle=%u cpu_pc=%08X cpsr=%08X mode=%d thumb=%d\n",

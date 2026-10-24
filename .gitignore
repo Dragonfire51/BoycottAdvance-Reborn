@@ -1,4 +1,5 @@
 *.o
+build/
 boycottadvance-reborn
 boycottadvance-reborn-*.exe
 *.sav
@@ -8,3 +9,6 @@ boycottadvance-reborn.ini
 
 # local test ROMs
 /tmp_*.gba
+
+# local capture artifacts
+*.mp4
