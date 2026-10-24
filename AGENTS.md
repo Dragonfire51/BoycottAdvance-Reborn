@@ -306,3 +306,31 @@ Atrapa la primera exec en IWRAM e imprime ring buffer + registros.
 - **GBATEK**: WININ=0x040, WINOUT=0x042, WIN0H=0x044, WIN1H=0x046, WIN0V=0x048, WIN1V=0x04A. Corregido en `src/mem.c` (reads y writes).
 - Impacto: juegos que escriben ventanas en la horquilla 0x40-0x4A ahora configuran la ventana real; antes la ventana salia deformada (x/y intercambiados) y podia aplicar blend/BG wrong dentro de WIN0.
 - Regresion: Medabots AX 0.00%, Pokemon Esmeralda 0.00%, FE identico a previo (screen 0% diff). Test 2d-wrap sin regresion (sigue alineado al frame).
+
+## 2026-10: la comparacion por frame absoluto con mGBA exagera las divergencias
+
+- **Hallazgo clave**: el harness de mGBA (`tools/mgbaharness.c`) va *sistematicamente*
+  por detras del nuestro durante las transiciones de carga. Medido:
+  - Pokemon Esmeralda: nuestra f900 == mGBA f920 (6150 px); nuestra f900 vs mGBA f900 = 27283 px.
+  - Medabots AX: nuestra f600 == mGBA f606.
+  - En Esmeralda, mGBA congela la pantalla de f744 a f760 y luego se recupera;
+    nosotros arrancamos el cambio en f749. No es un bug nuestro: es la misma
+    transicion de carga reproducida a distinta velocidad (DMA/BIOS).
+- **Ambos reconvergen**: Medabots AX da 0.00% exacto en f300-f410 y en f460-f570;
+  Esmeralda 0.00% en f680-f748. Por tanto un diff grande en un frame concreto NO
+  implica un bug de render: hay que buscar el frame equivalente del otro emulador.
+- **Regla practica**: antes de perseguir un diff, comparar nuestra fN contra mGBA
+  f(N-k) para k en un rango (p.ej. 0..30) y quedarse con el minimo. Si el minimo es
+  ~0, es desfase de fase, no divergencia funcional.
+- **Correccion de un diagnostico previo**: el supuesto "byte-swap de OAM bytes 6/7"
+  (nosotros `00 66` vs mGBA `66 00`) era un artefacto de comparar contra un frame
+  de mGBA congelado/obsoleto. La ruta de escritura de OAM en `src/mem.c` es
+  little-endian correcta (`wr16_al`/`wr32_al`, 8-bit ignorado en case 0x07).
+
+## 2026-10: build nativo Win32 sin SDL (x64 + x86)
+
+- `make -f Makefile.win32` (x86_64) y `make -f Makefile.win32 ARCH=i686` (i686).
+- Los objetos van a `build/$(ARCH)/`: antes ambas arquitecturas compartian `src/*.o`
+  y el link de i686 fallaba con "file format not recognized" al enlazar objetos x86_64.
+- Verificado con MinGW: los .exe importan solo comdlg32, d3d9, GDI32, KERNEL32,
+  msvcrt, SHELL32, USER32 y WINMM. Cero simbolos SDL. `-Wall -Wextra` sin warnings.
