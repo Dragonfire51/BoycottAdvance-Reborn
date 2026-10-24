@@ -349,3 +349,19 @@ Atrapa la primera exec en IWRAM e imprime ring buffer + registros.
 - Con VRAM/paleta/registros identicos, el diff de f190+ es fase: contenido identico
   al alinear con delta +1..+2, y va creciendo hasta ~15 frames (mGBA congela la
   pantalla de carga mientras nosotros avanzamos). Confirma la regla de fase anterior.
+
+## 2026-10: suite de regresion gba-tests (baseline 73/133)
+
+- `tools/gba_test_suite.py` ejecuta alyosha-tas/gba-tests contra el harness headless
+  y decodifica el veredicto en pantalla. El ROM expande cada bit de glifo a un byte
+  0/1 en VRAM (modo 4 BG2); el decoder debe replicar eso, no comparar el bitmask.
+- Baseline actual: PASSED 73 / FAILED 51. Los fallos NO son de render: son precision
+  de ciclos/pipeline (IRQ, DMA, timer, LDM/STM con S, POP vacio). Mismo estado que
+  antes; el suite solo aporta visibilidad, no una regresion nueva.
+- `ppu/hello` decodifica "Hello world!" -> el decoder es correcto.
+
+## 2026-10: Medabots AX (intro f300) - sin bug de render
+
+- A f300 OAM y EWRAM son identicos a mGBA (diff 0.00%); VRAM/pal/IWRAM difieren
+  1-3%, coherente con desfase de fase de carga, no con corrupcion de tiles.
+- La pantalla de intro se renderiza correctamente (texto + logos).
