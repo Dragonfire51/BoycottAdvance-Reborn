@@ -113,7 +113,18 @@ static int bank_of(uint32_t cpsr) {
     }
 }
 
+/* GBATEK: "Only the SPSR of the current mode can be accessed; In User and
+   System modes no SPSR exists." */
+static bool has_spsr(uint32_t cpsr) {
+    uint32_t m = cpsr & 0x1F;
+    return m == 0x11 || m == 0x12 || m == 0x13 || m == 0x17 || m == 0x1B;
+}
+
 static void change_mode(GBA *g, uint32_t new_cpsr) {
+    /* ARM7TDMI: mode field bit 4 reads back as 1 for the invalid 0xxnnb
+       encodings (gba-tests psr: writing 0x03 lands in Supervisor). 0 keeps
+       the CPU in its privileged "old" mode rather than dropping to User. */
+    if ((new_cpsr & 0x1F) != 0) new_cpsr |= 0x10;
     int ob = bank_of(get_cpsr(g)), nb = bank_of(new_cpsr);
     if (ob == nb) { set_cpsr(g, new_cpsr); return; }
     /* FIQ banks r8-r12 as well as r13/r14 (GBATEK "CPU Registers"). */
@@ -460,7 +471,11 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
 
         /* PSR transfers (MRS/MSR) */
         if ((insn & 0x0FBF0FFF) == 0x010F0000) {          /* MRS Rd, CPSR/SPSR */
-            write_reg(g, rd, (insn & 0x00400000) ? g->cpu.spsr[bank_of(get_cpsr(g))] : get_cpsr(g));
+            {
+                uint32_t psr = get_cpsr(g);
+                if ((insn & 0x00400000) && has_spsr(psr)) psr = g->cpu.spsr[bank_of(psr)];
+                write_reg(g, rd, psr);
+            }
             set_pc(g, r15(g) + 4); add_cycles(g, 1); return;
         }
         if ((insn & 0x0FB0F000) == 0x0120F000 ||          /* MSR reg: 00010 R 10 */
@@ -472,7 +487,7 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
             if (insn & 0x00040000) mask |= 0x00FF0000;    /* status */
             if (insn & 0x00080000) mask |= 0xFF000000;    /* flags */
             if (insn & 0x00400000) {                      /* to SPSR */
-                if ((get_cpsr(g) & 0x1F) != MODE_USR) {   /* GBATEK: USR/SYS no tiene SPSR */
+                if (has_spsr(get_cpsr(g))) {   /* GBATEK: USR/SYS no tiene SPSR */
                     int bk = bank_of(get_cpsr(g));
                     g->cpu.spsr[bk] = (g->cpu.spsr[bk] & ~mask) | (val & mask);
                 }
