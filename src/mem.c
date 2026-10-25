@@ -19,6 +19,72 @@ static void wr32_al(uint8_t *p, uint32_t v) { p[0]=v&0xFF; p[1]=(v>>8)&0xFF; p[2
 
 static int32_t sext28(uint32_t v) { return (int32_t)(v << 4) >> 4; }
 
+/* DMA bus access costs, per GBATEK "GBA DMA Transfers / Transfer Rate/Timing"
+ * (2N+2(n-1)S+xI). Internal memory (BIOS/IWRAM/IO/PAL/VRAM/OAM) is
+ * waitstate-free; EWRAM keeps its reset 2 waitstates (4000800h = 0Dh) and the
+ * GamePak ROM uses the WS0 timing from WAITCNT. A 32-bit unit on a 16-bit bus
+ * is split into a non-sequential and a sequential 16-bit access. */
+enum { R_BIOS, R_EWRAM, R_IWRAM, R_IO, R_PAL, R_VRAM, R_OAM, R_ROM, R_SRAM, R_MISC };
+
+static int dma_region(uint32_t a) {
+    if (a < 0x00004000u) return R_BIOS;
+    if (a < 0x02000000u) return R_MISC;
+    if (a < 0x02040000u) return R_EWRAM;
+    if (a < 0x03000000u) return R_MISC;
+    if (a < 0x03008000u) return R_IWRAM;
+    if (a < 0x04000000u) return R_MISC;
+    if (a < 0x04000400u) return R_IO;
+    if (a < 0x05000000u) return R_MISC;
+    if (a < 0x05000400u) return R_PAL;
+    if (a < 0x06000000u) return R_MISC;
+    if (a < 0x06018000u) return R_VRAM;
+    if (a < 0x07000000u) return R_MISC;
+    if (a < 0x07000400u) return R_OAM;
+    if (a < 0x08000000u) return R_MISC;
+    if (a < 0x0E000000u) return R_ROM;
+    if (a < 0x0E010000u) return R_SRAM;
+    return R_MISC;
+}
+
+static void dma_region_ws(GBA *g, int region, int *nseq16, int *seq16) {
+    uint16_t wc = (uint16_t)(g->io[0x204] | (g->io[0x205] << 8));
+    static const int rom_ws[4] = {4, 3, 2, 8};
+    switch (region) {
+    case R_EWRAM: *nseq16 = *seq16 = 2; break;
+    case R_ROM:
+        *nseq16 = rom_ws[wc & 3];
+        *seq16  = (wc & 0x10) ? 1 : 2;
+        break;
+    case R_SRAM: *nseq16 = *seq16 = rom_ws[wc & 3]; break;
+    default:     *nseq16 = *seq16 = 0; break;
+    }
+}
+
+/* Cost of one DMA access to `region`: non-sequential for the first unit of a
+ * transfer, sequential afterwards. 32-bit accesses on the 16-bit bus add the
+ * split second access. The 2 internal cycles are charged once per unit, not
+ * once per bus access. */
+static int dma_access_cycles(GBA *g, int region, int word, int first) {
+    int ns16, seq16;
+    dma_region_ws(g, region, &ns16, &seq16);
+    if (!word) return first ? ns16 : seq16;
+    if (region == R_EWRAM) return 2 * seq16 + 1;
+    if (region == R_ROM || region == R_SRAM)
+        return first ? ns16 + 1 + seq16 : 2 * seq16 + 1;
+    return 0;                                    /* internal 16-bit bus regions */
+}
+
+static uint32_t dma_total_cycles(GBA *g, uint32_t src, uint32_t dst, int word,
+                                 uint32_t count) {
+    if (!count) return 0;
+    int rs = dma_region(src), rd = dma_region(dst);
+    uint32_t first = 2 + (uint32_t)(dma_access_cycles(g, rs, word, 1)
+                                  + dma_access_cycles(g, rd, word, 1));
+    uint32_t rest  = 2 + (uint32_t)(dma_access_cycles(g, rs, word, 0)
+                                  + dma_access_cycles(g, rd, word, 0));
+    return first + (count - 1) * rest;
+}
+
 /* =========================================================================
  * I/O reads (16-bit register space)
  * ========================================================================= */
@@ -246,6 +312,13 @@ void dma_run(GBA *g, int ch) {
         (eeprom_addr_in_range(g, dst) || eeprom_addr_in_range(g, src)))
         eeprom_dma_begin(g, count);
 
+    /* GBATEK (DMA Transfers, "Transfer Rate/Timing"): the transfer takes
+       2N+2(n-1)S+xI cycles. Timers keep counting while the DMA holds the bus,
+       so those cycles are charged to the timers that were already running when
+       the transfer began (a DMA that itself enables a timer must not bill it). */
+    uint32_t dma_cyc = dma_total_cycles(g, d->src, d->dst, unit == 4, count);
+    io_update_timers(g, dma_cyc);
+
     for (uint32_t i = 0; i < count; i++) {
         if (unit == 4) gba_write32(g, dst, gba_read32(g, src));
         else           gba_write16(g, dst, gba_read16(g, src));
@@ -260,11 +333,7 @@ void dma_run(GBA *g, int ch) {
     }
     d->src = src;
     d->dst = dst;
-    /* GBATEK (DMA Transfers): 1 cycle per 32-bit unit, 2 per 16-bit unit.
-       Without this, DMA-mediated copying (ROM->EWRAM, VRAM fills) completes
-       in zero CPU cycles and games whose loaders rely on DMA finish in a
-       handful of frames instead of real time. */
-    gba_add_cycles(g, unit == 4 ? count : count * 2);
+    gba_add_cycles(g, dma_cyc);
     if (d->irq_enable) g->if_reg |= (uint16_t)(IF_DMA0 << ch);
 
     if (d->repeat && d->timing != 0) {

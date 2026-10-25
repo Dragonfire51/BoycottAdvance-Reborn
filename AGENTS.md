@@ -405,3 +405,35 @@ Atrapa la primera exec en IWRAM e imprime ring buffer + registros.
   referencia falla exactamente los mismos subtests. No son bugs nuestros; el
   suite (alyosha-tas) prueba un quirk de hardware que ninguno de los dos
   implementa. No malgastar esfuerzo ahi.
+
+## 2026-10: coste real de bus del DMA (GBATEK 2N+2(n-1)S+xI)
+
+- `dma_run()` cobraba `1 ciclo/32-bit` y `2/16-bit` (constante) al bus y no
+  tocaba los timers. GBATEK (GBA DMA Transfers, "Transfer Rate/Timing") define
+  `2N + 2(n-1)S + xI`: el `2` es por unidad (no por acceso), `N/S` son los
+  waitstates non-sequential/sequential de la region, y el `I` es el ciclo
+  interno del bus de 16 bit que obliga a partir un acceso de 32 bit en dos.
+- Implementado en `src/mem.c`: `dma_region()` clasifica por direccion
+  (BIOS/IWRAM/IO/PAL/VRAM/OAM sin waitstates, EWRAM=2 en reset, ROM segun WS0
+  de WAITCNT), `dma_access_cycles()` y `dma_total_cycles()` suman el coste
+  first/rest. El DMA ahora tambien alimenta a los timers con esos ciclos
+  (`io_update_timers(g, dma_cyc)`), que es lo que GBATEK documenta: los timers
+  siguen contando mientras el DMA tiene el bus.
+- Efecto: `timing/dma_long` pasa de FAIL 001 a **PASS**. Los dos `DMA/DMA_ROM_*`
+  cambian de codigo de fallo (009 -> 172/108) porque ahora el coste de ROM
+  (WS0=4) se modela; siguen fallando por el resto del timing de pausa.
+- `prefetcher/prefetcher_dma` deja de dar PASS **espurio**: leia TM0CNT_L y
+  obtenia 0 porque los timers solo se actualizaban por scanline, no por
+  instruccion. Con el DMA cobrando a los timers el valor ya es distinto de 0 y
+  el test revela el fallo real. Baseline neto: **75 PASSED** (dma_long arreglado,
+  prefetcher_dma expuesto).
+- Los tres juegos objetivo (Pokemon Esmeralda, Fire Emblem, Medabots AX) siguen
+  siendo **bit-identicos** frame a frame tras 900 frames (screen/vram/pal/oam),
+  es decir, el cambio no altera el render.
+- **Causa raiz pendiente**: los timers solo avanzan en bloques de scanline
+  (`gba.c` pre-carga `visible_cycles`/`hblank_cycles` antes de ejecutar la CPU),
+  asi que un timer habilitado a mitad de scanline no ve los ciclos de CPU que
+  consumen las instrucciones. Intentado sincronizar por instruccion
+  (`io_sync_timers` en `arm_execute`) pero rompe `dma_from_bios`, `cpy_data_bios`,
+  `prefetch_enable` y `prefetcher_dma` porque el resto del modelo de ciclos es
+  aproximado; requiere revisar `add_cycles` de ARM/Thumb a la vez.
