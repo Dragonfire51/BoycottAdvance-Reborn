@@ -433,7 +433,26 @@ Atrapa la primera exec en IWRAM e imprime ring buffer + registros.
 - **Causa raiz pendiente**: los timers solo avanzan en bloques de scanline
   (`gba.c` pre-carga `visible_cycles`/`hblank_cycles` antes de ejecutar la CPU),
   asi que un timer habilitado a mitad de scanline no ve los ciclos de CPU que
-  consumen las instrucciones. Intentado sincronizar por instruccion
-  (`io_sync_timers` en `arm_execute`) pero rompe `dma_from_bios`, `cpy_data_bios`,
-  `prefetch_enable` y `prefetcher_dma` porque el resto del modelo de ciclos es
-  aproximado; requiere revisar `add_cycles` de ARM/Thumb a la vez.
+  consumen las instrucciones.
+- **Experimento 2 (2026-10-15, descartado)**: se probo un *watermark* por timer
+  (`last_cycle` por timer + `io_sync_timers(g)` que avanza desde esa marca hasta
+  `g->cycle`) con sync en `arm_execute` y en la lectura de `TMxCNT_L`. Modelo
+  correcto segun GBATEK, pero la suite cae de **75 a 45 PASSED** con 31
+  regresiones y **0 mejoras** (`prefetcher/prefetcher_boundary_*`,
+  `prefetcher_branch_thumb*`, `fifo_dma/fifo_2..5`, `DMA/DMA_Mode_Change`,
+  `arm/Coprocessor_14`, `ppu/start_up_vbl`, `irq/BL_IRQ_R14`, ...). Los juegos
+  (Esmeralda, Fire Emblem) siguen bit-identicos, asi que no hay ganancia visual.
+  Motivo: el resto del modelo de ciclos es aproximado (1 ciclo por instruccion,
+  sin waitstates de ROM ni pipeline), asi que adelantar la visibilidad de los
+  timers desajusta el orden relativo IRQ/instruccion en decenas de tests.
+  Conclusion: **no se puede granular los timers sin antes modelar los ciclos de
+  bus** (`add_cycles` ARM/Thumb con waitstates de ROM, prefetch buffer y el
+  ciclo interno de 32 bit). Ese es el prerrequisito, no un cambio aislado.
+- **Verificado**: los "PASS" de `dma_from_bios`, `cpy_data_bios` y
+  `prefetch_enable` en el baseline son **espurios** igual que `prefetcher_dma`:
+  el handler de fallo hace `mov r12, r0` y, como el timer lee 0 (nunca avanzo),
+  `r12 == 0` se interpreta como "All tests passed". El baseline real es 71
+  legitimamente + 4 espurios.
+- **Hito SDL2 (Win32) y D-pad POV**: ambos ya estan en `main`
+  (`22cb833` no-SDL + `a8c709f`/`862882c` D-pad). `Makefile.win32` no enlaza
+  SDL2; `video.c` solo usa SDL en el path no-Windows y GDI/D3D9 en Win32.
