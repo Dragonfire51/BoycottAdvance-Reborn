@@ -365,3 +365,43 @@ Atrapa la primera exec en IWRAM e imprime ring buffer + registros.
 - A f300 OAM y EWRAM son identicos a mGBA (diff 0.00%); VRAM/pal/IWRAM difieren
   1-3%, coherente con desfase de fase de carga, no con corrupcion de tiles.
 - La pantalla de intro se renderiza correctamente (texto + logos).
+
+## 2026-10: GBATEK fix flash data# polling (suite 73 -> 75)
+
+- GBATEK ("GBA Cart Backup Flash ROM") especifica que tras *Write Single Data
+  Byte* la lectura de `[E00xxxxh]` devuelve el byte escrito (wait until
+  `[E00xxxxh]=dat`), y tras *Erase* devuelve FFh. El codigo anterior devolvia el
+  byte con el **bit 7 invertido durante 64 lecturas** tras cada program/erase
+  (`f->settle`), lo que corrompia el valor que el ROM lee de vuelta.
+- Eliminado `settle` de `flash.c`/`gba.h`. `save/flash64` y `save/flash128`
+  pasan. Baseline del suite: **75 PASSED**.
+
+## 2026-10: ARM7TDMI SPSR y bit 4 del campo modo (psr 001 -> 008)
+
+- GBATEK (CPSR/SPSR): *"Only the SPSR of the current mode can be accessed; In
+  User and System modes no SPSR exists."* `MRS SPSR` en User/System devuelve el
+  CPSR; `MSR SPSR` se ignora (`has_spsr()` en `arm.c`).
+- El bit 4 del campo modo se lee siempre como 1 para las codificaciones
+  invalidas `0xxnnb`: `MSR cpsr_c, 0x03` cae en Supervisor (psr test 004). Un
+  valor de modo 0 se deja intacto (es el modo de arranque y debe seguir siendo
+  privilegiado, arm `psr_transfer` test 252). `change_mode()` fuerza `|= 0x10`
+  solo si el modo != 0.
+- `psr/psr` pasa de fallar en 001 a 008 (lo restante es timing de ciclos).
+  Baseline del suite se mantiene en 75.
+
+## 2026-10: comparador mGBA vs BoycottAdvance (verdad de base)
+
+- `tools/mgbaharness.c` -> binario `/tmp/mgh` (enlazar con
+  `-DENABLE_VFS -DENABLE_DIRECTORIES -I/workspace/mgba/include
+  -L/workspace/mgba/build-nogl -lmgba`, ejecutar con
+  `LD_LIBRARY_PATH=/workspace/mgba/build-nogl DUMPDIR=<dir>`; vuelca
+  `<dir>/vram.bin`, que hay que copiar a `<dir>.vram.bin` para el parser).
+- Script de comparacion: ejecuta cada ROM en ambos emuladores y clasifica
+  REAL BUG (mGBA pasa, nosotros fallamos) / REGRESION (nosotros pasamos) /
+  PARIDAD (ambos fallan).
+- **Hallazgo**: los 8 fallos `LDM/*` (`LDM_ALU` 002, `LDM_ALU_IMM` 002,
+  `LDM_ALU_Store` 006, `LDM_Bx` 001, `LDM_LD` 002, `LDM_MUL_UL_32` 002,
+  `LDM_MUL_UL_SL` 002, `LDM_Swap` 002) son **paridad con mGBA**: el emulador de
+  referencia falla exactamente los mismos subtests. No son bugs nuestros; el
+  suite (alyosha-tas) prueba un quirk de hardware que ninguno de los dos
+  implementa. No malgastar esfuerzo ahi.
