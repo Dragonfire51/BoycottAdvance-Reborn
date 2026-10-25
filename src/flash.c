@@ -38,10 +38,6 @@
 #define FLASH_CMD_ERASE_CHIP  0x10
 #define FLASH_CMD_ERASE_SECT  0x30
 
-/* Data# polling: while a program/erase "settles", reads return the value
-   with bit 7 inverted (what Emerald's WaitForFlashWrite compares against). */
-#define FLASH_SETTLE_READS    64
-
 static uint32_t flash_size(const GBA *g) {
     return g->save_type == SAVE_FLASH128 ? 0x20000u : 0x10000u;
 }
@@ -51,7 +47,6 @@ void flash_init(GBA *g) {
     f->state = FLASH_READY;
     f->command = FLASH_CMD_NONE;
     f->bank = 0;
-    f->settle = 0;
     if (g->save_type == SAVE_FLASH128) {
         f->manufacturer = FLASH_MFR_SANYO;
         f->device       = FLASH_DEV_SANYO_1M;
@@ -74,10 +69,6 @@ uint8_t flash_read(GBA *g, uint32_t addr) {
         if (off == 1) return f->device;
         /* other offsets fall through to the array, as in mGBA */
     }
-    if (f->settle > 0) {
-        f->settle--;
-        return (uint8_t)(g->save_mem[f->bank * 0x10000u + off] ^ 0x80);
-    }
     return g->save_mem[f->bank * 0x10000u + off];
 }
 
@@ -87,7 +78,6 @@ static void flash_erase_sector(GBA *g, uint32_t off) {
     if (base + 0x1000u <= flash_size(g))
         memset(g->save_mem + base, 0xFF, 0x1000);
     g->save_dirty = true;
-    f->settle = FLASH_SETTLE_READS;
 }
 
 void flash_write(GBA *g, uint32_t addr, uint8_t val) {
@@ -102,8 +92,7 @@ void flash_write(GBA *g, uint32_t addr, uint8_t val) {
             g->save_mem[f->bank * 0x10000u + off] &= val;
             g->save_dirty = true;
             f->command = FLASH_CMD_NONE;
-            f->settle = FLASH_SETTLE_READS;
-        } else if (f->command == FLASH_CMD_SWITCH_BANK) {
+                } else if (f->command == FLASH_CMD_SWITCH_BANK) {
             if (off == 0 && val < 2 && g->save_type == SAVE_FLASH128)
                 f->bank = val;
             f->command = FLASH_CMD_NONE;
@@ -126,8 +115,7 @@ void flash_write(GBA *g, uint32_t addr, uint8_t val) {
             if (val == FLASH_CMD_ERASE_CHIP && off == FLASH_UNLOCK_HI) {
                 memset(g->save_mem, 0xFF, flash_size(g));
                 g->save_dirty = true;
-                f->settle = FLASH_SETTLE_READS;
-            } else if (val == FLASH_CMD_ERASE_SECT) {
+                        } else if (val == FLASH_CMD_ERASE_SECT) {
                 flash_erase_sector(g, off);
             }
             f->command = FLASH_CMD_NONE;

@@ -86,7 +86,6 @@ typedef struct {
     int      state;
     int      command;               /* latched command (FLASH_CMD_*) */
     int      bank;                  /* 1M parts: two 64K banks */
-    int      settle;                /* reads left reporting data# polling */
     uint8_t  manufacturer;
     uint8_t  device;
 } Flash;
