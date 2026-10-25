@@ -456,3 +456,35 @@ Atrapa la primera exec en IWRAM e imprime ring buffer + registros.
 - **Hito SDL2 (Win32) y D-pad POV**: ambos ya estan en `main`
   (`22cb833` no-SDL + `a8c709f`/`862882c` D-pad). `Makefile.win32` no enlaza
   SDL2; `video.c` solo usa SDL en el path no-Windows y GDI/D3D9 en Win32.
+
+## 2026-10-15 (sesion de verificacion): estado real de Fire Emblem y correccion
+
+- **Correccion de un dato erroneo previo**: la afirmacion "los tres juegos
+  objetivo son bit-identicos frame a frame tras 900 frames" es **falsa**. Con el
+  comparador real (`/tmp/hhm`, mGBA + BIOS oficial) Fire Emblem difiere:
+  - fastboot (por defecto): f300 19.86%, f500 95.06%, f900 95.21%.
+  - BIOS real (`FASTBOOT=0 BIOS=gba_bios.bin`): match **1.08%** hasta f353,
+    salto a **99.99%** en f354.
+- **El hito SDL2/Win32 ya esta completo y publicado**: `Makefile.win32` compila
+  x86_64 e i686 **sin SDL2** y el PE importa solo
+  `comdlg32/d3d9/GDI32/KERNEL32/msvcrt/SHELL32/USER32/WINMM`. No hay nada
+  pendiente de commit+push de esa parte (commits `22cb833` no-SDL, `a8c709f`
+  D-pad, `862882c` merge; todos en `main` y en `origin`).
+- **Sintoma de FE**: en f354 mGBA hace un fade de transicion (pantalla a negro y
+  luego a blanco); nosotros nos quedamos en el texto del menu y solo empezamos a
+  cambiar ~f420, con la transicion degradada.
+- **BLDCNT/BLDALPHA**: mGBA `4000050=3F68`, `4000052` sube 0010->0110->0210;
+  nosotros `bldcnt=2020 blda=0000` clavado. El juego si escribe 3F68/0310.. (pc
+  0x0800122C/0x08001234), pero el valor final que queda en el registro es 2020.
+- **Estado IRQ/registros**: mGBA `dispstat=0019 if=0001 ie=2003 ime=0`;
+  nosotros `dispstat=0018 if=0002 ie=2003 ime=1`. Diferimos ya en f340 (no solo
+  en f354): la divergencia de registros es gradual, la de pantalla es un evento
+  agudo en f354.
+- **Descartado en esta sesion** (sin efecto sobre la divergencia):
+  `HDRAW=1008/HBLANK=224` (mGBA) en vez de 960/272; VBlank IRQ en linea 160 en
+  vez de 159; `BA_NO_PREARM=1`. Los tres dejan f354 en 99.99%.
+- **Ciclos**: ~281139 por frame vs 280896 de hardware (+243, ~0.09%). El modelo
+  de ciclos (1 ciclo/instruccion, sin waitstates de ROM ni pipeline) sigue siendo
+  el **prerrequisito real** documentado abajo; sin el, ni el sync fino de timers
+  ni la paridad frame a frame con BIOS real son alcanzables.
+
