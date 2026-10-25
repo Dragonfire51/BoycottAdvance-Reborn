@@ -488,3 +488,39 @@ Atrapa la primera exec en IWRAM e imprime ring buffer + registros.
   el **prerrequisito real** documentado abajo; sin el, ni el sync fino de timers
   ni la paridad frame a frame con BIOS real son alcanzables.
 
+## 2026-10-15 (analisis de glitches): el glitch NO es del PPU (demostrado)
+
+Objetivo: glitches visuales en Groudon, Kyogre, post-Rayquaza y el Profesor de
+Pokemon Esmeralda; analisis cuadro a cuadro e investigacion de ppu/apu/dma/thumb/ARM.
+
+**Conclusion verificada: la logica del PPU es correcta; la causa es el modelo de
+ciclos del CPU (sin waitstates de ROM ni pipeline), el prerrequisito ya
+documentado.** Evidencia reproducible:
+
+1. ROM sintetica de modo 4 (`python3 tools/gen_blend_test.py` ->
+   `tmp_t2_noblend.gba`): rellena las filas 0-79 con el indice de paleta 3 (rojo)
+   y las 80-159 con el 4 (verde), sin blend. Comparada en fastboot en ambos
+   emuladores: frame 3 diff 19200 px (50%), medias identicas (85.0), la mitad
+   inferior discrepa (nosotros verde, mGBA rojo).
+2. Volcados en el mismo frame: **VRAM, PAL y OAM byte-identicos** (0 bytes de
+   diferencia). Con el estado de mGBA inyectado en nuestro PPU (`renderstate`,
+   `dispcnt=1404`, su VRAM/PAL/OAM) nuestra salida es exactamente la que dice el
+   VRAM (rojo arriba, verde abajo) y coincide con nuestro propio frame: **nuestro
+   PPU renderiza correctamente el VRAM de mGBA**.
+3. El frame que mGBA *muestra* (rojo tambien abajo) contradice su propio VRAM:
+   lo dibujo a mitad del relleno. Es una diferencia de **fase dentro del frame**,
+   no de logica de render.
+
+Consecuencia: nuestro core completa los bucles de relleno antes que mGBA (1
+ciclo/instruccion, sin waitstates de ROM), asi que en un limite de frame el PPU
+puede quedar a mitad de una actualizacion y mostrar la mitad vieja/nueva. Lo
+mismo explica Groudon/Kyogre/Profesor: con BIOS real y alineacion por frame la
+divergencia sigue siendo ~90% y no baja con ningun offset porque el estado ya
+diverge antes de las escenas.
+
+Descartado en esta sesion (sin efecto sobre el glitch): `renderstate` como
+comparador directo contra el frame de mGBA (Emerald escribe registros a mitad de
+frame, un re-render estatico difiere legitimamente); PA/PD que el trace lee como
+0x7FFF vs 0x0100 de mGBA (artefacto: BGxPA/BGxX son de solo escritura en mGBA y
+el trace los lee por `io_read16`).
+
