@@ -16,6 +16,7 @@
 #include <string.h>
 #include <fcntl.h>
 #include <mgba-util/vfs.h>
+#include <mgba-util/audio-buffer.h>
 #include <mgba/core/log.h>
 #include <stdarg.h>
 
@@ -58,8 +59,16 @@ int main(int argc, char** argv) {
     }
 
     unsigned char rgb[240 * 160 * 3];
+    FILE *ao = getenv("AUDIO") ? fopen(getenv("AUDIO"), "wb") : NULL;
     for (int f = 0; f < nframes; f++) {
         core->runFrame(core);
+        if (ao && core->getAudioBuffer) {
+            static int16_t pcm[8192];
+            struct mAudioBuffer *ab = core->getAudioBuffer(core);
+            size_t got;
+            while ((got = mAudioBufferRead(ab, pcm, 8192)) > 0)
+                fwrite(pcm, sizeof(int16_t) * 2, got, ao);
+        }
         const void* pix; size_t stride;
         core->getPixels(core, &pix, &stride);
         const uint32_t* p = pix;
@@ -74,6 +83,7 @@ int main(int argc, char** argv) {
         fwrite(rgb, 1, sizeof(rgb), vo);
     }
     fclose(vo);
+    if (ao) fclose(ao);
     fprintf(stderr, "wrote %d frames\n", nframes);
     return 0;
 }

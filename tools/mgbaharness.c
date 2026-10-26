@@ -64,11 +64,40 @@ int main(int argc, char** argv) {
 
     long aenergy = 0; size_t atotal = 0;
     FILE* af = (argc > 3 && strcmp(argv[3], "/dev/null")) ? fopen(argv[3], "wb") : NULL;
+    FILE* rec = NULL;
+    if (getenv("RECORD")) {
+        char rp[512];
+        snprintf(rp, sizeof(rp), "%s.rgb", getenv("RECORD"));
+        rec = fopen(rp, "wb");
+    }
     const char* findshot = getenv("FIND_SHOT");
     const char* reglog = getenv("REGLOG");
     FILE* rf = reglog ? fopen(reglog, "w") : NULL;
     for (int f = 0; f < nframes; f++) {
+        const char* wo = getenv("SETWINOUT");
+        if (wo && f == atoi(getenv("SETWINOUT_FRAME") ? getenv("SETWINOUT_FRAME") : "0")) {
+            core->rawWrite16(core, 0x04000048, 0, (uint16_t) strtol(wo, NULL, 16));
+        }
+        const char* oamz = getenv("OAMZERO");
+        if (oamz && f == atoi(oamz)) {
+            /* OAMZERO=<frame>: zero OAM entries 16..24 (0x07000080..0x070000C7)
+               to test which OBJ-window sprites drive the compositor. */
+            for (uint32_t a = 0x07000080; a < 0x07000080 + 9 * 8; a++) {
+                core->rawWrite8(core, a, 0, 0);
+            }
+        }
         core->runFrame(core);
+        if (rec) {
+            const void* pix; size_t stride;
+            core->getPixels(core, &pix, &stride);
+            const uint32_t* p = pix;
+            static unsigned char rgb[240 * 160 * 3];
+            for (int i = 0; i < 240 * 160; i++) {
+                uint32_t c = p[i];
+                rgb[3 * i + 0] = c & 0xFF; rgb[3 * i + 1] = (c >> 8) & 0xFF; rgb[3 * i + 2] = (c >> 16) & 0xFF;
+            }
+            fwrite(rgb, 1, sizeof(rgb), rec);
+        }
         if (rf) {
             fprintf(rf, "f%d dispcnt=%04X dispstat=%04X if=%04X ie=%04X ime=%d",
                     (int) core->frameCounter(core),
@@ -143,6 +172,7 @@ int main(int argc, char** argv) {
         }
     }
     if (af) fclose(af);
+    if (rec) fclose(rec);
     printf("audio total=%zu sr=%u aenergy=%ld\n", atotal, core->audioSampleRate(core), aenergy);
 
     if (argc > 4 && core->getPixels) {

@@ -27,8 +27,28 @@ int main(int argc, char **argv) {
     FILE *pcm = NULL;
     if (getenv("PCMDUMP")) pcm = fopen(getenv("PCMDUMP"), "wb");
 
+    /* RECORD=<prefix>: write every frame as a raw RGB24 stream (<prefix>.rgb)
+       for exact frame-by-frame comparison and video encoding. */
+    FILE *rec = NULL;
+    if (getenv("RECORD")) {
+        char rp[512];
+        snprintf(rp, sizeof(rp), "%s.rgb", getenv("RECORD"));
+        rec = fopen(rp, "wb");
+    }
+    unsigned char rgb[240 * 160 * 3];
+
     for (int f = 0; f < nframes; f++) {
         gba_run_frame(g);
+        if (rec) {
+            for (int i = 0; i < 240 * 160; i++) {
+                uint16_t c = g->ppu.frame[i];
+                unsigned r5 = c & 0x1F, g5 = (c >> 5) & 0x1F, b5 = (c >> 10) & 0x1F;
+                rgb[3 * i + 0] = (unsigned char)((r5 << 3) | (r5 >> 2));
+                rgb[3 * i + 1] = (unsigned char)((g5 << 3) | (g5 >> 2));
+                rgb[3 * i + 2] = (unsigned char)((b5 << 3) | (b5 >> 2));
+            }
+            fwrite(rgb, 1, sizeof(rgb), rec);
+        }
         if (pcm) {
             int16_t buf[4096];
             int n;
@@ -57,6 +77,7 @@ int main(int argc, char **argv) {
     }
 
     if (pcm) fclose(pcm);
+    if (rec) fclose(rec);
     printf("frame_count=%d cycle=%u cpu_pc=%08X cpsr=%08X mode=%d thumb=%d\n",
            (int)g->frame_count, (unsigned)g->cycle, g->cpu.r[15], g->cpu.cpsr,
            g->cpu.cpsr & 0x1F, (g->cpu.cpsr >> 5) & 1);

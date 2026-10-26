@@ -759,6 +759,48 @@ coincide con mGBA. Si el dump no esta, `gba_load_bios` deja `bios_loaded=false`
 y el reset cae al HLE fastboot, asi que sin el fichero nada se rompe. El menu de
 Options sigue permitiendo alternarlo.
 
+## 2026-10-26 (4): el PPU es bit-exacto; la divergencia es de estado (prueba dura)
+
+Dos pruebas cierran el caso del "glitch magenta" y del audio rayado:
+
+**1. Prueba de estado identico (discriminante).** Volcamos el estado de mGBA en
+los frames 149/150/151 (`DUMPDIR`) - VRAM, paleta, OAM y los registros de video
+- y lo pasamos por **nuestro** PPU con `renderstate`. Resultado:
+**0 pixeles de diferencia en los tres frames** contra la imagen real de mGBA.
+Es decir: dado el mismo estado, `composite_line` reproduce mGBA exactamente,
+incluidas ventanas OBJ. La logica de ventanas/WINOUT queda **descartada como
+causa** del glitch: no es un bug del renderer.
+
+**2. Captura de 5 minutos con audio (Pokemon Esmeralda).** 17918 frames en ambos
+emuladores (RGB24 + PCM s16le). Resultado:
+- Frames 0..5 **identicos** (0 px). La divergencia arranca en **f6** en una banda
+  pequena (y111..125, x73..173) y luego se propaga, con resincronizaciones
+  parciales mas adelante (f200 y f260 vuelven a 0 px). Eso es firma de **deriva
+  de estado por timing de CPU**, no de un error de composicion.
+- Causa concreta del primer desvio: en f6 nosotros ya tenemos `DISPCNT=0x1002`
+  (BG0 encendido) mientras mGBA sigue en `0x0080` (blank forzado). Salimos del
+  blank forzado ~4 frames antes. Es el **arranque HLE vs BIOS real**, ya anotado
+  arriba, no el PPU.
+- La correlacion cruzada de video a cualquier desfase es ~0.41-0.47 de pixeles:
+  no existe un desfase constante que las alinee, porque son dos corridas
+  independientes no sincronizadas por ciclo.
+
+**Audio: el "rayado" es discontinuidad de muestras, no clipping.** Comparado con
+mGBA sobre la misma partida: nosotros 3.7x mas saltos grandes (>8000) por
+muestra (3568 vs 973), con picos de hasta 23744. El espaciado entre saltos es
+casi siempre de 1..23 muestras (mediana 23), o sea **cortes a escala de muestra
+dentro del stream**, no artefactos de frontera de buffer (el histograma de fase
+por frame es plano). Ademas: 577914 muestras en cero y una racha de 158015
+seguidas (3.6 s) - el APU se queda mudo en un tramo. No hay clipping (0 muestras
+saturadas). El problema esta en el mezclador/FIFO del Direct Sound (salto de
+amplitud entre muestras adyacentes), no en la etapa de salida.
+
+Herramientas anadidas (sin versionar antes): `RECORD=` en `tools/headharness.c`
+y `tools/mgbaharness.c` (stream RGB24 por frame), `PCMDUMP=`/`AUDIO=`, y
+`tools/rgb_diff.c` (diff por frame con busqueda de desfase). `rec/` ignorado.
+La instrumentacion temporal `PPUDUMP` en `src/ppu.c` y los parches de mGBA se
+revirtieron; mGBA quedo limpio.
+
 
 
 
