@@ -289,6 +289,7 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
         if (off & 0x00800000) off |= 0xFF000000;
         if (insn & (1u << 24)) write_reg(g, 14, r15(g) + 4);   /* BL */
         set_pc(g, r15(g) + 8 + (uint32_t)((int32_t)off * 4));
+        bus_prefetch_branch(g, r15(g));
         add_cycles(g, 1);
         return;
     }
@@ -297,6 +298,7 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
         uint32_t rm = read_reg(g, insn & 0xF);
         if (rm & 1) { set_cpsr(g, get_cpsr(g) | CPSR_T); set_pc(g, rm & ~1u); }
         else { set_cpsr(g, get_cpsr(g) & ~CPSR_T); set_pc(g, rm & ~3u); }
+        bus_prefetch_branch(g, r15(g));
         add_cycles(g, 1);
         return;
     }
@@ -558,8 +560,14 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
 }
 
 void arm_exec(GBA *g) {
+    uint32_t pc = g->cpu.r[15];
     bios_track_fetch(g);
-    arm_exec_at(g, gba_read32(g, r15(g)));
+    /* Instruction fetch: on-chip regions cost one cycle (already in the
+       per-opcode total below), GamePak ROM is charged its region timing here
+       so the prefetch buffer can serve sequential fetches for free and make a
+       branch pay the non-sequential cost (GBATEK "GamePak Prefetch"). */
+    add_cycles(g, (uint32_t)(bus_fetch_cycles(g, pc) - 1));
+    arm_exec_at(g, gba_read32(g, pc));
 }
 
 /* ===================================================================== */
@@ -848,8 +856,10 @@ static void thumb_exec_at(GBA *g, uint16_t insn) {
 }
 
 void thumb_exec(GBA *g) {
+    uint32_t pc = g->cpu.r[15];
     bios_track_fetch(g);
-    thumb_exec_at(g, gba_read16(g, r15(g)));
+    add_cycles(g, (uint32_t)(bus_fetch_cycles(g, pc) - 1));
+    thumb_exec_at(g, gba_read16(g, pc));
 }
 
 /* ------------------------------------------------------------------ */

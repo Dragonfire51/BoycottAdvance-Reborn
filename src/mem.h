@@ -10,6 +10,15 @@ void gba_write8(GBA *g, uint32_t addr, uint8_t v);
 void gba_write16(GBA *g, uint32_t addr, uint16_t v);
 void gba_write32(GBA *g, uint32_t addr, uint32_t v);
 
+/* ---- bus timing model (GBATEK "Memory Map", "GamePak Prefetch") ----------
+ * Region waitstates from WAITCNT plus the GamePak prefetch buffer.  The CPU
+ * core asks for the cost of one instruction fetch or one data access; the
+ * internal 32-bit cycle is charged by the core, not here. */
+void     bus_update_waitstates(GBA *g);         /* recompute from WAITCNT */
+int      bus_fetch_cycles(GBA *g, uint32_t pc); /* instruction fetch at pc */
+void     bus_prefetch_branch(GBA *g, uint32_t pc); /* reload after a branch */
+int      bus_region(uint32_t addr);
+
 /* internal IO register emulation (called from mem.c) */
 void io_write16(GBA *g, uint32_t addr, uint16_t v);
 uint16_t io_read16(GBA *g, uint32_t addr);

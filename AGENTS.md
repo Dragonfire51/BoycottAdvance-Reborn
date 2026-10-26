@@ -552,3 +552,48 @@ completo (fetch de 32 bit + buffer de prefetch + ciclo interno de 32 bit) es el
 prerrequisito; este intento parcial no debe publicarse. Revertido; baseline
 restaurado a 75 PASSED.
 
+## 2026-10-26 (2): modelo de bus por capas y confirmacion del prerrequisito
+
+### Capa 1 (fetch + prefetch) implementada y neutral: 75 PASSED preservado
+Se separo el modelo de ciclos en una capa de bus en `mem.c`/`mem.h` en vez del
+`charge_fetch` plano que fallo antes:
+- `bus_update_waitstates(g)`: deriva `bus_ns16/s16/ns32/s32[16]` de WAITCNT
+  (tablas de GBATEK "Memory Map": SRAM/WS0/WS1/WS2 no-secuencial y secuencial,
+  `ns32 = ns16 + 1 interno + s16`, `s32 = 2*s16 + 1`). Se llama al reset y en
+  cada escritura de WAITCNT (`io_write16` caso 0x204).
+- `bus_fetch_cycles(g, pc)`: coste del fetch. **Clave**: con el prefetch
+  desactivado (WAITCNT.14 = 0, el caso de toda la suite salvo `prefetch_enable`)
+  cada fetch es 1 ciclo, igual que el baseline; con el prefetch activo, un
+  fetch secuencial (PC == `prefetch_pc`) se sirve del buffer (1 ciclo) y una
+  rama paga el coste no-secuencial. `arm_exec`/`thumb_exec` cobran
+  `bus_fetch_cycles - 1` (el ciclo base ya esta en el total por opcode), y las
+  ramas ARM (B/BL/BX) llaman a `bus_prefetch_branch` para invalidar el buffer.
+- `bus_data_cycles` queda bajo `#if 0` (documentado): un acceso a datos y el
+  fetch de la siguiente instruccion se solapan en hardware, asi que no tiene
+  sentido cobrarlo por separado sin el pipeline completo.
+- Resultado: suite **75 PASSED / 49 FAILED / 9 UNKNOWN**, identico al baseline
+  (0 regresiones, 0 mejoras) y sin warnings nuevos. Efecto medible en juego
+  real: Esmeralda pasa de 113735189 a 114041282 ciclos en 400 frames (+0.27%),
+  acercandose a hardware (280896/frame), sin cambiar el render.
+
+### Por que el fetch plano no basta (remedido esta sesion)
+- Cobrar el fetch **no-secuencial en cada instruccion** cuando el prefetch esta
+  off baja la suite a 67 (8 regresiones `DMA_pause_timing_*`,
+  `Internal_Cycle_DMA_*`): sin prefetch, los fetches en linea recta siguen
+  siendo **secuenciales (S)**, no no-secuenciales (N). Corregido: sin prefetch
+  todo fetch cuesta 1 ciclo.
+- La visibilidad de timers por instruccion (marca de agua `io_catchup_timers`)
+  baja a 46 PASSED. Confirma lo ya documentado: hace falta el modelo completo
+  (fetch de 32 bit + buffer de 8x16 + ciclo interno de 32 bit) **y** sustituir
+  los cobros por opcode de `arm.c` por el modelo de acceso a datos, no solo
+  anadir el fetch. Revertido; el baseline de 75 queda intacto.
+
+### Prerrequisito exacto (mGBA, `/workspace/mgba`)
+El modelo mGBA no cobra un "fetch" aparte: `LOAD_32` del opcode y el acceso a
+datos comparten los mismos contadores `activeNonseqCycles`/`activeSeqCycles` y
+`GBAMemoryStall(cpu, wait)` (distancia `lastPrefetchedPc` vs PC). El buffer de
+prefetch son `cpu->prefetch[0..1]` recargados por `ARMWritePC`/`ThumbWritePC`
+con `activeNonseqCycles32 + activeSeqCycles32`. Portar esto fielmente es el
+siguiente paso; esta capa de bus (tablas + invalidacion) es su cimiento.
+
+

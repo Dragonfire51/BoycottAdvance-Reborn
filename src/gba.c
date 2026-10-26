@@ -123,6 +123,8 @@ void gba_reset(GBA *g) {
        lectura a la BIOS desde fuera devuelve [0x0E4] = E129F000. */
     g->bios_last_pc = 0xFFFFFFFFu;
     g->bios_prefetch = 0xE129F000u;
+
+    bus_update_waitstates(g);            /* derive region timing from WAITCNT */
 }
 
 void gba_load_bios(GBA *g, const char *path) {

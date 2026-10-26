@@ -86,6 +86,118 @@ static uint32_t dma_total_cycles(GBA *g, uint32_t src, uint32_t dst, int word,
 }
 
 /* =========================================================================
+ * Bus timing model (GBATEK "Memory Map" / "GamePak Prefetch")
+ * ========================================================================= */
+
+/* Region index = top nibble of the address, matching GBATEK's memory map. */
+int bus_region(uint32_t a) {
+    switch (a >> 24) {
+    case 0x00: case 0x01: return 0x0;   /* BIOS */
+    case 0x02:            return 0x2;   /* EWRAM */
+    case 0x03:            return 0x3;   /* IWRAM */
+    case 0x04:            return 0x4;   /* I/O */
+    case 0x05:            return 0x5;   /* Palette */
+    case 0x06:            return 0x6;   /* VRAM */
+    case 0x07:            return 0x7;   /* OAM */
+    case 0x08: case 0x09: return 0x8;   /* ROM WS0 */
+    case 0x0A: case 0x0B: return 0xA;   /* ROM WS1 */
+    case 0x0C: case 0x0D: return 0xC;   /* ROM WS2 */
+    case 0x0E: case 0x0F: return 0xE;   /* SRAM/Flash */
+    default:              return 0x0;
+    }
+}
+
+/* Internal (on-chip) regions run at one cycle per access with no waitstates;
+   EWRAM has its fixed 2-waitstate timing (GBATEK: 4000800h reset value 0Dh). */
+static bool region_is_rom(int r) { return r == 0x8 || r == 0xA || r == 0xC; }
+
+void bus_update_waitstates(GBA *g) {
+    static const int rom_ns[4] = { 4, 3, 2, 8 };       /* SRAM/WS0/WS1/WS2 first */
+    static const int rom_s[6]  = { 2, 1, 4, 1, 8, 1 }; /* WS0/1/2 sequential pairs */
+    uint16_t wc = (uint16_t)(g->io[0x204] | (g->io[0x205] << 8));
+    int i;
+
+    for (i = 0; i < 16; i++) g->bus_ns16[i] = g->bus_s16[i] = 0;
+
+    g->bus_ns16[0x0] = g->bus_s16[0x0] = 0;           /* BIOS: 1 cycle, no wait */
+    g->bus_ns16[0x2] = g->bus_s16[0x2] = 2;           /* EWRAM */
+    g->bus_ns16[0x3] = g->bus_s16[0x3] = 0;           /* IWRAM */
+    g->bus_ns16[0x4] = g->bus_s16[0x4] = 0;           /* I/O */
+    g->bus_ns16[0x5] = g->bus_s16[0x5] = 0;           /* Palette */
+    g->bus_ns16[0x6] = g->bus_s16[0x6] = 0;           /* VRAM */
+    g->bus_ns16[0x7] = g->bus_s16[0x7] = 0;           /* OAM */
+
+    g->bus_ns16[0x8] = rom_ns[wc & 3];
+    g->bus_s16[0x8]  = (wc & 0x10) ? 1 : 2;
+    g->bus_ns16[0xA] = rom_ns[(wc >> 2) & 3];
+    g->bus_s16[0xA]  = rom_s[2 + ((wc >> 4) & 1)];
+    g->bus_ns16[0xC] = rom_ns[(wc >> 5) & 3];
+    g->bus_s16[0xC]  = rom_s[4 + ((wc >> 7) & 1)];
+
+    g->bus_ns16[0xE] = g->bus_s16[0xE] = rom_ns[wc & 3];   /* SRAM uses WS0 first */
+
+    for (i = 0; i < 16; i++) {
+        if (region_is_rom(i)) {
+            /* 32-bit unit on the 16-bit bus: first 16 + 1 internal + seq 16 */
+            g->bus_ns32[i] = g->bus_ns16[i] + 1 + g->bus_s16[i];
+            g->bus_s32[i]  = 2 * g->bus_s16[i] + 1;
+        } else {
+            g->bus_ns32[i] = g->bus_ns16[i] + 1;
+            g->bus_s32[i]  = g->bus_s16[i] + 1;
+        }
+    }
+    g->prefetch_enable = (wc & 0x4000) != 0;
+    g->prefetch_pc = 0xFFFFFFFFu;                 /* buffer empty */
+}
+
+/* Fetch cost of the instruction at `pc`.
+ *
+ * The GamePak prefetch buffer (GBATEK "GamePak Prefetch") only exists when
+ * WAITCNT bit 14 is set; with it off every fetch is a plain single cycle, as
+ * on-chip memory.  With it on the buffer keeps fetching ahead of the CPU, so
+ * a fetch that follows on sequentially from the previous one is already
+ * buffered (one internal cycle) while the first fetch after a branch misses
+ * the buffer and pays the GamePak first-access (non-sequential) cost. */
+int bus_fetch_cycles(GBA *g, uint32_t pc) {
+    int r = bus_region(pc);
+    int step = (g->cpu.cpsr & CPSR_T) ? 2 : 4;
+    bool seq = (pc == g->prefetch_pc);
+
+    g->prefetch_pc = pc + (uint32_t)step;
+    if (r == 0x0 || !region_is_rom(r) || !g->prefetch_enable) return 1;
+    if (seq) return 1;                             /* served from the buffer */
+    return g->bus_ns16[r] + 1;                     /* branch: first access */
+}
+
+void bus_prefetch_branch(GBA *g, uint32_t pc) {
+    g->prefetch_pc = 0xFFFFFFFFu;                  /* next fetch misses the buffer */
+}
+
+/* Cost of one data access (load or store) of `width` bytes at `addr`.
+ *
+ * Not wired up yet: a data access and the instruction fetch of the next
+ * instruction overlap on real hardware, so this only becomes meaningful once
+ * the whole pipeline (fetch of 32 bit + 8x16 prefetch buffer + the internal
+ * 32-bit cycle) is modelled and the per-opcode cycle charges in arm.c are
+ * replaced by it (GBATEK "Instruction Cycle Summary").  Left unused on
+ * purpose until that port lands.
+ */
+#if 0
+int bus_data_cycles(GBA *g, uint32_t addr, int width, bool store) {
+    int r = bus_region(addr);
+    int c;
+
+    if (r == 0x0) c = (width == 4) ? 2 : 1;       /* BIOS */
+    else if (width == 4) c = g->bus_ns32[r];
+    else                 c = g->bus_ns16[r];
+    c += 1;                                       /* +1 internal cycle */
+
+    if (store && c > 1) c -= 1;                   /* writes are buffered */
+    return c;
+}
+#endif
+
+/* =========================================================================
  * I/O reads (16-bit register space)
  * ========================================================================= */
 uint16_t io_read16(GBA *g, uint32_t addr) {
@@ -273,7 +385,8 @@ void io_write16(GBA *g, uint32_t addr, uint16_t v) {
     /* ---- interrupts / waitstate ---- */
     case 0x200: g->ie = v & 0x3FFF; return;               /* IE  */
     case 0x202: g->if_reg &= (uint16_t)~(v & 0x3FFF); return;   /* IF: write 1 clears */
-    case 0x204: g->io[0x204] = v & 0xFF; g->io[0x205] = (v >> 8) & 0x7F; return;  /* WAITCNT */
+    case 0x204: g->io[0x204] = v & 0xFF; g->io[0x205] = (v >> 8) & 0x7F;
+                bus_update_waitstates(g); return;  /* WAITCNT */
     case 0x208: g->ime = v & 1; return;                   /* IME */
     case 0x300:                                           /* POSTFLG (byte bajo) + HALTCNT (byte alto) */
         g->io[0x300] = v & 0xFF;

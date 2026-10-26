@@ -251,6 +251,17 @@ typedef struct GBA {
 
     uint32_t cycle;               /* absolute cycle counter (16.78MHz) */
 
+    /* ---- bus: region waitstates + GamePak prefetch buffer ----------------
+       GBATEK "Memory Map" / "GamePak Prefetch".  Indexed by the top nibble of
+       the address (region).  ns = first (non-sequential) access, s = following
+       (sequential) accesses, 16/32 = access width.  A 32-bit unit on the
+       16-bit GamePak bus is ns16 + 1 internal + s16.  The prefetch buffer
+       holds up to 8 halfwords; `prefetch_pc` is the address of the next word
+       the buffer will deliver, and 0xFFFFFFFF means "empty". */
+    int      bus_ns16[16], bus_s16[16], bus_ns32[16], bus_s32[16];
+    bool     prefetch_enable;     /* WAITCNT bit 14 */
+    uint32_t prefetch_pc;         /* next address the buffer delivers */
+
     uint16_t ie, if_reg;
     bool     ime;
     uint16_t keypad;
