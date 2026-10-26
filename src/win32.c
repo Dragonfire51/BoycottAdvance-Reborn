@@ -254,7 +254,7 @@ static void cfg_load(const char *path) {
     cfg.dsound_a     = ini_geti(path, "DirectSoundAEnable", 1);
     cfg.dsound_b     = ini_geti(path, "DirectSoundBEnable", 1);
     cfg.biosenable   = ini_geti(path, "BIOSEnable", 1);
-    cfg.biosfastboot = ini_geti(path, "BIOSFastBoot", 1);
+    cfg.biosfastboot = ini_geti(path, "BIOSFastBoot", 0);
     cfg.skipintros   = ini_geti(path, "SkipIntros", 0);
     cfg.autorun      = ini_geti(path, "AutoRun", 1);
     cfg.flashid      = ini_geti(path, "FlashROMId", 0);
