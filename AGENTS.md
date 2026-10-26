@@ -694,3 +694,36 @@ timers), el prerrequisito ya documentado. Ese es el siguiente trabajo, no un bug
 puntual. Los fixes de esta sesion son su cimiento correcto (tablas de waitstate
 por region y coste de fetch por region).
 
+## 2026-10-26 (2): reloj de frame absoluto y el falso "modelo de ciclos"
+
+El muro de los glitches de video **no era el modelo de ciclos de bus**: era el
+reloj del frame. `run_frame_core` corria la CPU con presupuestos **relativos**
+(`arm_execute(g, 960)` / `arm_execute(g, 272)`); cada llamada puede pasarse al
+ejecutar la ultima instruccion, y ese exceso se sumaba 456 veces por frame. El
+frame medido salia en **285776 ciclos** cuando el hardware son **228*1232 =
+280896** (+1.7%), asi que el juego derivaba de fase frame a frame.
+
+Corregido: los limites de linea son **absolutos** respecto a la base del frame
+(`base + line*1232 + 960` y `base + (line+1)*1232`), de modo que cada linea
+recupera el exceso de la anterior. Frames sin DMA salen **exactos**; con DMA
+queda un residuo pequeno y variable (unos 1000/frame) que es tiempo de DMA real
+que se sale del frame.
+
+Efecto medido: Fire Emblem a 900 frames sigue en 95.2% de divergencia (95.21 ->
+95.18). Es decir, **los glitches NO son deriva de reloj ni del PPU**: ppu.c
+coincide con GBATEK y con mGBA, y el reloj de frame ya es exacto. Quedan la
+deriva de fase por el modelo de ciclos fino (prefetch 8x16, stall por acceso) y,
+sobre todo, el **arranque HLE**: nuestro harness usa `bios_fastboot = true` y
+compara contra mGBA con `FASTBOOT=1` (que solo escribe DISPCNT/DISPSTAT/IE/IME
+por encima), no son arranques equivalentes; a partir del frame 300 el juego esta
+en pantallas distintas. La comparacion fiable exige un **BIOS real** en ambos
+(`BIOS=<dump> gba_load_bios` en el nuestro, `BIOS=<dump>` en mGBA) y el mismo
+punto de partida.
+
+Suite con el reloj absoluto: **74 PASSED / 50 FAILED / 9 UNKNOWN / 133** (baja
+`ppu/start_up_vbl`; `DMA_ROM_Fixed`, `DMA_pause_timing_ROM_to_IWRAM`,
+`IRQ_sub_slow` y `Sprite_Last_VRAM_Access` acercan su veredicto). El reloj
+correcto es el cimiento; el test que se pierde mide el prefetcher, que aun no
+esta portado.
+
+

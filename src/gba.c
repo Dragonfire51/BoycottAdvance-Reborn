@@ -234,6 +234,15 @@ void gba_update_keypad(GBA *g, uint16_t keys) {
 static void run_frame_core(GBA *g) {
     const uint32_t visible_cycles = 960;     /* 240 px * 4 ciclos */
     const uint32_t hblank_cycles  = 272;     /* total 1232 por linea */
+    const uint32_t line_cycles    = visible_cycles + hblank_cycles;
+    /* La PPU marca el reloj: cada linea dura exactamente 1232 ciclos y el frame
+       228*1232 = 280896.  Los limites son absolutos respecto a `base`, de modo
+       que si el CPU se pasa del limite al acabar una instruccion, la linea
+       siguiente arranca en el limite ideal (recupera el exceso) en vez de
+       sumarlo.  Con presupuestos relativos el exceso de cada una de las 456
+       interrupciones de linea se acumulaba (+1.7% por frame) y el estado del
+       juego derivaba de fase respecto al hardware. */
+    uint32_t base = g->cycle;
 
     ppu_frame_start(g);                      /* recarga puntos de referencia afines */
     apu_step(g, 0);
@@ -262,22 +271,30 @@ static void run_frame_core(GBA *g) {
         /* VCount match IRQ */
         if ((g->ppu.dispstat & 0x0020) && line == vm) g->if_reg |= IF_VCOUNT;
 
-        /* parte visible de la linea: la CPU corre sus 960 ciclos y al acabar
-           se renderiza la linea con los registros tal como han quedado */
-        io_update_timers(g, visible_cycles);
-        arm_execute(g, visible_cycles);
-        apu_step(g, visible_cycles);
+        /* parte visible de la linea: la CPU corre hasta el limite absoluto y al
+           acabar se renderiza la linea con los registros tal como han quedado */
+        uint32_t vis_end = base + (uint32_t)line * line_cycles + visible_cycles;
+        uint32_t seg0 = g->cycle;
+        int vis_budget = (int)(vis_end - seg0);
+        if (vis_budget < 0) vis_budget = 0;
+        io_update_timers(g, (uint32_t)vis_budget);
+        arm_execute(g, (uint32_t)vis_budget);
+        apu_step(g, g->cycle - seg0);
         if (line < 160) ppu_render_line(g, line);
 
-        /* HBlank: la CPU corre los 272 ciclos restantes; DMA e IRQ de HBlank.
+        /* HBlank: la CPU corre hasta el limite de la linea; DMA e IRQ de HBlank.
            Los cambios de BGxHOFS, WINx, BLDx hechos aqui afectan a la linea
            siguiente (efectos de HDMA como Pokédex / transiciones). */
         g->ppu.dispstat |= 0x0002;
         if (g->ppu.dispstat & 0x0010) g->if_reg |= IF_HBLANK;
         if (line < 160) dma_trigger(g, 2);          /* HBlank-scheduled DMA */
-        io_update_timers(g, hblank_cycles);
-        arm_execute(g, hblank_cycles);
-        apu_step(g, hblank_cycles);
+        uint32_t hb_end = base + (uint32_t)(line + 1) * line_cycles;
+        uint32_t seg1 = g->cycle;
+        int hb_budget = (int)(hb_end - seg1);
+        if (hb_budget < 0) hb_budget = 0;
+        io_update_timers(g, (uint32_t)hb_budget);
+        arm_execute(g, (uint32_t)hb_budget);
+        apu_step(g, g->cycle - seg1);
     }
     g->ppu.vcount = 0;
     /* Between frames the scanline status bits must be clear: the real LCD
