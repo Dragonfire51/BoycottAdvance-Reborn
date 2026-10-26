@@ -142,6 +142,48 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.15** — CPU, memory and save fidelity pass, plus a native audio fix.
+  The SPSR access rules now follow GBATEK (MRS from SPSR in User or System
+  mode returns the CPSR, MSR to SPSR is ignored there, and the mode field
+  bit 4 reads back as 1 for the invalid `0xxnnb` encodings). The ARM7 BIOS
+  prefetch latch is modelled: GBATEK documents that the CPU retains the word
+  after the last instruction fetched inside the BIOS and returns it for a
+  BIOS read issued from outside the region, so HLE SWIs pin it like the real
+  vector. Thumb `POP {}` applies the ARM7TDMI quirk (transfers R15, `SP +=
+  0x40`). DMA now costs the real bus time per GBATEK (`2N+2(n-1)S+xI`) and
+  those cycles are charged to the timers, which keep counting while the DMA
+  holds the bus. The first layer of the bus cycle model landed: WAITCNT
+  derived waitstate tables and the GamePak prefetch buffer, so a straight-line
+  fetch is sequential and a branch pays the non-sequential cost (GBATEK
+  "Memory Map"); it is deliberately neutral for rendering. The flash `data#`
+  polling inversion was removed, so a programmed byte reads back as written
+  and an erased sector as `FFh` (GBATEK "GBA Cart Backup Flash ROM"). On
+  Windows, waveOut now refills from a worker thread instead of the `WOM_DONE`
+  callback (MSDN forbids waveOut calls from the callback), which removes
+  crackling on drivers that corrupt the stream. Verified with the fleroviux
+  gba-tests CPU/PPU suite (75/133 passing) and by keeping Pokemon Emerald,
+  Fire Emblem and Medabots AX bit-identical frame to frame.
+
+- **v1.4.14** — fixes the v1.4.13 window regression and the PSG duty table.
+  v1.4.13 had shifted the window registers by four bytes
+  (`WIN0H/WIN1H/WIN0V/WIN1V` at `0x40/42/44/46`, `WININ/WINOUT` at `0x48/4A`),
+  corrupting every windowed layer: dialogue boxes, menus and fade transitions
+  in Pokemon Emerald, Medabots AX and Fire Emblem. They are back at the GBATEK
+  addresses (`WIN0H/WIN1H/WIN0V/WIN1V` at `0x40/42/44/46`, `WININ/WINOUT` at
+  `0x48/4A`). The PSG wave duty patterns follow GBATEK (the pulse starts at
+  the first step); the old Pan Docs table produced split pulses and gave menu
+  blips the wrong timbre. OBJ tiles in bitmap modes 3-5 index the 16K OBJ area
+  at `0x06014000` with a 9-bit slot (no underflow), and the DISPSTAT VBlank
+  flag is set on lines 160-226 only, not 227 (GBATEK).
+
+- **v1.4.13** — the OBJ character base in bitmap modes and the window
+  registers. OBJ tiles 512-1023 in modes 3/4/5 are fetched from OBJ VRAM
+  `0x06014000` (GBATEK) instead of wrapping to `0x06010000`, and the window
+  registers were moved to the GBATEK addresses (this is the shift v1.4.14
+  corrected). Adds the `synt_our`/`synt_ref` framebuffer comparison harnesses
+  and `gen_blend_test.py` (synthetic mode 3/4 blend/BLDY test ROMs).
+
+
 - **v1.4.12** — the OBJ mosaic effect now renders per GBATEK: the
   per-object mosaic bit (`attr0` bit 12) and the OBJ H/V block sizes from
   the MOSAIC register (bits 8–15) are honoured, the grid is aligned to the
