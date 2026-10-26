@@ -552,6 +552,43 @@ completo (fetch de 32 bit + buffer de prefetch + ciclo interno de 32 bit) es el
 prerrequisito; este intento parcial no debe publicarse. Revertido; baseline
 restaurado a 75 PASSED.
 
+## RELEASE v1.4.15 (publicado 2026-10-26)
+
+- **Version**: `GBA_VERSION` = `v1.4.15` (`src/gba.h`); README + dialogos de
+  historial (`src/win32.c`/`src/main.c`) actualizados. Contenido (commits
+  `8bb7802`, `b301fb0`, `64b4919`, `3f7136a`, `257f87c`, `6035c18`): reglas de
+  SPSR (GBATEK), latch de prefetch de BIOS al salir de la region + quirk de
+  Thumb `POP{}`, coste real de bus de DMA (`2N+2(n-1)S+xI`) cobrado a los
+  timers, retirada de la inversion de polling `data#` del flash, primera capa
+  del modelo de ciclos de bus (WAITCNT + buffer de prefetch, neutra), y en
+  Win32 el refill de waveOut desde un hilo en vez del callback `WOM_DONE`.
+- **Tag** `v1.4.15` = commit `58ce8e2` (main); tag rodante `Latest` movido al
+  mismo commit (`git tag -f Latest && git push -f origin Latest`).
+- **CI colgado**: el run `40374383530` (disparado por el push del tag) se
+  quedo **atascado >10 min** en el paso "Install mingw and zip" del job
+  `windows (win64)` — el mismo fallo de infraestructura del runner
+  (`apt-get`) que en v1.4.13. Los jobs `linux`, `macos` y `windows (win32)`
+  si completaron. Run cancelado (`POST /actions/runs/{id}/cancel`).
+- **Publicacion manual via API** (leccion de v1.4.13 aplicada: no esperar al
+  runner):
+  - Release `v1.4.15` creado con `POST /releases` (`tag_name=v1.4.15`) ->
+    id `424603696`; 5 assets subidos a `uploads.github.com`.
+  - Release rodante `Latest` (id `413237927`) renombrado a "Latest (v1.4.15)",
+    borrados los assets viejos (DELETE, 204 sin cuerpo -> no parsear JSON) y
+    subidos los 5 nuevos.
+  - `v1.4.14` marcado `prerelease=true`; quedan estables solo `v1.4.15` y
+    `Latest`.
+  - Assets: `linux-x86_64`, `macos` (descargado del artefacto de CI), `win32.zip`,
+    `win64.zip`, `-v1.4.15-src.tar.gz`. Verificado: descarga del `win64.zip` y
+    `strings` del `.exe` confirma `BoycottAdvance Reborn v1.4.15`.
+- **Binarios locales** (reproducen los del CI, mismo Makefile): `make`,
+  `make -f Makefile.win32` y `ARCH=i686`, los tres **sin warnings**
+  (`-Wall -Wextra`) y con `v1.4.15` embebida.
+- **OJO credenciales git**: el remote `origin` volvio a llevar el token viejo
+  (`ghu_...`) y el push fallo con "could not read Password". Fix:
+  `git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/Dragonfire51/BoycottAdvance-Reborn.git"`.
+
+
 ## 2026-10-26 (2): modelo de bus por capas y confirmacion del prerrequisito
 
 ### Capa 1 (fetch + prefetch) implementada y neutral: 75 PASSED preservado
