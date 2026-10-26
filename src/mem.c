@@ -52,8 +52,8 @@ static void dma_region_ws(GBA *g, int region, int *nseq16, int *seq16) {
     switch (region) {
     case R_EWRAM: *nseq16 = *seq16 = 2; break;
     case R_ROM:
-        *nseq16 = rom_ws[wc & 3];
-        *seq16  = (wc & 0x10) ? 1 : 2;
+        *nseq16 = rom_ws[(wc >> 2) & 3];              /* WS0 first access (bits 2-3) */
+        *seq16  = (wc & 0x10) ? 1 : 2;                /* WS0 second access (bit 4) */
         break;
     case R_SRAM: *nseq16 = *seq16 = rom_ws[wc & 3]; break;
     default:     *nseq16 = *seq16 = 0; break;
@@ -112,8 +112,7 @@ int bus_region(uint32_t a) {
 static bool region_is_rom(int r) { return r == 0x8 || r == 0xA || r == 0xC; }
 
 void bus_update_waitstates(GBA *g) {
-    static const int rom_ns[4] = { 4, 3, 2, 8 };       /* SRAM/WS0/WS1/WS2 first */
-    static const int rom_s[6]  = { 2, 1, 4, 1, 8, 1 }; /* WS0/1/2 sequential pairs */
+    static const int rom_ns[4] = { 4, 3, 2, 8 };       /* first access: 4,3,2,8 cycles */
     uint16_t wc = (uint16_t)(g->io[0x204] | (g->io[0x205] << 8));
     int i;
 
@@ -127,12 +126,12 @@ void bus_update_waitstates(GBA *g) {
     g->bus_ns16[0x6] = g->bus_s16[0x6] = 0;           /* VRAM */
     g->bus_ns16[0x7] = g->bus_s16[0x7] = 0;           /* OAM */
 
-    g->bus_ns16[0x8] = rom_ns[wc & 3];
-    g->bus_s16[0x8]  = (wc & 0x10) ? 1 : 2;
-    g->bus_ns16[0xA] = rom_ns[(wc >> 2) & 3];
-    g->bus_s16[0xA]  = rom_s[2 + ((wc >> 4) & 1)];
-    g->bus_ns16[0xC] = rom_ns[(wc >> 5) & 3];
-    g->bus_s16[0xC]  = rom_s[4 + ((wc >> 7) & 1)];
+    g->bus_ns16[0x8] = rom_ns[(wc >> 2) & 3];          /* WS0 first: bits 2-3 */
+    g->bus_s16[0x8]  = (wc & 0x10) ? 1 : 2;            /* WS0 second: bit 4 */
+    g->bus_ns16[0xA] = rom_ns[(wc >> 5) & 3];          /* WS1 first: bits 5-6 */
+    g->bus_s16[0xA]  = (wc & 0x80) ? 1 : 4;            /* WS1 second: bit 7 (4/1) */
+    g->bus_ns16[0xC] = rom_ns[(wc >> 8) & 3];          /* WS2 first: bits 8-9 */
+    g->bus_s16[0xC]  = (wc & 0x400) ? 1 : 8;           /* WS2 second: bit 10 (8/1) */
 
     g->bus_ns16[0xE] = g->bus_s16[0xE] = rom_ns[wc & 3];   /* SRAM uses WS0 first */
 
@@ -162,9 +161,14 @@ int bus_fetch_cycles(GBA *g, uint32_t pc) {
     int r = bus_region(pc);
     int step = (g->cpu.cpsr & CPSR_T) ? 2 : 4;
     bool seq = (pc == g->prefetch_pc);
+    bool thumb = (g->cpu.cpsr & CPSR_T) != 0;
 
     g->prefetch_pc = pc + (uint32_t)step;
-    if (r == 0x0 || !region_is_rom(r) || !g->prefetch_enable) return 1;
+    if (r == 0x0) return 1;                        /* BIOS: 1 cycle, no wait */
+    /* On-chip regions: 1 cycle per 16-bit access, so a 32-bit ARM fetch on the
+       16-bit VRAM/OAM/Palette bus pays a second cycle (GBATEK Memory Map). */
+    if (r == 0x5 || r == 0x6 || r == 0x7) return thumb ? 1 : 2;
+    if (!region_is_rom(r) || !g->prefetch_enable) return 1;
     if (seq) return 1;                             /* served from the buffer */
     return g->bus_ns16[r] + 1;                     /* branch: first access */
 }

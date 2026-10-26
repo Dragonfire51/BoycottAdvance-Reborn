@@ -634,3 +634,63 @@ con `activeNonseqCycles32 + activeSeqCycles32`. Portar esto fielmente es el
 siguiente paso; esta capa de bus (tablas + invalidacion) es su cimiento.
 
 
+
+## 2026-10-26 (sesion de audio/graficos): fixes de WAITCNT y del reloj del FIFO
+
+Revision linea por linea contra GBATEK (`/tmp/gbatek.txt`) de `apu.c`, `mem.c`,
+`ppu.c` y `arm.c`. Dos bugs reales encontrados y corregidos, verificados con la
+suite y con mGBA de referencia (`tools/mgbaharness.c` sobre `build-nogl`):
+
+### Bus / WAITCNT (mem.c): el decodificado estaba desplazado un campo
+`bus_update_waitstates` leia WS0 de los bits 0-1 (que son **SRAM**), WS1 de los
+2-3 y WS2 de los 5-6; el mismo error estaba en `dma_region_ws` (ROM desde los
+bits 0-1 de SRAM). GBATEK "4000204h - WAITCNT": SRAM 0-1, **WS0 first 2-3**,
+WS0 second 4, **WS1 first 5-6**, WS1 second 7 (4/1), **WS2 first 8-9**, WS2
+second 10 (8/1). Corregido en ambos sitios, con los valores second reales
+(WS1 = 4/1 y WS2 = 8/1, no la tabla duplicada de WS0). Efecto: los waitstates
+de ROM ya no se toman de SRAM; el prefetch y el coste de fetch por region son
+los que dicta el registro.
+
+`bus_fetch_cycles` ademas ahora cobra el segundo ciclo de un fetch de 32 bit en
+los buses de 16 bit (VRAM/OAM/Palette), que antes devolvian 1 ciclo.
+
+### Audio "rayado" (apu.c): el FIFO se consumia en rafagas por scanline
+`apu_timer_overflow` hacia los pops **dentro** del overflow del timer, que el
+nucleo agrupa por scanline (`io_update_timers(g, 960)` una vez por linea). El
+Direct Sound salia como sample-and-hold a ~13.6 kHz con escalones del tamano de
+la rafaga, y el DMA de FIFO se pedia a saltos: de ahi el "rayado".
+
+Ahora el reloj del FIFO lo lleva `apu_fifo_tick()`, llamado por muestra de audio
+desde `gen_sample()` con `STEP_FP` (16.16): saca **una** muestra por periodo del
+timer (`(0x10000-reload)*prescaler`) y pide DMA si quedan <= 16 bytes. El
+`Apu` guarda `fifo_next[2]` (ciclos hasta el proximo pop, 16.16); el overflow
+del timer ya no hace nada.
+
+Verificacion (Esmeralda, 400 frames, `PCMDUMP`):
+- rachas de muestras identicas > 40 en la zona activa: 5 -> 1 (la que queda es
+  el silencio de arranque, 3.16 s);
+- sin clipping (peak 8128, antes 8192 tocando el techo);
+- espectro vs mGBA (44100 y 65536 Hz remuestreados): high/low (>10k / <4k)
+  ours 0.0195 vs mGBA 0.0163, es decir sin el exceso de agudos que delataba el
+  sample-and-hold.
+
+### PPU: revisado, correcto
+`ppu.c` (BG 0-5, OBJ normal+afin, windows, efectos de color, mosaic) coincide
+con GBATEK y con las formulas de mGBA (`software-obj.c`: `stride = width>>!256`,
+`xBase`/`yBase`); el direccionamiento de tiles OBJ en modo bitmap (base
+0x14000, `slot-512`) tambien. **No se toco.**
+
+### Estado de los glitches y de la suite
+Los glitches de video NO son del PPU (ya documentado) sino del modelo de ciclos;
+Fire Emblem sigue en **19.86% de divergencia en el frame 300**, exactamente el
+baseline de `AGENTS.md`, tanto antes como despues de estos fixes (los fixes de
+WAITCNT no cambian la fase porque el fetch secuencial ya costaba 1 ciclo).
+Suite: **75 PASSED / 49 FAILED / 9 UNKNOWN / 133 TOTAL**, igual que el baseline.
+
+Los 49 fallos siguen dominados por **irq (11), LDM (8), Interactions (5), DMA
+(5), Bus (5)**, que dependen del modelo completo de bus (fetch de 32 bit +
+prefetch 8x16 + ciclo interno de 32 bit y su interaccion con la visibilidad de
+timers), el prerrequisito ya documentado. Ese es el siguiente trabajo, no un bug
+puntual. Los fixes de esta sesion son su cimiento correcto (tablas de waitstate
+por region y coste de fetch por region).
+

@@ -107,6 +107,7 @@ void apu_reset(GBA *g) {
     memset(&g->apu, 0, sizeof(g->apu));
     g->apu.bias = 0x0200;                                   /* SOUNDBIAS por defecto */
     g->apu.lfsr = 0x4000;      /* GBATEK: valor inicial 15 bit */
+    g->apu.fifo_next[0] = g->apu.fifo_next[1] = UINT64_MAX; /* FIFO sin armar */
 }
 
 /* ---------------------------------------------------------------- FIFOs */
@@ -120,19 +121,43 @@ void apu_fifo_write(GBA *g, int ch, const uint8_t *bytes, int nbytes) {
     }
 }
 
-/* Un timer desbordo n veces: los FIFOs que lo usan sacan n muestras. */
+/* Periodo del timer que relojea un FIFO, en ciclos de CPU.  Cada desbordamiento
+   saca UNA muestra del FIFO (GBATEK SOUNDCNT_H bits 10/14). */
+static uint32_t fifo_timer_period(GBA *g, int t) {
+    const Timer *tm = &g->timer[t];
+    uint32_t ps = tm->prescaler ? (uint32_t)tm->prescaler : 1u;
+    return (uint32_t)(0x10000 - tm->reload) * ps;
+}
+
+/* El reloj del FIFO lo lleva apu_fifo_tick() al ritmo del timer; el
+   desbordamiento no necesita hacer nada (re-armar aqui duplicaria la cuenta,
+   porque el tick ya descuenta el mismo periodo). */
 void apu_timer_overflow(GBA *g, int timer, uint32_t n) {
+    (void)g; (void)timer; (void)n;
+}
+
+/* Avanza los FIFOs `cycles_fp` ciclos de CPU (punto fijo 16.16).  Saca una
+   muestra cada vez que vence el periodo del timer y pide DMA si quedan <= 16
+   bytes.  Se llama por muestra de audio, asi el Direct Sound sale a la
+   frecuencia del timer y no en rafagas por scanline. */
+static void apu_fifo_tick(GBA *g, uint64_t cycles_fp) {
     Apu *a = &g->apu;
     for (int f = 0; f < 2; f++) {
         int sel = (a->cnt_h >> (f ? 14 : 10)) & 1;
-        if (sel != timer) continue;
-        for (uint32_t k = 0; k < n; k++) {
+        if (!g->timer[sel].enabled) { a->fifo_next[f] = UINT64_MAX; continue; }
+        if (a->fifo_next[f] == UINT64_MAX)                  /* recien arrancado */
+            a->fifo_next[f] = (uint64_t)fifo_timer_period(g, sel) << 16;
+        if (a->fifo_next[f] > cycles_fp) { a->fifo_next[f] -= cycles_fp; continue; }
+        uint32_t period = fifo_timer_period(g, sel);
+        a->fifo_next[f] -= cycles_fp;
+        while ((int64_t)a->fifo_next[f] <= 0) {
             if (a->fifo_len[f] > 0) {
                 a->fifo_held[f] = a->fifo[f][a->fifo_head[f]];
                 a->fifo_head[f] = (a->fifo_head[f] + 1) & 31;
                 a->fifo_len[f]--;
             }
             if (a->fifo_len[f] <= 16) dma_fifo_request(g, f);
+            a->fifo_next[f] += (uint64_t)period << 16;
         }
     }
 }
@@ -327,8 +352,14 @@ static void clock_sweep(Apu *a) {
 }
 
 /* ---------------------------------------------------------------- generacion */
-static void gen_sample(Apu *a, int16_t *outl, int16_t *outr) {
+static void gen_sample(GBA *g, int16_t *outl, int16_t *outr) {
+    Apu *a = &g->apu;
     if (!a->master) { *outl = *outr = 0; return; }
+
+    /* Los FIFOs avanzan al ritmo de su timer, una muestra por periodo, en el
+       mismo paso temporal que el resto del APU: asi el Direct Sound no se
+       reproduce en escalones (sample-and-hold por scanline). */
+    apu_fifo_tick(g, STEP_FP);
 
     /* frame sequencer: 512 Hz = cada 32768 ciclos de CPU */
     a->fs_cc += STEP_FP;
@@ -450,7 +481,7 @@ void apu_step(GBA *g, uint32_t cycles) {
     while (a->sample_acc >= CPU_HZ) {
         a->sample_acc -= CPU_HZ;
         int16_t l, r;
-        gen_sample(a, &l, &r);
+        gen_sample(g, &l, &r);
         ring_push(l, r);
     }
 }
