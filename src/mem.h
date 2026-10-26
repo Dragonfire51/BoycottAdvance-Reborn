@@ -16,7 +16,7 @@ void gba_write32(GBA *g, uint32_t addr, uint32_t v);
  * internal 32-bit cycle is charged by the core, not here. */
 void     bus_update_waitstates(GBA *g);         /* recompute from WAITCNT */
 int      bus_fetch_cycles(GBA *g, uint32_t pc); /* instruction fetch at pc */
-void     bus_prefetch_branch(GBA *g, uint32_t pc); /* reload after a branch */
+void     bus_prefetch_branch(GBA *g);            /* invalidate after a branch */
 int      bus_region(uint32_t addr);
 
 /* internal IO register emulation (called from mem.c) */

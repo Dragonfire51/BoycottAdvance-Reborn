@@ -169,7 +169,7 @@ int bus_fetch_cycles(GBA *g, uint32_t pc) {
     return g->bus_ns16[r] + 1;                     /* branch: first access */
 }
 
-void bus_prefetch_branch(GBA *g, uint32_t pc) {
+void bus_prefetch_branch(GBA *g) {
     g->prefetch_pc = 0xFFFFFFFFu;                  /* next fetch misses the buffer */
 }
 

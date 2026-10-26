@@ -289,7 +289,7 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
         if (off & 0x00800000) off |= 0xFF000000;
         if (insn & (1u << 24)) write_reg(g, 14, r15(g) + 4);   /* BL */
         set_pc(g, r15(g) + 8 + (uint32_t)((int32_t)off * 4));
-        bus_prefetch_branch(g, r15(g));
+        bus_prefetch_branch(g);
         add_cycles(g, 1);
         return;
     }
@@ -298,7 +298,7 @@ static void arm_exec_at(GBA *g, uint32_t insn) {
         uint32_t rm = read_reg(g, insn & 0xF);
         if (rm & 1) { set_cpsr(g, get_cpsr(g) | CPSR_T); set_pc(g, rm & ~1u); }
         else { set_cpsr(g, get_cpsr(g) & ~CPSR_T); set_pc(g, rm & ~3u); }
-        bus_prefetch_branch(g, r15(g));
+        bus_prefetch_branch(g);
         add_cycles(g, 1);
         return;
     }
