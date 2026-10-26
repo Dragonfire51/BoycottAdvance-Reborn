@@ -28,6 +28,7 @@ void gba_init(GBA *g) {
     g->ime = false;
     g->key_input = 0x03FF;        /* all released (low active) */
     g->cycle = 0;
+    g->frame_base = 0;
     g->frame_count = 0;
     g->n_cheats = 0;
     g->state_buf = NULL;
@@ -49,6 +50,7 @@ void gba_reset(GBA *g) {
     memset(&g->apu, 0, sizeof(g->apu));
     memset(&g->ppu, 0, sizeof(g->ppu));
     g->cycle = 0;
+    g->frame_base = 0;
     g->frame_count = 0;
     g->cst.halt = false;
     g->cst.stopped = false;
@@ -109,6 +111,10 @@ void gba_reset(GBA *g) {
         g->ime = true;
     }
     gba_write8(g, 0x04000300, 1);        /* POSTFLG: BIOS has run */
+    /* SIOCNT: the real BIOS leaves the serial port in 32-bit multi-play mode
+       with the IRQ bit set (0x6003).  Our HLE fast boot left it at zero, which
+       a title that polls SIOCNT (link menus, some save routines) can see. */
+    g->io[0x128] = 0x03; g->io[0x129] = 0x60;
     /* Point the IRQ vector at the BIOS default handler, as the real BIOS does.
        Only meaningful when a BIOS image is mapped: with fast boot and no dump
        the BIOS region reads as zero, so an interrupt taken before the game
@@ -242,7 +248,15 @@ static void run_frame_core(GBA *g) {
        sumarlo.  Con presupuestos relativos el exceso de cada una de las 456
        interrupciones de linea se acumulaba (+1.7% por frame) y el estado del
        juego derivaba de fase respecto al hardware. */
-    uint32_t base = g->cycle;
+    uint32_t base = g->frame_base;           /* reloj ideal del PPU, no el de la CPU */
+    /* El reloj del PPU no debe quedar por delante de la CPU ni retrasarse mas de
+       un frame (p.ej. tras cargar un savestate, que no serializa ninguno de los
+       dos): en ese caso resincroniza con el contador de la CPU para no colgar el
+       bucle con presupuestos negativos. */
+    if ((int32_t)(base - g->cycle) > 0 ||
+        (int32_t)(g->cycle - base) > (int32_t)(228u * line_cycles))
+        base = g->cycle;
+    g->frame_base = base + 228u * line_cycles;
 
     ppu_frame_start(g);                      /* recarga puntos de referencia afines */
     apu_step(g, 0);

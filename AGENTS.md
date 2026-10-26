@@ -726,4 +726,32 @@ Suite con el reloj absoluto: **74 PASSED / 50 FAILED / 9 UNKNOWN / 133** (baja
 correcto es el cimiento; el test que se pierde mide el prefetcher, que aun no
 esta portado.
 
+## 2026-10-26 (3): el muro de divergencia es el arranque HLE, no el PPU
+
+Con **BIOS real en ambos lados** (`BIOS=gba_bios.bin NOFASTBOOT=1` en el
+harness, `BIOS=<dump>` en mGBA) Fire Emblem pasa de **19.86% a 1.08%** de
+divergencia a frame 300. Y a frame 500, con el estado del juego ya casi
+identico a mGBA (VRAM 0.7%, EWRAM 0.1%, IWRAM 3.3% de bytes distintos),
+seguimos renderizando 22% distinto **solo por estar unos frames por delante**:
+la animacion de intro gira, asi que un desfase de fase produce un diff enorme
+sin ningun bug de render. mGBA reporta `frameCycles=280896` en cada frame, que
+confirma el objetivo del reloj.
+
+Los 4 bytes de IO que difieren a frame 30 entre nuestro fastboot y el BIOS real
+lo prueban: `WAITCNT` (0x204) ya lo escribio el juego en nuestro run pero no en
+el de BIOS (vamos por delante) y `SIOCNT` (0x128) = 0x6003 lo deja el BIOS y
+nuestro HLE no lo ponia. **Corregido**: el fastboot replica `SIOCNT=0x6003`.
+
+Conclusion: ppu.c no tiene un bug evidente; el ruido de la comparacion es el
+**arranque HLE vs BIOS real** y la fase. Para diagnosticar glitches de render
+hay que comparar **ambos con BIOS real y en la misma fase**, o renderizar el
+mismo estado de video. El modo `renderstate` del harness no sirve para esto
+porque aplica los registros de fin de frame a todas las lineas y no reproduce
+el HDMA por scanline.
+
+Cambios de esta sesion: reloj de frame con base propia (`frame_base`) para que
+el exceso de DMA no desplace el reloj del PPU, guarda de resincronizacion tras
+cargar savestate, `SIOCNT` en el fastboot, y volcado de `io.bin` en el harness.
+
+
 

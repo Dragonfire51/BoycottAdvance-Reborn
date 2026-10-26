@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
     if (!gba_load_rom(g, rom)) { fprintf(stderr, "load fail\n"); return 1; }
     const char *bios = getenv("BIOS");
     if (bios) gba_load_bios(g, bios);
-    g->bios_fastboot = true;   /* same HLE boot as the app default */
+    g->bios_fastboot = getenv("NOFASTBOOT") ? false : true;   /* same HLE boot as the app default */
     gba_reset(g);
 
     /* PCMDUMP=<path>: write the APU stream as raw s16le stereo, so it can be
@@ -107,7 +107,9 @@ int main(int argc, char **argv) {
         f = fopen(p, "wb"); fwrite(g->ewram, 1, sizeof(g->ewram), f); fclose(f);
         snprintf(p, sizeof(p), "%s.iwram.bin", argv[4]);
         f = fopen(p, "wb"); fwrite(g->iwram, 1, sizeof(g->iwram), f); fclose(f);
-        printf("dumped %s.{vram,pal,oam,screen,ewram,iwram}.bin\n", argv[4]);
+        snprintf(p, sizeof(p), "%s.io.bin", argv[4]);
+        f = fopen(p, "wb"); fwrite(g->io, 1, sizeof(g->io), f); fclose(f);
+        printf("dumped %s.{vram,pal,oam,screen,ewram,iwram,io}.bin\n", argv[4]);
     } else if (!strcmp(cmd, "renderstate")) {
         /* arg = prefix: load vram/pal/oam + regs, render one frame, save screen.
          * regs file format (text, one per line): name=value in hex, names as in

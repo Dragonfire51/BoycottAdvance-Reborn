@@ -251,6 +251,7 @@ typedef struct GBA {
     CpuState cst;
 
     uint32_t cycle;               /* absolute cycle counter (16.78MHz) */
+    uint32_t frame_base;          /* ideal start cycle of the current frame (PPU clock) */
 
     /* ---- bus: region waitstates + GamePak prefetch buffer ----------------
        GBATEK "Memory Map" / "GamePak Prefetch".  Indexed by the top nibble of
