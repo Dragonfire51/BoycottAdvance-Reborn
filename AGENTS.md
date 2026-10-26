@@ -753,5 +753,12 @@ Cambios de esta sesion: reloj de frame con base propia (`frame_base`) para que
 el exceso de DMA no desplace el reloj del PPU, guarda de resincronizacion tras
 cargar savestate, `SIOCNT` en el fastboot, y volcado de `io.bin` en el harness.
 
+**Default de arranque cambiado a BIOS real** (`BIOSFastBoot` default 0). La app
+ya trae `gba_bios.bin` y lo carga; con el dump presente arranca por BIOS real y
+coincide con mGBA. Si el dump no esta, `gba_load_bios` deja `bios_loaded=false`
+y el reset cae al HLE fastboot, asi que sin el fichero nada se rompe. El menu de
+Options sigue permitiendo alternarlo.
+
+
 
 
