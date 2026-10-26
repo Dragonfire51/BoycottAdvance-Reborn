@@ -524,3 +524,31 @@ frame, un re-render estatico difiere legitimamente); PA/PD que el trace lee como
 0x7FFF vs 0x0100 de mGBA (artefacto: BGxPA/BGxX son de solo escritura en mGBA y
 el trace los lee por `io_read16`).
 
+## 2026-10-26: verificacion del hito no-SDL (Win32) y del modelo de ciclos
+
+### Hito SDL2/Win32: verificado, sin cambios de codigo pendientes
+Reinstalado mingw-w64 (`gcc-mingw-w64-x86-64` / `gcc-mingw-w64-i686` v14) y
+compilado el build nativo en ambas arquitecturas:
+- `make -f Makefile.win32` -> `boycottadvance-reborn-x86_64.exe`
+- `make -f Makefile.win32 ARCH=i686` -> `boycottadvance-reborn-i686.exe`
+
+`objdump -p` del PE confirma los imports: comdlg32, d3d9, GDI32, KERNEL32,
+msvcrt, SHELL32, USER32, WINMM — ningun SDL. `video.c` usa GDI/D3D9 bajo
+`_WIN32` y SDL solo en el path no-Windows; `gui.c` construye la barra nativa
+completa (File/Window/Options/Help) con las opciones del original y sin Debug.
+El hito no-SDL ya esta en `main` (`22cb833`) y el D-pad POV tambien
+(`a8c709f`): no hay trabajo pendiente de commit+push en esa parte.
+
+### Modelo de ciclos de bus: experimento parcial descartado (75 -> 42)
+Se probo `charge_fetch()` (cobra el fetch de opcode de 32 bit con waitstates de
+ROM) + tick de timers por instruccion (`io_tick_timers`, marca de agua
+`timer_ticked`) quitando el tick por scanline. Resultado: 42 PASSED con 35
+regresiones (`prefetcher/*`, `timing/*`, `fifo_dma/*`, `DMA_Mode_Change`,
+`arm/Coprocessor_14`, `thumb/Push_no_regs`, ...). No es un defecto de la marca
+de agua: los tests de prefetch/timing miden el buffer de prefetch de 8
+entradas de 16 bit (GBATEK "GamePak Prefetch"), que `charge_fetch` no modela
+(solo exime 1 ciclo cuando WAITCNT.14 y la busqueda es secuencial). El modelo
+completo (fetch de 32 bit + buffer de prefetch + ciclo interno de 32 bit) es el
+prerrequisito; este intento parcial no debe publicarse. Revertido; baseline
+restaurado a 75 PASSED.
+
