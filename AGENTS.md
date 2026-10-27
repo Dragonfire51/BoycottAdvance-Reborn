@@ -586,6 +586,45 @@ restaurado a 75 PASSED.
   (necesita `test.gba` + `baseline_*.png`) contra el harness headless y reporta
   el diff por frame en RGB555->888 con replicacion de bits.
 
+## VERIFICACION 2026-10-27: el diff de Esmeralda a f400 NO es del PPU (probado)
+
+Verificacion a fondo de la afirmacion "divergencia del modelo de CPU, no del PPU".
+**Conclusion: confirmada, y ahora con prueba dura.** Metodo: inyeccion de estado.
+
+- **Prueba de exoneracion (definitiva)**: `tools/headharness.c` acepta
+  `renderstate <prefijo>`, que carga `vram.bin`/`pal.bin`/`oam.bin` + `*.regs`
+  (texto `dispcnt=.. bgcnt0=.. bldcnt=..` etc.) y renderiza un frame con
+  `ppu_render_frame`. Alimentando nuestro renderer con el estado **exacto de
+  mGBA** a f400 (Esmeralda), el resultado es **0 px de diferencia (0.00%)** contra
+  el frame de mGBA. Nuestro PPU es **bit-exacto**: no hay bug de render.
+  Repetido con las dos rutas de arranque (fastboot HLE y BIOS real): 0 px en ambas.
+- **Que difiere realmente** (f400, fastboot): VRAM **0 bytes**, PAL 6 bytes,
+  OAM 64 bytes, IWRAM 3360 bytes, EWRAM 140 bytes. Con **BIOS real en ambos**:
+  VRAM/PAL/OAM **0 bytes**, IWRAM 117 bytes, EWRAM 1 byte. La diferencia es el
+  **estado que el juego ha escrito**, no como lo pinta el PPU.
+- **El fastboot HLE amplifica la divergencia**: mismo juego, misma ruta en ambos
+  emuladores -> fastboot 3360 bytes de IWRAM vs BIOS real 117 bytes. Nuestro
+  arranque HLE no replica exactamente lo que deja el BIOS de verdad (esperado).
+- **La divergencia es transitoria, no un bug estatico**: Esmeralda con BIOS real
+  da 1334 px (3.47%) de f350 a f436 y **0.00% sostenido de f440 a f452**.
+  Es decir, reconverge a pixel-perfect. Un bug de render no se "arregla" solo.
+- **Patron espacial del transitorio**: 4 bandas de **exactamente 8 filas**
+  (y=48-55, 64-71, 80-87, 96-103, separadas 16 px) en la zona central
+  (x=56..183), con el mismo color de fondo alrededor -> escritura de OAM/PAL a
+  **mitad de frame** (la CPU escribe en la scanline que no toca). Estable frente a
+  desplazamiento de fase (k=0..8 dan el mismo 1334 px), asi que NO es desfase de
+  frame: es timing de escritura intra-frame.
+- **Medabots AX** (BIOS real) reproduce el mismo patron: f400 con VRAM/PAL/OAM
+  **identicos** y 1078 px de diferencia (banda y=65..77). Inyectando el estado de
+  mGBA, nuestro renderer reproduce **exactamente** nuestra propia pantalla (0 px),
+  lo que confirma que la pantalla es funcion de (vram,pal,oam,regs) y que lo que
+  cambia es el **valor/timing** de esos datos, no el renderer.
+- **Regla practica reforzada**: antes de atribuir un diff de pantalla al PPU,
+  ejecutar la exoneracion por inyeccion de estado. Si da 0 px, el PPU es inocente
+  y el diff es de estado/timing de la CPU. `cmp` de VRAM/PAL/OAM no basta: los
+  registros (BLDCNT/BLDALPHA/BLDY/mosaic/scroll) y el instante de escritura
+  dentro del frame no estan en esos dumps.
+
 ## RELEASE v1.4.18 (publicado 2026-10-27)
 
 - **Version**: `GBA_VERSION` = `v1.4.18` (`src/gba.h`); README + dialogos de
