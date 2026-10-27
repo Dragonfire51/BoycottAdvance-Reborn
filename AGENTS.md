@@ -302,10 +302,21 @@ Atrapa la primera exec en IWRAM e imprime ring buffer + registros.
 
 ## FIX 2026-10: direcciones de los registros de ventana (WINx) en mem.c
 
-- **Bug**: `io_write16` mapeaba WIN0H/WIN1H en 0x040/0x042, WIN0V/WIN1V en 0x044/0x046 y WININ/WINOUT en 0x048/0x04A (desplazado 8 bytes).
-- **GBATEK**: WININ=0x040, WINOUT=0x042, WIN0H=0x044, WIN1H=0x046, WIN0V=0x048, WIN1V=0x04A. Corregido en `src/mem.c` (reads y writes).
-- Impacto: juegos que escriben ventanas en la horquilla 0x40-0x4A ahora configuran la ventana real; antes la ventana salia deformada (x/y intercambiados) y podia aplicar blend/BG wrong dentro de WIN0.
-- Regresion: Medabots AX 0.00%, Pokemon Esmeralda 0.00%, FE identico a previo (screen 0% diff). Test 2d-wrap sin regresion (sigue alineado al frame).
+- **Direcciones correctas** (verificadas contra GBATEK y contra mGBA,
+  `include/mgba/internal/gba/io.h:51-56`): WIN0H=0x040, WIN1H=0x042,
+  WIN0V=0x044, WIN1V=0x046, WININ=0x048, WINOUT=0x04A. Esto es lo que
+  implementa `src/mem.c` hoy (reads y writes).
+- **OJO - esta seccion antes afirmaba lo contrario.** Documentaba como
+  "GBATEK" el mapeo WININ=0x040, WINOUT=0x042, WIN0H=0x044, WIN1H=0x046,
+  WIN0V=0x048, WIN1V=0x04A. Ese mapeo es **incorrecto** y es exactamente la
+  regresion que introdujo el commit 8653e81 (v1.4.13) y que se revirtio en
+  v1.4.14 (ver la seccion RELEASE v1.4.14). No re-aplicar ese cambio.
+- Impacto de la regresion: con los offsets desplazados, la ventana salia
+  deformada (x/y intercambiados) y podia aplicar blend/BG wrong dentro de
+  WIN0, corrompiendo cajas de dialogo, menus y fundidos en Pokemon Esmeralda,
+  Medabots AX y Fire Emblem.
+- Estado actual: Medabots AX 0.00%, Pokemon Esmeralda 0.00%, FE identico a
+  previo (screen 0% diff). Test 2d-wrap sin regresion (sigue alineado al frame).
 
 ## 2026-10: la comparacion por frame absoluto con mGBA exagera las divergencias
 
@@ -624,6 +635,30 @@ Verificacion a fondo de la afirmacion "divergencia del modelo de CPU, no del PPU
   y el diff es de estado/timing de la CPU. `cmp` de VRAM/PAL/OAM no basta: los
   registros (BLDCNT/BLDALPHA/BLDY/mosaic/scroll) y el instante de escritura
   dentro del frame no estan en esos dumps.
+
+## RELEASE v1.4.19 (verificacion PPU + correccion de nota WINx)
+
+- **Version**: `GBA_VERSION` = `v1.4.19` (`src/gba.h`); README + dialogos de
+  historial (`src/win32.c`/`src/main.c`) actualizados. **Release de
+  verificacion: NO hay cambios de emulacion.** Solo docs + bump de version.
+- **Contenido**: (a) la verificacion de la sesion 2026-10-27 que prueba que el
+  diff de Esmeralda f400 es de estado/timing de CPU y no del PPU (ver seccion
+  "VERIFICACION 2026-10-27"); (b) correccion de la seccion "FIX 2026-10:
+  direcciones de los registros de ventana (WINx)" de este mismo archivo, que
+  afirmaba como GBATEK el mapeo desplazado (WININ=0x040, WINOUT=0x042,
+  WIN0H=0x044, WIN1H=0x046, WIN0V=0x048, WIN1V=0x04A). Ese mapeo es el de la
+  **regresion de v1.4.13**, corregida en v1.4.14; la nota podia hacer
+  re-introducir el bug. Mapeo correcto (GBATEK + mGBA
+  `include/mgba/internal/gba/io.h:51-56`): WIN0H=0x040, WIN1H=0x042,
+  WIN0V=0x044, WIN1V=0x046, WININ=0x048, WINOUT=0x04A.
+- **Nota**: el build Windows nativo sin SDL2 **ya se publico en v1.4.0**
+  (`22cb833`/`b1b0ddc` estan dentro del tag `v1.4.0`), y el fix de WINx ya salio
+  en v1.4.14. Este release no los reintroduce ni los "arregla"; los re-confirma.
+- **Verificado en local**: `make` (Linux), `make -f Makefile.win32` (x86_64) y
+  `ARCH=i686` compilan **sin warnings** con `v1.4.19` embebida; los PE siguen
+  siendo subsistema GUI=2 con solo DLLs nativas (sin SDL2). Regresion 2d-wrap
+  sin cambios (8 px = artefacto de baseline).
+
 
 ## RELEASE v1.4.18 (publicado 2026-10-27)
 

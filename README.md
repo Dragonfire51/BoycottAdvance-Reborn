@@ -142,6 +142,17 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.19** - verification release, no emulation changes. The PPU is
+  confirmed bit-exact against mGBA: injecting mGBA's exact VRAM/PAL/OAM
+  state and I/O registers into our renderer reproduces its frame with 0
+  differing pixels, on both Pokemon Emerald and Medabots AX, under the HLE
+  fast boot and a real BIOS boot. The remaining frame difference on Emerald
+  is state written by the CPU (a boot-path timing artefact), not a render
+  bug. Also re-confirms the LCD window registers at the GBATEK offsets
+  (WIN0H/WIN1H/WIN0V/WIN1V = 0x040/0x042/0x044/0x046, WININ/WINOUT =
+  0x048/0x04A) and corrects an internal note that still documented the
+  shifted mapping of the v1.4.13 regression.
+
 - **v1.4.18** - 2D OBJ character mapping now wraps the tile column inside the
   32-tile block that holds the sprite's base tile, instead of carrying into the
   following block. A sprite whose base tile sits near a block boundary read the
