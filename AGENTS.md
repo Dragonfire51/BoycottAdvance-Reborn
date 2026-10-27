@@ -842,3 +842,47 @@ vuelca cada muestra del FIFO que se consume (para el diff byte a byte contra
 mGBA) y `apudbg`/`apudbg2` imprimen contadores de pops/underrun/maxlen y el
 estado de los timers. En mGBA se anadio el mismo `FIFODUMP` en
 `src/gba/audio.c` (parche local, no versionado).
+
+## 2026-10-27: el PSG sonaba a la mitad (nivel de mezcla y ganancia final)
+
+**Reporte del usuario**: el "plim!" de seleccion de menu en Pokemon no suena
+como en el original (y en general los efectos PSG suenan flojos frente a la
+musica del Direct Sound).
+
+**Diagnostico.** El PPU y el generador de tono PSG eran correctos: comparado
+con mGBA, la **frecuencia** y el **duty** de cada canal coinciden (duty 0-3:
+fraccion HIGH 0.124/0.248/0.498/0.751 vs 0.122/0.253/0.504/0.748 de mGBA, y el
+espectro de armonicos tambien: el 50% anula los pares, el 25% el 4o). Lo que
+estaba mal era el **nivel**:
+
+1. **Volumen maestro PSG** (`SOUNDCNT_H` bits 0-1): usabamos la tabla
+   `PSGVOL[4] = {1,2,4,4}` dividida por 4, o sea ganancia `2^vol/4`. mGBA
+   (`GBAudioSamplePSG` + `GBAAudioSample`: `sample << 3` y luego
+   `>> (4 - volumen)`) da `2^(vol-1)`: 25% => x0.5, 50% => x1, 100% => x2,
+   200% => x4. La nuestra era **la mitad** en 25/50/100% y un cuarto en 200%.
+2. **Ganancia final**: escalabamos x64 al final del filtro paso alto; mGBA usa
+   `sample * masterVolume(0x100) * 3 >> 4` = **x48**. Con x64 la salida quedaba
+   un 33% por encima de la referencia.
+
+**Medicion** (test PSG sintetico, `gen_psg_duty.py`, AC RMS quitando DC):
+antes ratio ours/mgba = 0.65 en los 4 duties (la mitad + algo de offset DC);
+tras el arreglo **0.98-0.99** (dentro del 2%). En la captura real de Pokemon
+Esmeralda el RMS global pasa de 2446 (x64) a 1898, frente a 2032 de mGBA.
+
+**Arreglo** (`src/apu.c`, `gen_sample`): `int pv = 1 << (a->cnt_h & 3);` con
+`l = lsum * vol_l * pv / 2` (equivalente a `2^(vol-1)` sobre la suma), y la
+ganancia final del filtro pasa a `hp_y/256 * 48`.
+
+**Verificacion**: `tools/gba_test_suite.py` sin regresion (74 PASSED, identico
+al baseline) y los binarios Windows nativos (x86_64 e i686, sin SDL2)
+recompilados limpios.
+
+**Nota sobre el test Direct Sound**: la ROM de `tools/gen_sound_test.py` con
+`DMA1CNT_H=0xB660` (destino increment/reload) NO recarga la fuente al repetir
+ni nosotros ni mGBA, asi que el DMA lee mas alla de la tabla de 32 bytes y la
+prueba deja de ser comparable (nuestra salida muere cuando el FIFO se agota;
+mGBA sigue porque su `GBAAudioWriteSOUNDCNT_HI` fija `destOffset=0`). No es un
+bug del emulador: en Pokemon Esmeralda el FIFO A se rellena correctamente
+(underA=3 en 335595 pops). La afirmacion "DMA FIFO muere tras un pase" de la
+nota anterior era un artefacto de la ROM de prueba, no del core.
+

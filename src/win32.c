@@ -379,23 +379,12 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Audio: the Direct Sound FIFO is now resampled with linear\n"
-      "    interpolation, matching mGBA. The 8-bit DAC clocked by a\n"
-      "    timer (e.g. 13.4 kHz) was played back by repeating each byte\n"
-      "    at 44100 Hz, a sample-and-hold that injected high-frequency\n"
-      "    noise - the audible crackle. On Pokemon Esmeralda the\n"
-      "    amplitude jumps over 8000 drop from 3568 to 0 in a 5-minute\n"
-      "    capture, in line with mGBA.\n"
-      "  - Bus/APU: the WAITCNT fields are decoded per GBATEK and the\n"
-      "    Direct Sound FIFO is clocked by its timer at the sample\n"
-      "    level instead of once per scanline.\n"
-      "  - Timing: the frame loop now uses absolute per-line cycle\n"
-      "    deadlines, so a slow line cannot drift the frame.\n"
-      "  - Boot: the default is a real BIOS boot; the HLE fast boot is\n"
-      "    opt-in. HLE boot now also sets SIOCNT and derives the frame\n"
-      "    base from the PPU clock.\n"
-      "  - Windows: the native build (GDI/Direct3D 9 video, WinMM\n"
-      "    audio, full Win32 menu bar) keeps working without SDL.";
+      "  - Audio: the PSG channels were mixed at half the level of\n"
+      "    mGBA. The master volume (SOUNDCNT_H bits 0-1) now applies\n"
+      "    the same gain mGBA uses (25% => x0.5, 50% => x1, 100% =>\n"
+      "    x2, 200% => x4) and the final output gain is x48 like\n"
+      "    GBAAudioSample, so menu blips and sound effects have the\n"
+      "    right loudness against the Direct Sound.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

@@ -142,6 +142,14 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.17** - the PSG (pulse/noise/wave) channels were mixed at half the
+  level of mGBA, so menu blips and sound effects sounded too quiet against the
+  Direct Sound. The master volume (SOUNDCNT_H bits 0-1) now applies the same
+  gain mGBA uses (25% => x0.5, 50% => x1, 100% => x2, 200% => x4) and the final
+  output gain is x48 like mGBA's `GBAAudioSample`. On a synthetic PSG tone the
+  AC RMS now matches mGBA within 2% at every duty (was 0.65x). Verified against
+  the fleroviux gba-tests suite with no regression.
+
 - **v1.4.16** - the Direct Sound crackle is fixed. The Direct Sound FIFO
   is now resampled with linear interpolation, matching mGBA. The 8-bit DAC
   clocked by a timer (13.4 kHz in Pokemon Emerald) was previously played back

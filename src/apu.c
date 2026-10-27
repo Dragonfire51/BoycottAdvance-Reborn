@@ -484,10 +484,16 @@ static void gen_sample(GBA *g, int16_t *outl, int16_t *outr) {
         if ((a->cnt_l >> (8 + i)) & 1)  rsum += out[i];
         if ((a->cnt_l >> (12 + i)) & 1) lsum += out[i];
     }
-    static const int PSGVOL[4] = { 1, 2, 4, 4 };                   /* 25% / 50% / 100% */
-    int pv = PSGVOL[a->cnt_h & 3];
-    int l = lsum * (((a->cnt_l >> 4) & 7) + 1) * pv / 4;
-    int r = rsum * ((a->cnt_l & 7) + 1) * pv / 4;
+    /* Volumen PSG (SOUNDCNT_H bits 0-1).  mGBA (GBAudioSamplePSG +
+       GBAAudioSample) desplaza la suma de canales 3 bits y luego
+       `>> (4 - volumen)`, o sea una ganancia de 2^(volumen-1) sobre la suma:
+       25% => x0.5, 50% => x1, 100% => x2, 200% => x4.  Con la tabla anterior
+       ({1,2,4,4} / 4) la ganancia era 2^volumen / 4 = la mitad de la
+       referencia en 25/50/100% y un cuarto en 200%: el PSG (blips de menu,
+       efectos) sonaba la mitad de fuerte que en mGBA frente al Direct Sound. */
+    int pv = 1 << (a->cnt_h & 3);
+    int l = lsum * (((a->cnt_l >> 4) & 7) + 1) * pv / 2;
+    int r = rsum * ((a->cnt_l & 7) + 1) * pv / 2;
 #ifdef APUDBG
     if (getenv("APUMUTE") && (atoi(getenv("APUMUTE")) & 1)) l = r = 0;   /* bit0: silencia PSG */
 #endif
@@ -515,12 +521,16 @@ static void gen_sample(GBA *g, int16_t *outl, int16_t *outr) {
     /* Filtro paso alto (~28 Hz): quita el DC de PSG/FIFO como el condensador de
        salida.  El estado va en Q8 (valor real * 256): con el estado sin escalar,
        `y -= y>>8` es cero mientras |y|<256, el filtro degenera en un acumulador
-       y el DC se queda en la salida (tono unipolar, min=0 en vez de +-n). */
+       y el DC se queda en la salida (tono unipolar, min=0 en vez de +-n).
+       La ganancia final es x48, la misma que mGBA en GBAAudioSample
+       (`sample * masterVolume(0x100) * 3 >> 4`).  Con x64 la salida quedaba un
+       33% por encima de la referencia (RMS 2531 vs 2032 en Pokemon Esmeralda,
+       y un 31% de mas en el test PSG sintetico). */
     int32_t in[2] = { l, r }, o[2];
     for (int k = 0; k < 2; k++) {
         a->hp_y[k] = ((in[k] - a->hp_x[k]) << 8) + a->hp_y[k] - a->hp_y[k] / 256;
         a->hp_x[k] = in[k];
-        int32_t y = a->hp_y[k] / 256 * 64;
+        int32_t y = a->hp_y[k] / 256 * 48;
         if (y > 32767) y = 32767;
         if (y < -32768) y = -32768;
         o[k] = y;
