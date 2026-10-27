@@ -552,6 +552,40 @@ completo (fetch de 32 bit + buffer de prefetch + ciclo interno de 32 bit) es el
 prerrequisito; este intento parcial no debe publicarse. Revertido; baseline
 restaurado a 75 PASSED.
 
+
+## RELEASE v1.4.16 (publicado 2026-10-27)
+
+- **Version**: `GBA_VERSION` = `v1.4.16` (`src/gba.h`); README + dialogos de
+  historial (`src/win32.c`/`src/main.c`) actualizados. Contenido (commits
+  `93220d1`, `56aa782`, `c96ce9d`, `2ed3c6a`, `bc5c669`): decodificacion de los
+  campos de WAITCNT por GBATEK, reloj del FIFO de Direct Sound por timer a
+  nivel de muestra, deadlines absolutos por linea en el bucle de frame, arranque
+  por BIOS real por defecto (HLE opt-in) con SIOCNT en el fast boot, y sobre
+  todo el **resampleo con interpolacion lineal del Direct Sound** (bc5c669) que
+  elimina el audio "rayado" (0 saltos >8000 en 5 min vs 3568 antes; mGBA 973).
+- **Tag** `v1.4.16` = commit `5571157` (main); tag rodante `Latest` movido al
+  mismo commit (`git tag -f Latest && git push -f origin Latest`).
+- **CI** (run `40426259110`, disparado por el push del tag): los 4 jobs
+  (`macos`, `linux`, `windows (win32)`, `windows (win64)`) y el `release`
+  completaron en <2 min — **sin** el cuelgue de `apt-get` de v1.4.13/v1.4.15.
+  El job `release` publico `v1.4.16` (id `424909653`) con los 5 assets
+  (`linux-x86_64`, `macos`, `win32.zip`, `win64.zip`, `-src.tar.gz`).
+- **Release rodante `Latest`** (id `413237927`) renombrado a "Latest (v1.4.16)":
+  borrados los 5 assets viejos (DELETE, 204 sin cuerpo) y subidos los nuevos
+  descargandolos de `v1.4.16` (GET `Accept: application/octet-stream`) y
+  subiendolos a `Latest` (`gh release upload ... --clobber`, va a
+  `uploads.github.com`). Verificado: el `win64.zip` descargado de `Latest`
+  contiene `README.md`, `boycottadvance-reborn.exe`, `gba_bios.bin` y el `.exe`
+  lleva `BoycottAdvance Reborn v1.4.16`.
+- `v1.4.15` marcado `prerelease=true`; quedan estables solo `v1.4.16` y
+  `Latest`.
+- **Binarios locales** (reproducen los del CI, mismo Makefile): `make`,
+  `make -f Makefile.win32` y `ARCH=i686`, los tres **sin warnings** (`-Wall
+  -Wextra`) y con `v1.4.16` embebida.
+- **OJO credenciales git**: el remote `origin` llevaba el token viejo otra vez;
+  fix aplicado:
+  `git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/Dragonfire51/BoycottAdvance-Reborn.git"`.
+
 ## RELEASE v1.4.15 (publicado 2026-10-26)
 
 - **Version**: `GBA_VERSION` = `v1.4.15` (`src/gba.h`); README + dialogos de
