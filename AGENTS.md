@@ -577,11 +577,30 @@ restaurado a 75 PASSED.
   (pre-existente, identico antes y despues; es el bug de blend/target2, no este).
   Builds Linux y Win32 (x64 + i686, sin SDL2) limpios.
 - **Nota**: el diff de 1814 px (4.72%) de Esmeralda a frame 400 **no** es este
-  bug (Esmeralda usa 1D). Ahi OAM y PAL si divergen (64 y 6 bytes) -> timing de
-  CPU/escritura de OAM a mitad de frame, no render puro.
+  bug (Esmeralda usa 1D). Ahi, ademas de OAM (64 bytes) y PAL (6 bytes), divergen
+  IWRAM (~3350 bytes) y EWRAM (~137 bytes), y la OAM nuestra tiene 20 palabras
+  `0x7FFF` en la zona de parametros affine donde mGBA tiene `0x0100`. Es
+  divergencia del **modelo de CPU** (el juego ejecuta codigo distinto), no del
+  PPU: por eso la pista del 2D-wrap (que si era PPU puro) se cierra aqui.
 - **Herramienta nueva**: `tools/cinema_check.py <testdir>` ejecuta un test cinema
   (necesita `test.gba` + `baseline_*.png`) contra el harness headless y reporta
   el diff por frame en RGB555->888 con replicacion de bits.
+
+## RELEASE v1.4.18 (publicado 2026-10-27)
+
+- **Version**: `GBA_VERSION` = `v1.4.18` (`src/gba.h`); README + dialogos de
+  historial (`src/win32.c`/`src/main.c`) actualizados. Contenido: el fix del
+  mapeo OBJ 2D (commit `f8fc092`, ver la seccion "FIX 2026-10-27: mapeo OBJ 2D").
+- **Tag** `v1.4.18` = commit `8011e79` (main); tag rodante `Latest` movido al
+  mismo commit (`git tag -f Latest && git push -f origin Latest`).
+- **CI** (run `40449632601`, disparado por el push del tag): **los 4 jobs
+  (`linux`, `windows (win32)`, `windows (win64)`, `macos`) y el job `release`
+  completaron en <1 min**; esta vez `apt-get` **no** se colgo. Release `v1.4.18`
+  publicado por CI con sus 5 assets.
+- **Release rodante `Latest`** (id `413237927`) renombrado a "Latest (v1.4.18)",
+  borrados los 5 assets de v1.4.17 y subidos los de v1.4.18 (mismo nombre de
+  fichero, `gh release upload --clobber`). `v1.4.17` marcado `prerelease=true`;
+  GitHub ya marca `v1.4.18` como *latest* del repo.
 
 ## RELEASE v1.4.17 (publicado 2026-10-27)
 
