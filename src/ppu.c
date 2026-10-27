@@ -234,7 +234,17 @@ static void render_objs(GBA *g, int y) {
              * 32K area at 0x06010000 (1024 tiles, 10-bit index); bitmap modes
              * 3-5 only 16K at 0x06014000, and tile numbers 512-1023 map to
              * slots 0-511 there (GBATEK "VRAM - Character Data"). */
-            uint32_t slot = (uint32_t)(tno + (ty >> 3) * row_stride + (tx >> 3) * tstep);
+            uint32_t slot;
+            if (one_d) {
+                slot = (uint32_t)(tno + (ty >> 3) * row_stride + (tx >> 3) * tstep);
+            } else {
+                /* 2D mapping: the tile column wraps within the 32-tile block
+                 * holding the sprite's base tile (mGBA maskLo/maskHi) instead
+                 * of carrying into the following block. */
+                uint32_t base = (uint32_t)(tno & ~(pal256 ? 1 : 0));
+                slot = (base & ~0x1Fu) + ((base + (uint32_t)(tx >> 3) * tstep) & 0x1Fu)
+                     + (uint32_t)(ty >> 3) * 32u;
+            }
             slot = (mode >= 3) ? ((slot - 512) & 0x1FF) : (slot & 0x3FF);
             uint32_t tbase = obj_base + slot * 32;
             int px = tx & 7, py = ty & 7, c, palidx;

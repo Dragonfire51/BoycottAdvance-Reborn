@@ -553,6 +553,36 @@ prerrequisito; este intento parcial no debe publicarse. Revertido; baseline
 restaurado a 75 PASSED.
 
 
+## FIX 2026-10-27: mapeo OBJ 2D (test cinema `obj/2d-wrap`)
+
+- **Sintoma**: en el test cinema de mGBA `cinema/gba/obj/2d-wrap` (un OBJ 16x8,
+  tile 31, mapeo 2D), la mitad derecha del sprite salia con el tile equivocado:
+  el nuestro daba rojo (tile 32, color 3) donde mGBA daba verde (tile 31, color 2).
+  64 px de diff (0.33%) con VRAM/PAL/OAM **identicos** entre ambos cores.
+- **Causa**: con **mapeo de caracteres OBJ 2D** (`DISPCNT` bit 6 = 0) la columna
+  de tile debe **envolver dentro del bloque de 32 tiles** que contiene el tile
+  base del sprite; el nuestro dejaba que la columna **acarreara** al bloque
+  siguiente (`tno + (tx>>3)*tstep`), leyendo el tile 32 en vez del 31.
+  mGBA lo hace con `maskLo = 0x3FE` (no 1D) y `maskHi = charBase & 0x7C00`
+  (`src/gba/renderers/software-obj.c`, `GBAVideoSoftwareRendererPreprocessSprite`):
+  `(yBase + ((xBase + charBase) & maskLo)) & 0x7FFE`.
+- **Fix** (`src/ppu.c`, `render_objs`): solo en 2D (`!one_d`),
+  `slot = (base & ~0x1F) + ((base + col*tstep) & 0x1F) + row*32`, con
+  `base = tno & ~(pal256?1:0)`. El camino 1D (que usa Esmeralda: `DISPCNT=1F40`,
+  bit 6 = 1) queda **intacto**. Formula verificada contra una simulacion del
+  direccionamiento de mGBA: 0 discrepancias en 400k combinaciones aleatorias.
+- **Verificacion**: `obj/2d-wrap` pasa de 128 px de diff a **0 px** (pixel-perfect).
+  Suite `gba-tests` sin regresion (74 PASSED / 50 FAILED / 9 UNKNOWN, identico
+  antes y despues). `blend/disabled-bg-semitrans-blend` sigue con 8854 px de diff
+  (pre-existente, identico antes y despues; es el bug de blend/target2, no este).
+  Builds Linux y Win32 (x64 + i686, sin SDL2) limpios.
+- **Nota**: el diff de 1814 px (4.72%) de Esmeralda a frame 400 **no** es este
+  bug (Esmeralda usa 1D). Ahi OAM y PAL si divergen (64 y 6 bytes) -> timing de
+  CPU/escritura de OAM a mitad de frame, no render puro.
+- **Herramienta nueva**: `tools/cinema_check.py <testdir>` ejecuta un test cinema
+  (necesita `test.gba` + `baseline_*.png`) contra el harness headless y reporta
+  el diff por frame en RGB555->888 con replicacion de bits.
+
 ## RELEASE v1.4.17 (publicado 2026-10-27)
 
 - **Version**: `GBA_VERSION` = `v1.4.17` (`src/gba.h`); README + dialogos de
