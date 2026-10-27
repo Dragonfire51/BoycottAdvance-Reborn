@@ -379,12 +379,12 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Audio: the PSG channels were mixed at half the level of\n"
-      "    mGBA. The master volume (SOUNDCNT_H bits 0-1) now applies\n"
-      "    the same gain mGBA uses (25% => x0.5, 50% => x1, 100% =>\n"
-      "    x2, 200% => x4) and the final output gain is x48 like\n"
-      "    GBAAudioSample, so menu blips and sound effects have the\n"
-      "    right loudness against the Direct Sound.";
+      "  - Graphics: with 2D OBJ character mapping the tile column\n"
+      "    now wraps inside the 32-tile block that holds the\n"
+      "    sprite's base tile, instead of carrying into the next\n"
+      "    block. Sprites whose base tile sits near a block boundary\n"
+      "    showed the wrong tile on one side (mGBA cinema test\n"
+      "    obj/2d-wrap: 128 wrong pixels -> 0).";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

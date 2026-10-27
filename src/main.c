@@ -398,11 +398,12 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Audio: the PSG channels were mixed at half the level of mGBA.\n"
-      "    The master volume (SOUNDCNT_H bits 0-1) now applies the same\n"
-      "    gain mGBA uses (25% => x0.5, 50% => x1, 100% => x2, 200% => x4)\n"
-      "    and the final output gain is x48 like GBAAudioSample, so menu\n"
-      "    blips and sound effects have the right loudness.");
+      "  - Graphics: with 2D OBJ character mapping the tile column now\n"
+      "    wraps inside the 32-tile block that holds the sprite's base\n"
+      "    tile, instead of carrying into the next block. Sprites whose\n"
+      "    base tile sits near a block boundary showed the wrong tile\n"
+      "    on one side (mGBA cinema test obj/2d-wrap: 128 wrong\n"
+      "    pixels -> 0).");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

@@ -142,6 +142,13 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.18** - 2D OBJ character mapping now wraps the tile column inside the
+  32-tile block that holds the sprite's base tile, instead of carrying into the
+  following block. A sprite whose base tile sits near a block boundary read the
+  wrong tile on one side. Found and fixed against the mGBA cinema test
+  `obj/2d-wrap` (128 wrong pixels -> 0); the 1D path used by Pokemon Emerald is
+  unchanged. Verified against the fleroviux gba-tests suite with no regression.
+
 - **v1.4.17** - the PSG (pulse/noise/wave) channels were mixed at half the
   level of mGBA, so menu blips and sound effects sounded too quiet against the
   Direct Sound. The master volume (SOUNDCNT_H bits 0-1) now applies the same
