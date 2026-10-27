@@ -187,7 +187,9 @@ typedef struct {
     int8_t   fifo[2][32];
     int      fifo_head[2], fifo_len[2];
     int8_t   fifo_held[2];
-    uint64_t fifo_next[2];   /* ciclo de CPU del proximo pop, punto fijo 16.16 */
+    int8_t   fifo_prev[2];      /* muestra anterior: interpolacion lineal al resamplear */
+    uint32_t fifo_frac[2];      /* posicion 16.16 dentro del periodo del timer */
+    int32_t  fifo_interp[2];    /* Direct Sound resampleado a 44100 Hz (Q8) */
     int32_t  hp_x[2], hp_y[2];   /* filtro paso alto (quita el DC) */
 } Apu;
 

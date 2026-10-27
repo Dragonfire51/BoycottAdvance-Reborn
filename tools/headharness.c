@@ -6,6 +6,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef APUDBG
+extern unsigned apu_dbg_pops[2], apu_dbg_underrun[2], apu_dbg_maxlen[2], apu_dbg_ringdrop;
+#endif
+
 int main(int argc, char **argv) {
     if (argc < 4) {
         fprintf(stderr, "usage: %s <rom> <frames> <cmd> [arg]\n", argv[0]);
@@ -64,7 +68,6 @@ int main(int argc, char **argv) {
            g->ppu.dispcnt, g->ppu.dispstat, (unsigned)g->ppu.vcount,
            g->if_reg, g->ie, g->ime, g->key_input);
     {
-        static const uint32_t offs[8] = {0x008,0x00A,0x00C,0x00E,0x010,0x012,0x014,0x016};
         printf("bgcnt:");
         for (int i = 0; i < 4; i++) printf(" bg%d=%04X", i, g->ppu.bgcnt[i]);
         printf("\n");
@@ -84,6 +87,20 @@ int main(int argc, char **argv) {
     printf("apu: master=%d sample_acc=%llu ring_avail=%d lfsr=%04X\n",
            g->apu.master, (unsigned long long)g->apu.sample_acc,
            apu_available(), g->apu.lfsr);
+#ifdef APUDBG
+    printf("apudbg: popsA=%u underA=%u maxA=%u popsB=%u underB=%u maxB=%u ringdrop=%u\n",
+           apu_dbg_pops[0], apu_dbg_underrun[0], apu_dbg_maxlen[0],
+           apu_dbg_pops[1], apu_dbg_underrun[1], apu_dbg_maxlen[1], apu_dbg_ringdrop);
+    printf("apudbg2: cnt_h=%04X cnt_l=%04X master=%d fifo_held=%d,%d",
+           g->apu.cnt_h, g->apu.cnt_l, g->apu.master, g->apu.fifo_held[0], g->apu.fifo_held[1]);
+    for (int t = 0; t < 2; t++) {
+        int ps = g->timer[t].prescaler ? g->timer[t].prescaler : 1;
+        uint32_t per = (uint32_t)(0x10000 - g->timer[t].reload) * (uint32_t)ps;
+        printf(" tm%d(reload=%04X ps=%d en=%d per=%u hz=%.0f)",
+               t, g->timer[t].reload, ps, g->timer[t].enabled, per, 16777216.0 / per);
+    }
+    printf("\n");
+#endif
     printf("timers:");
     for (int i = 0; i < 4; i++) printf(" t%d=%04X", i, g->io[0x100 + i * 2] | (g->io[0x101 + i * 2] << 8));
     printf(" dma:");

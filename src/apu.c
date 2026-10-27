@@ -12,6 +12,8 @@
 #include "gba.h"
 #include "mem.h"
 #include <stdatomic.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CPU_HZ   16777216ULL
@@ -32,10 +34,19 @@ static int16_t ring[RING_FRAMES * 2];
 static atomic_uint ring_w, ring_r;
 static int16_t last_l, last_r;
 
+#ifdef APUDBG
+unsigned apu_dbg_ringdrop;
+#endif
+
 static void ring_push(int16_t l, int16_t r) {
     unsigned w = atomic_load_explicit(&ring_w, memory_order_relaxed);
     unsigned rd = atomic_load_explicit(&ring_r, memory_order_acquire);
-    if (w - rd >= RING_FRAMES) return;                      /* lleno: se descarta */
+    if (w - rd >= RING_FRAMES) {
+#ifdef APUDBG
+        apu_dbg_ringdrop++;
+#endif
+        return;                                             /* lleno: se descarta */
+    }
     ring[(w & (RING_FRAMES - 1)) * 2]     = l;
     ring[(w & (RING_FRAMES - 1)) * 2 + 1] = r;
     atomic_store_explicit(&ring_w, w + 1, memory_order_release);
@@ -107,7 +118,6 @@ void apu_reset(GBA *g) {
     memset(&g->apu, 0, sizeof(g->apu));
     g->apu.bias = 0x0200;                                   /* SOUNDBIAS por defecto */
     g->apu.lfsr = 0x4000;      /* GBATEK: valor inicial 15 bit */
-    g->apu.fifo_next[0] = g->apu.fifo_next[1] = UINT64_MAX; /* FIFO sin armar */
 }
 
 /* ---------------------------------------------------------------- FIFOs */
@@ -129,6 +139,24 @@ static uint32_t fifo_timer_period(GBA *g, int t) {
     return (uint32_t)(0x10000 - tm->reload) * ps;
 }
 
+#ifdef APUDBG
+/* Contadores de diagnostico: cuantas veces se pide una muestra al FIFO y
+   cuantas de esas el FIFO estaba vacio (underrun -> se repite la ultima). */
+unsigned apu_dbg_pops[2], apu_dbg_underrun[2], apu_dbg_maxlen[2];
+/* FIFODUMP=<path>: vuelca cada muestra Direct Sound (fifo_held) que se consume,
+   como s8 crudo, para comparar el flujo de muestras contra mGBA. */
+static FILE *g_fifodump;
+static int g_fifodump_init;
+static void fifodump(int ch, int8_t v) {
+    if (!g_fifodump_init) {
+        const char *p = getenv("FIFODUMP");
+        g_fifodump = p ? fopen(p, "wb") : NULL;
+        g_fifodump_init = 1;
+    }
+    if (g_fifodump) { fputc((uint8_t)v, g_fifodump); fflush(g_fifodump); }
+}
+#endif
+
 /* El reloj del FIFO lo lleva apu_fifo_tick() al ritmo del timer; el
    desbordamiento no necesita hacer nada (re-armar aqui duplicaria la cuenta,
    porque el tick ya descuenta el mismo periodo). */
@@ -140,25 +168,43 @@ void apu_timer_overflow(GBA *g, int timer, uint32_t n) {
    muestra cada vez que vence el periodo del timer y pide DMA si quedan <= 16
    bytes.  Se llama por muestra de audio, asi el Direct Sound sale a la
    frecuencia del timer y no en rafagas por scanline. */
-static void apu_fifo_tick(GBA *g, uint64_t cycles_fp) {
+static void apu_fifo_tick(GBA *g) {
     Apu *a = &g->apu;
     for (int f = 0; f < 2; f++) {
         int sel = (a->cnt_h >> (f ? 14 : 10)) & 1;
-        if (!g->timer[sel].enabled) { a->fifo_next[f] = UINT64_MAX; continue; }
-        if (a->fifo_next[f] == UINT64_MAX)                  /* recien arrancado */
-            a->fifo_next[f] = (uint64_t)fifo_timer_period(g, sel) << 16;
-        if (a->fifo_next[f] > cycles_fp) { a->fifo_next[f] -= cycles_fp; continue; }
+        /* Sin timer no hay reloj de FIFO; al parar se reinicia la fase para
+           que un arranque posterior empiece limpio. */
+        if (!g->timer[sel].enabled) { a->fifo_frac[f] = 0; continue; }
         uint32_t period = fifo_timer_period(g, sel);
-        a->fifo_next[f] -= cycles_fp;
-        while ((int64_t)a->fifo_next[f] <= 0) {
+        /* El Direct Sound no se reproduce en escalones: su DAC de 8 bit a la
+           frecuencia del timer se resamplea a la salida.  La fase avanza
+           STEP_FP/period por muestra de salida y se interpola linealmente
+           entre las dos ultimas muestras sacadas del FIFO, igual que el
+           resampler de mGBA.  Sin esto cada escalon de 8 bit suena como un
+           clic ("rayado") cuando el timer va por debajo de 44100 Hz. */
+        uint32_t inc = (uint32_t)(STEP_FP / period);        /* 16.16, avance de fase */
+        if (!inc) inc = 1;                                  /* periodo > STEP_FP: avanza lento */
+        a->fifo_frac[f] += inc;
+        while (a->fifo_frac[f] >= 0x10000u) {
+            a->fifo_frac[f] -= 0x10000u;
+#ifdef APUDBG
+            apu_dbg_pops[f]++;
+            if (a->fifo_len[f] > apu_dbg_maxlen[f]) apu_dbg_maxlen[f] = a->fifo_len[f];
+            if (a->fifo_len[f] == 0) apu_dbg_underrun[f]++;
+#endif
+            a->fifo_prev[f] = a->fifo_held[f];
             if (a->fifo_len[f] > 0) {
                 a->fifo_held[f] = a->fifo[f][a->fifo_head[f]];
                 a->fifo_head[f] = (a->fifo_head[f] + 1) & 31;
                 a->fifo_len[f]--;
             }
+#ifdef APUDBG
+            if (f == 0) fifodump(f, a->fifo_held[f]);
+#endif
             if (a->fifo_len[f] <= 16) dma_fifo_request(g, f);
-            a->fifo_next[f] += (uint64_t)period << 16;
         }
+        int32_t s0 = a->fifo_prev[f], s1 = a->fifo_held[f];
+        a->fifo_interp[f] = (s0 << 8) + (int32_t)(((int64_t)(s1 - s0) * a->fifo_frac[f]) >> 8);
     }
 }
 
@@ -359,7 +405,7 @@ static void gen_sample(GBA *g, int16_t *outl, int16_t *outr) {
     /* Los FIFOs avanzan al ritmo de su timer, una muestra por periodo, en el
        mismo paso temporal que el resto del APU: asi el Direct Sound no se
        reproduce en escalones (sample-and-hold por scanline). */
-    apu_fifo_tick(g, STEP_FP);
+    apu_fifo_tick(g);
 
     /* frame sequencer: 512 Hz = cada 32768 ciclos de CPU */
     a->fs_cc += STEP_FP;
@@ -432,7 +478,7 @@ static void gen_sample(GBA *g, int16_t *outl, int16_t *outr) {
         if (c->on && a->lfsr_out) out[3] = c->vol;
     }
 
-    /* mezcla PSG: SOUNDCNT_L bits 0-2 = vol R, 4-6 = vol L, 8-11 = canales a R, 12-15 = a L */
+    /* Mezcla PSG: SOUNDCNT_L bits 0-2 = vol R, 4-6 = vol L, 8-11 = canales a R, 12-15 = a L */
     int lsum = 0, rsum = 0;
     for (int i = 0; i < 4; i++) {
         if ((a->cnt_l >> (8 + i)) & 1)  rsum += out[i];
@@ -442,12 +488,20 @@ static void gen_sample(GBA *g, int16_t *outl, int16_t *outr) {
     int pv = PSGVOL[a->cnt_h & 3];
     int l = lsum * (((a->cnt_l >> 4) & 7) + 1) * pv / 4;
     int r = rsum * ((a->cnt_l & 7) + 1) * pv / 4;
+#ifdef APUDBG
+    if (getenv("APUMUTE") && (atoi(getenv("APUMUTE")) & 1)) l = r = 0;   /* bit0: silencia PSG */
+#endif
 
     /* Direct Sound: SOUNDCNT_H bit 2/3 = volumen A/B (0 = 50%, 1 = 100%),
        bits 8/9 y 12/13 = R/L.  La ganancia base es x4 (mGBA
-       GBAAudioSample: `(sample << 2) >> !volumeChA`); 50% => x2. */
-    int fa = a->fifo_held[0] * ((a->cnt_h & 0x04) ? 4 : 2);
-    int fb = a->fifo_held[1] * ((a->cnt_h & 0x08) ? 4 : 2);
+       GBAAudioSample: `(sample << 2) >> !volumeChA`); 50% => x2.
+       fifo_interp va en Q8 (muestra * 256), asi que la ganancia se aplica
+       dividiendo por 256 al final. */
+    int fa = a->fifo_interp[0] * ((a->cnt_h & 0x04) ? 4 : 2) / 256;
+    int fb = a->fifo_interp[1] * ((a->cnt_h & 0x08) ? 4 : 2) / 256;
+#ifdef APUDBG
+    if (getenv("APUMUTE") && (atoi(getenv("APUMUTE")) & 2)) fa = fb = 0; /* bit1: silencia FIFO */
+#endif
     if (a->cnt_h & 0x0100) r += fa;
     if (a->cnt_h & 0x0200) l += fa;
     if (a->cnt_h & 0x1000) r += fb;

@@ -762,3 +762,49 @@ Options sigue permitiendo alternarlo.
 
 
 
+
+## 2026-10-26 (5): el "rayado" era el resampleo del Direct Sound (resuelto)
+
+**Causa raiz.** El Direct Sound (DAC de 8 bit relojado por un timer, p.ej.
+Timer0 a 13379 Hz en Pokemon Esmeralda) se estaba reproduciendo en **escalones**:
+cada byte del FIFO se repetia tal cual durante N muestras de salida de 44100 Hz
+(`fifo_held` directo al mezclador). Reproducir un flujo de 13.4 kHz por
+repeticion de muestra es un **sample-and-hold sin filtro**: mete energia de alta
+frecuencia en cada transicion (los "clics"/rayado). Medido: 3568 saltos de
+amplitud >8000 en 5 min (mGBA: 973), con picos espectrales de ruido HF
+(centroide ~4298 Hz frente a ~119 Hz de mGBA).
+
+**No era** inanicion de FIFO (8 underruns en 4.0M pops), ni el PSG (con
+`APUMUTE=2`, FIFO muteado, 0 saltos), ni el DMA (los 4.0M pops de A y B
+coinciden bit a bit con mGBA), ni el ring buffer (0 descartes con el consumidor
+drenando).
+
+**Arreglo** (`src/apu.c`, `apu_fifo_tick`): resampleo con **interpolacion
+lineal** al estilo del resampler de mGBA. Por cada muestra de salida la fase
+avanza `STEP_FP/period` (16.16) y se interpola entre las dos ultimas muestras
+sacadas del FIFO (`fifo_prev`/`fifo_held`), guardando el resultado en
+`fifo_interp` (Q8) que consume el mezclador. El pop del FIFO y la peticion DMA
+ocurren cuando la fase cruza 1.0, o sea a la frecuencia exacta del timer.
+Se elimino el `fifo_next` (reloj en ciclos de CPU) que solo servia para decidir
+*cuando* hacer pop; ahora lo decide la fase de resampleo, que es equivalente y
+mas simple.
+
+**Resultado** (misma partida de 5 min vs mGBA): **0 saltos >8000** (antes 3568;
+mGBA 973), RMS 3133 (mGBA 2954), y por ventana de 1 s 0 saltos en las 15
+ventanas (mGBA tiene 973 en total). El audio nativo (waveOut, 44100 Hz) ya no
+raya.
+
+**ROM sintetica de prueba**: `tools/gen_sound_test.py` genera un GBA de 220
+bytes que arma DMA1 (timing 3, 32 bit, repeat) hacia FIFO A con una rampa en
+EWRAM y Timer0 como reloj. Trampas resueltas al generarla: (1) los offsets de
+`ldr`/`str` son en **bytes** (no palabras); (2) al repetir, **ni mGBA ni
+nosotros** recargamos la direccion origen del DMA (solo el destino con
+`DEST_RELOAD`), asi que el DMA corre mas alla de la tabla: para comparar streams
+largos hay que usar `DEST_RELOAD` o un solo bloque. Sirvio para confirmar que el
+flujo de bytes del FIFO que consumimos es identico al de mGBA.
+
+Instrumentacion nueva (bajo `APUDBG`, sin coste en release): `FIFODUMP=<path>`
+vuelca cada muestra del FIFO que se consume (para el diff byte a byte contra
+mGBA) y `apudbg`/`apudbg2` imprimen contadores de pops/underrun/maxlen y el
+estado de los timers. En mGBA se anadio el mismo `FIFODUMP` en
+`src/gba/audio.c` (parche local, no versionado).
