@@ -658,6 +658,21 @@ Verificacion a fondo de la afirmacion "divergencia del modelo de CPU, no del PPU
   `ARCH=i686` compilan **sin warnings** con `v1.4.19` embebida; los PE siguen
   siendo subsistema GUI=2 con solo DLLs nativas (sin SDL2). Regresion 2d-wrap
   sin cambios (8 px = artefacto de baseline).
+- **Tag** `v1.4.19` = commit `d5cc055` (main); tag rodante `Latest` movido al
+  mismo commit (`git tag -f Latest && git push -f origin Latest`).
+- **CI** (run `40564019853`): **los 4 jobs + `release` completaron en <1 min**;
+  `apt-get` no se colgo. Release `v1.4.19` (id `425860352`) publicado por CI con
+  sus 5 assets.
+- **Release rodante `Latest`** (id `413237927`) renombrado a "Latest (v1.4.19)",
+  borrados los 5 assets viejos (DELETE, 204 sin cuerpo) y subidos los nuevos
+  descargandolos de `v1.4.19` con `gh release download --pattern` y
+  `gh release upload Latest ... --clobber`. Verificado: el `win64.zip` de
+  `Latest` contiene `README.md`, `boycottadvance-reborn.exe`, `gba_bios.bin` y el
+  `.exe` lleva `v1.4.19`.
+- **Regla del usuario (3 anteriores a pre-release)**: al publicar, marcar como
+  `prerelease=true` las **3 versiones anteriores**. En este release:
+  `v1.4.18` (id `425033828`), `v1.4.17` (`424985617`) y `v1.4.16` (`424909653`).
+  Quedan estables solo `v1.4.19` y `Latest`. Aplicar esto en cada release nuevo.
 
 
 ## RELEASE v1.4.18 (publicado 2026-10-27)
