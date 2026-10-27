@@ -553,6 +553,32 @@ prerrequisito; este intento parcial no debe publicarse. Revertido; baseline
 restaurado a 75 PASSED.
 
 
+## RELEASE v1.4.17 (publicado 2026-10-27)
+
+- **Version**: `GBA_VERSION` = `v1.4.17` (`src/gba.h`); README + dialogos de
+  historial (`src/win32.c`/`src/main.c`) actualizados. Contenido (commit
+  `1c973a6`): mezcla del PSG al nivel de mGBA (ver la seccion de diagnostico
+  mas arriba, "el PSG sonaba a la mitad"). El "plim!" de seleccion de menu en
+  Pokemon sonaba flojo porque (a) el volumen maestro PSG (`SOUNDCNT_H` bits
+  0-1) usaba `2^vol/4` en vez de `2^(vol-1)` y (b) la ganancia final era x64
+  en vez de x48. Ratio ours/mgba del test PSG sintetico: 0.65 -> 0.98-0.99.
+- **Tag** `v1.4.17` = commit `1c973a6` (main); tag rodante `Latest` movido al
+  mismo commit (`git tag -f Latest && git push -f origin Latest`).
+- **CI** (run `40438698478`, disparado por el push del tag): `linux`,
+  `windows (win32)` y `macos` completaron; `windows (win64)` **se colgo en
+  `apt-get`** (>23 min, el mismo fallo de infraestructura de v1.4.13/v1.4.15).
+  Se aplico la leccion ya documentada: **no esperar**, publicar a mano.
+- **Publicacion manual**: se creo `v1.4.17` con `gh release create` y se
+  subieron los 5 assets con `gh release upload`. Los binarios Linux
+  (`make`), win32/win64 (`make -f Makefile.win32 [ARCH=i686]`) se compilaron en
+  local; el de macOS se descargo del artefacto de CI (`gh run download ...
+  -n macos`) porque no se puede cruzar-compilar aqui. El job colgado se
+  cancelo (`gh run cancel`). Release rodante `Latest` (id `413237927`)
+  renombrado a "Latest (v1.4.17)", borrados los 5 assets viejos y subidos los
+  nuevos via `uploads.github.com`.
+- **`v1.4.16` marcado `prerelease=true`** para que GitHub marque `v1.4.17`
+  como *latest* del repo.
+
 ## RELEASE v1.4.16 (publicado 2026-10-27)
 
 - **Version**: `GBA_VERSION` = `v1.4.16` (`src/gba.h`); README + dialogos de
