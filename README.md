@@ -142,6 +142,18 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.16** - the Direct Sound crackle is fixed. The Direct Sound FIFO
+  is now resampled with linear interpolation, matching mGBA. The 8-bit DAC
+  clocked by a timer (13.4 kHz in Pokemon Emerald) was previously played back
+  by repeating each byte at 44100 Hz, a sample-and-hold with no filter that
+  injected high-frequency energy at every step - the audible "scratchy" audio.
+  On a 5-minute Pokemon Emerald capture the amplitude jumps over 8000 fall
+  from 3568 to 0, in line with mGBA (973), and the RMS now matches. The FIFO
+  is clocked by its timer at the sample level, and WAITCNT is decoded per
+  GBATEK. The frame loop uses absolute per-line cycle deadlines. The default
+  is now a real BIOS boot (HLE fast boot is opt-in). Verified against the
+  fleroviux gba-tests suite with no regression.
+
 - **v1.4.15** — CPU, memory and save fidelity pass, plus a native audio fix.
   The SPSR access rules now follow GBATEK (MRS from SPSR in User or System
   mode returns the CPSR, MSR to SPSR is ignored there, and the mode field
