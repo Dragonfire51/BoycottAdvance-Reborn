@@ -16,3 +16,6 @@ boycottadvance-reborn.ini
 # Python
 __pycache__/
 *.pyc
+
+# capturas A/V multi-GB (rec/av/*.rgb, *.pcm)
+rec/
