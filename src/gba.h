@@ -16,7 +16,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define GBA_VERSION  "v1.4.19"
+#define GBA_VERSION  "v1.4.20"
 #define GBA_NAME     "BoycottAdvance Reborn"
 #define GBA_TITLE    GBA_NAME " " GBA_VERSION
 
@@ -123,6 +123,7 @@ typedef struct {
     bool halt;
     bool stopped;
     uint16_t wait_mask;      /* IRQs awaited by SWI 04h/05h; 0 = any IRQ wakes */
+    uint32_t swi_stall;      /* pending BIOS decompression cost (LZ77/RL/Huffman) */
 } CpuState;
 
 /* ---- Timers (GBATEK: TMxCNT_L = reload/counter, TMxCNT_H = control) ------ */

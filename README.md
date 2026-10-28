@@ -142,6 +142,22 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.20** - fixes the Pokemon Emerald intro (the "GAME FREAK presents"
+  screen was missing, Groudon and Kyogre did not appear, and the background
+  was distorted). Root cause: the BIOS decompression SWIs (LZ77, run-length,
+  Huffman, BitUnPack and the difference filters) charged their whole cost to
+  the CPU clock in a single step — up to 385058 cycles, about 1.37 frames.
+  The CPU jumped hundreds of scanlines at once and the HBlank/VBlank
+  interrupts of those lines were never dispatched, so the game lost its
+  scanline timing and the intro animation desynchronised. The cost is now
+  drained across the frame (the total is identical to mGBA, which re-issues
+  the SWI every 18 cycles through its `biosStall`), so the PPU keeps the pace
+  and each line interrupt lands on its scanline. Measured cycle drift fell
+  from +306848 cycles per frame to 0-2. Verified against mGBA: frames 400 and
+  1000 are pixel-identical in BIOS boot, and frame 2420 (the red scene) now
+  matches mGBA instead of showing a flat background with no creature. The
+  save-state format version is bumped to 3 (the CPU state grew four bytes).
+
 - **v1.4.19** - verification release, no emulation changes. The PPU is
   confirmed bit-exact against mGBA: injecting mGBA's exact VRAM/PAL/OAM
   state and I/O registers into our renderer reproduces its frame with 0

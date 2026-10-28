@@ -379,15 +379,19 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Verification release: no emulation changes. The PPU was\n"
-      "    confirmed bit-exact against mGBA (injecting mGBA's exact\n"
-      "    VRAM/PAL/OAM state into our renderer gives 0 pixels of\n"
-      "    difference, on Pokemon Emerald and Medabots AX).\n"
-      "  - The LCD window registers were re-confirmed at the GBATEK\n"
-      "    offsets (WIN0H/WIN1H/WIN0V/WIN1V = 0x040/0x042/0x044/0x046\n"
-      "    and WININ/WINOUT = 0x048/0x04A). An internal note that\n"
-      "    documented the shifted mapping (the v1.4.13 regression,\n"
-      "    corrected in v1.4.14) was fixed so it cannot be re-applied.";
+      "  - Fixed the intro of Pokemon Emerald (missing 'GAME FREAK\n"
+      "    presents', Groudon/Kyogre absent, distorted background).\n"
+      "    Root cause: the BIOS decompression SWIs (LZ77/RL/Huffman/\n"
+      "    BitUnPack/UnFilter) charged their whole cost to the CPU\n"
+      "    clock in a single step (up to 385058 cycles, 1.37 frames),\n"
+      "    skipping hundreds of scanlines without dispatching the\n"
+      "    HBlank/VBlank interrupts. The cost is now drained across\n"
+      "    the frame (same total as mGBA), so the PPU keeps the pace\n"
+      "    and the line IRQs land on their scanline. Cycle drift fell\n"
+      "    from +306848 cycles/frame to 0-2.\n"
+      "  - Verification release: the PPU was confirmed bit-exact\n"
+      "    against mGBA (injecting mGBA's exact VRAM/PAL/OAM state\n"
+      "    into our renderer gives 0 pixels of difference).";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

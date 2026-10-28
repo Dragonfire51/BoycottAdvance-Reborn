@@ -55,6 +55,16 @@ static inline void bios_track_fetch(GBA *g) {
 static inline void add_cycles(GBA *g, uint32_t n) { g->cycle += n; }
 void gba_add_cycles(GBA *g, uint32_t n) { add_cycles(g, n); }
 
+/* Coste de los SWI de descompresion (LZ77/RL/Huffman/BitUnPack/UnFilter).
+ * GBATEK y mGBA los cuantifican por bloque, pero la CPU real los ejecuta de
+ * forma continua: entregarlos de golpe al contador saltaria cientos de
+ * scanlines sin despachar las IRQ de HBlank/VBlank de por medio (el clamp de
+ * resincronizacion de run_frame_core lo delataba con +306848 ciclos en un
+ * frame). Se acumulan aqui y arm_execute los drena por tramos dentro del
+ * presupuesto de cada segmento, de modo que la PPU marca el ritmo y las IRQ
+ * caen en su linea. El total es identico al de mGBA. */
+void gba_swi_stall(GBA *g, uint32_t n) { g->cst.swi_stall += n; }
+
 static inline uint32_t rotr(uint32_t v, uint32_t s) {
     s &= 31;
     return s ? (v >> s) | (v << (32 - s)) : v;
@@ -908,6 +918,16 @@ void arm_execute(GBA *g, uint32_t max_cycles) {
         if (g->cst.halt) {
             g->cycle = start + max_cycles;       /* CPU dormida: se consume el presupuesto */
             break;
+        }
+        /* Coste pendiente de un SWI de descompresion: se drena a trozos dentro
+           del presupuesto del segmento (y despues de servir la IRQ de linea) en
+           vez de saltar el reloj de golpe; ver gba_swi_stall. */
+        if (g->cst.swi_stall) {
+            uint32_t left = max_cycles - (g->cycle - start);
+            uint32_t chunk = g->cst.swi_stall < left ? g->cst.swi_stall : left;
+            add_cycles(g, chunk);
+            g->cst.swi_stall -= chunk;
+            continue;
         }
         if (thumb_mode(g)) thumb_exec(g);
         else arm_exec(g);

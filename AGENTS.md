@@ -83,6 +83,41 @@ de GBATEK. Mapa de ventanas correcto: WIN0H `0x040`, WIN1H `0x042`, WIN0V
 BLDCNT `0x050`, BLDALPHA `0x052`, BLDY `0x054`. (El commit 8653e81 de v1.4.13
 los desplazo +4 bytes y rompio todas las capas con ventana.)
 
+## RELEASE v1.4.20 (publicado 2026-10-24)
+
+- **Causa raiz de los glitches de la intro de Pokemon Esmeralda** (faltaba el
+  cartel "GAME FREAK presenta", no aparecian Groudon/Kyogre y el fondo salia
+  distorsionado). NO era la PPU (exonerada: registros identicos en f2420) ni OAM
+  ni DMA: era el **coste de los SWI de descompresion del BIOS**.
+  - **Sintoma medido**: el reloj de la CPU saltaba **+306848 ciclos (~1.09
+    frames) en un solo frame** (f454, `pc=082EE81A`, THUMB, SWI `0x12`
+    LZ77UnCompVram). El clamp de resincronizacion de `run_frame_core` lo
+    delataba (`RESYNC f454 ... delta=306848`). Presente tambien en fastboot.
+  - **Causa**: `swi_lz77`/`swi_rluncomp`/`swi_huffuncomp`/`swi_bitunpack`/
+    `swi_diffunfilter` llamaban a `gba_add_cycles()` con el coste **entero**
+    (`20 + 14*(len/8+1) + 10*len` = 385058 ciclos para una descompresion de
+    ~38 KB). La CPU quedaba 1.37 frames por delante de un plumazo: se saltaba
+    cientos de scanlines **sin despachar las IRQ de HBlank/VBlank**, asi que el
+    juego perdia las interrupciones de linea y la animacion de la intro se
+    desincronizaba.
+  - **Prueba**: poniendo a 0 los ciclos de esos SWI el salto desaparecia
+    (delta=0 en f454/f500/f1000).
+  - **Arreglo** (total de ciclos **identico** al de mGBA, solo cambia el
+    reparto): nuevo `gba_swi_stall(g, n)` (`src/arm.c`) que **acumula** el coste
+    en `cst.swi_stall` (`src/gba.h`) y `arm_execute` lo **drena a trozos** dentro
+    del presupuesto de cada segmento, despues de servir la IRQ de linea. Es el
+    equivalente al `biosStall` de mGBA (`src/gba/bios.c`, `GBA_SWI_LZ77_UNCOMP_*`),
+    que re-lanza el SWI cada 18 ciclos. La PPU vuelve a marcar el ritmo y las IRQ
+    caen en su scanline.
+  - **Resultado**: deriva de ciclos **+306848 -> 0-2** (f454..f3000). Framebuffer
+    alineado contra mGBA (modo BIOS): f400 identico (0 px), f1000 identico (0 px);
+    f2420 pasa de fondo uniforme sin criatura a coincidir con mGBA (Groudon
+    presente, solo paleta/atributos OBJ pendientes).
+  - **Savestate**: la version del formato sube a **3** (`BARS` + `buf[n++]=3`)
+    porque `CpuState` crece 4 bytes; los estados v2 se rechazan.
+  - Archivos: `src/arm.c`, `src/arm.h`, `src/bios.c`, `src/gba.c`, `src/gba.h`,
+    `src/main.c`, `src/win32.c`, `src/gba.h` (version). 3 targets sin warnings.
+
 ## RELEASE v1.4.14 (publicado 2026-10-23)
 
 - **Tag** `v1.4.14` = commit `43e704e` (main); tag rodante `Latest` movido al mismo commit. Publicado con 5 assets (release id 422393808 + Latest id 413237927).

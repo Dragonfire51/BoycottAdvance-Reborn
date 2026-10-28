@@ -351,7 +351,7 @@ static void swi_lz77(GBA *g, bool vram) {
         }
     }
     /* mGBA _unLz77: ~20 prologue + 14/flag byte + 10/output byte */
-    gba_add_cycles(g, 20 + 14 * (len / 8 + 1) + 10 * len);
+    gba_swi_stall(g, 20 + 14 * (len / 8 + 1) + 10 * len);
     g->cpu.r[0] = len;
 }
 
@@ -376,7 +376,7 @@ static void swi_rluncomp(GBA *g, bool vram) {
         }
     }
     while (pad--) dst_put(&d, 0);
-    gba_add_cycles(g, 16 + 10 * (len + 1));
+    gba_swi_stall(g, 16 + 10 * (len + 1));
     g->cpu.r[0] = len;
 }
 
@@ -404,7 +404,7 @@ static void swi_huffuncomp(GBA *g) {
         gba_write8(g, dst, (uint8_t)node);
         dst++; left--;
     }
-    gba_add_cycles(g, 30 + 12 * len);
+    gba_swi_stall(g, 30 + 12 * len);
     g->cpu.r[0] = len;
 }
 
@@ -434,7 +434,7 @@ static void swi_bitunpack(GBA *g) {
         }
         dst += (out_unit == 1) ? 2 : (out_unit == 2) ? 4 : 1;
     }
-    gba_add_cycles(g, 20 + 6 * total);
+    gba_swi_stall(g, 20 + 6 * total);
 }
 
 /* SWI 0x16/0x17/0x18: difference filters (header 0x80). 0x16 = 8bit->WRAM,
@@ -453,14 +453,14 @@ static void swi_diffunfilter(GBA *g, bool vram, bool is16bit) {
             gba_write16(g, d.addr, prev);
             d.addr += 2;
         }
-        gba_add_cycles(g, 16 + 10 * (len / 2));
+        gba_swi_stall(g, 16 + 10 * (len / 2));
     } else {
         uint8_t prev = 0;
         for (uint32_t i = 0; i < len; i++) {
             prev = (uint8_t)(prev + gba_read8(g, src++));
             dst_put(&d, prev);
         }
-        gba_add_cycles(g, 16 + 8 * len);
+        gba_swi_stall(g, 16 + 8 * len);
     }
 }
 
