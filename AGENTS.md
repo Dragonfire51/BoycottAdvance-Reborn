@@ -83,7 +83,7 @@ de GBATEK. Mapa de ventanas correcto: WIN0H `0x040`, WIN1H `0x042`, WIN0V
 BLDCNT `0x050`, BLDALPHA `0x052`, BLDY `0x054`. (El commit 8653e81 de v1.4.13
 los desplazo +4 bytes y rompio todas las capas con ventana.)
 
-## RELEASE v1.4.20 (publicado 2026-10-24)
+## RELEASE v1.4.20 (publicado 2026-10-28)
 
 - **Causa raiz de los glitches de la intro de Pokemon Esmeralda** (faltaba el
   cartel "GAME FREAK presenta", no aparecian Groudon/Kyogre y el fondo salia
@@ -116,7 +116,14 @@ los desplazo +4 bytes y rompio todas las capas con ventana.)
   - **Savestate**: la version del formato sube a **3** (`BARS` + `buf[n++]=3`)
     porque `CpuState` crece 4 bytes; los estados v2 se rechazan.
   - Archivos: `src/arm.c`, `src/arm.h`, `src/bios.c`, `src/gba.c`, `src/gba.h`,
-    `src/main.c`, `src/win32.c`, `src/gba.h` (version). 3 targets sin warnings.
+    `src/main.c`, `src/win32.c`, `README.md`, `AGENTS.md`. 3 targets sin warnings
+    (`make`, `make -f Makefile.win32`, `ARCH=i686`); win32/win64 sin SDL2
+    (solo KERNEL32/GDI32/D3D9/WINMM/USER32/COMDLG32/SHELL32/msvcrt).
+  - **Tag** `v1.4.20` = commit `5c16b79` (main); tag rodante `Latest` movido al
+    mismo commit. GitHub Actions `build-binaries` (run 40763777508, success)
+    publico el release `v1.4.20` (id 427159697, 5 assets). Release rodante
+    `Latest` (id 413237927) renombrado a "Latest (v1.4.20)" y assets reemplazados
+    via API. `v1.4.19` marcado `prerelease=true`.
 
 ## RELEASE v1.4.14 (publicado 2026-10-23)
 
