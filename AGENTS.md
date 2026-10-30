@@ -1092,3 +1092,29 @@ bug del emulador: en Pokemon Esmeralda el FIFO A se rellena correctamente
 (underA=3 en 335595 pops). La afirmacion "DMA FIFO muere tras un pase" de la
 nota anterior era un artefacto de la ROM de prueba, no del core.
 
+## APU: la salida NO debe llevar filtro paso alto (2026-10-15)
+
+El "clic" del menu sonaba apagado y con cola. Causa: `gen_sample` pasaba la
+mezcla por un filtro paso alto digital de polo 255/256. Ese filtro **no**
+filtraba el nivel continuo (con `|y| < 256` el termino `y -= y>>8` vale cero y
+degenera en acumulador), pero **si** diferenciaba la senal, con ganancia ~1000
+a la frecuencia de la onda cuadrada (~1 kHz): el ataque de cada nota se hundia
+y decaia durante la nota.
+
+**Como medirlo**: `python3 tools/gen_sound_test.py psg /tmp/psg.gba 0xF1 0x7C0`
+genera un ROM que solo dispara el canal 2 con envolvente decreciente (lo que
+usa el juego para el menu). Comparando el PCM con mGBA, la amplitud pico a
+pico de la referencia es **5760 constante** durante 16 ms y luego 5376; con el
+filtro daba 11520 -> 5856 -> 6192 -> ... (decaia dentro de la nota).
+
+**Arreglo**: replicar `_applyBias` de mGBA. Sumar la polarizacion de SOUNDBIAS
+(`bias & 0x3FF`), recortar a la resolucion del ADC (`>= 0x400 -> 0x3FF`,
+`< 0 -> 0`) y restar la polarizacion, todo con la ganancia final x48. La salida
+queda centrada en 0 sin ningun filtro. El RMS de la intro de Esmeralda pasa de
+1.246x la referencia a **0.954x**.
+
+**Regla**: no reintroducir filtros en la ruta de audio. Cualquier filtro que no
+sea el de mGBA se manifiesta como distorsion del ataque, no como cambio de
+nivel, asi que comparar solo el RMS no lo detecta: hay que comparar la
+**envolvente** (amplitud pico a pico por bloque de ~1 ms) contra mGBA.
+
