@@ -181,12 +181,16 @@ static void apu_fifo_tick(GBA *g) {
            STEP_FP/period por muestra de salida y se interpola linealmente
            entre las dos ultimas muestras sacadas del FIFO, igual que el
            resampler de mGBA.  Sin esto cada escalon de 8 bit suena como un
-           clic ("rayado") cuando el timer va por debajo de 44100 Hz. */
-        uint32_t inc = (uint32_t)(STEP_FP / period);        /* 16.16, avance de fase */
-        if (!inc) inc = 1;                                  /* periodo > STEP_FP: avanza lento */
+           clic ("rayado") cuando el timer va por debajo de 44100 Hz.
+           La fase es 32.32: STEP_FP/period trunca a 16.16 (p.ej. con el Timer0
+           de Esmeralda a 13379 Hz el avance real es 3.2966 pero el truncado da
+           3.2963), y ese error de ~0.01% acumula ~1 muestra de deriva por
+           segundo.  En 32.32 el error es < 1e-6. */
+        uint64_t inc = ((uint64_t)STEP_FP << 16) / period;   /* 32.32 */
+        if (!inc) inc = 1;
         a->fifo_frac[f] += inc;
-        while (a->fifo_frac[f] >= 0x10000u) {
-            a->fifo_frac[f] -= 0x10000u;
+        while (a->fifo_frac[f] >= ((uint64_t)1 << 32)) {
+            a->fifo_frac[f] -= ((uint64_t)1 << 32);
 #ifdef APUDBG
             apu_dbg_pops[f]++;
             if (a->fifo_len[f] > apu_dbg_maxlen[f]) apu_dbg_maxlen[f] = a->fifo_len[f];
@@ -204,7 +208,9 @@ static void apu_fifo_tick(GBA *g) {
             if (a->fifo_len[f] <= 16) dma_fifo_request(g, f);
         }
         int32_t s0 = a->fifo_prev[f], s1 = a->fifo_held[f];
-        a->fifo_interp[f] = (s0 << 8) + (int32_t)(((int64_t)(s1 - s0) * a->fifo_frac[f]) >> 8);
+        /* fifo_frac es 32.32: la parte fraccionaria en Q8 es frac >> 24. */
+        a->fifo_interp[f] = (s0 << 8)
+            + (int32_t)(((int64_t)(s1 - s0) * (int64_t)a->fifo_frac[f]) >> 24);
     }
 }
 
@@ -324,8 +330,16 @@ void apu_write_reg(GBA *g, uint32_t reg, uint16_t v) {
     switch (reg) {
     case 0x082:
         a->cnt_h = wv & 0x770F;
-        if (wv & 0x0800) { a->fifo_head[0] = a->fifo_len[0] = 0; a->fifo_held[0] = 0; }   /* reset FIFO A */
-        if (wv & 0x8000) { a->fifo_head[1] = a->fifo_len[1] = 0; a->fifo_held[1] = 0; }   /* reset FIFO B */
+        if (wv & 0x0800) {   /* reset FIFO A (GBATEK): clear the whole resampler state */
+            a->fifo_head[0] = a->fifo_len[0] = 0;
+            a->fifo_held[0] = a->fifo_prev[0] = 0;
+            a->fifo_frac[0] = 0; a->fifo_interp[0] = 0;
+        }
+        if (wv & 0x8000) {   /* reset FIFO B */
+            a->fifo_head[1] = a->fifo_len[1] = 0;
+            a->fifo_held[1] = a->fifo_prev[1] = 0;
+            a->fifo_frac[1] = 0; a->fifo_interp[1] = 0;
+        }
         return;
     case 0x084:
         a->master = (wv & 0x80) != 0;
@@ -348,7 +362,6 @@ void apu_write_reg(GBA *g, uint32_t reg, uint16_t v) {
     case 0x06C: a->r2h = wv & 0x47FF; if (wv & 0x8000) trigger_sq2(a); break;
     case 0x070:
         a->r3l = wv & 0xE0;
-        if ((wv & 0x80) && !(wv & 0x20)) a->ch[2].len = 256;   /* modo 256 al encender */
         if (!(wv & 0x80)) a->ch[2].on = false;
         break;
     case 0x072: a->r3h = wv & 0xE0FF; a->ch[2].len = 256 - (wv & 0xFF); break;

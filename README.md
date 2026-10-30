@@ -142,6 +142,28 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.22** - PPU and audio fixes found by a code review against GBATEK and
+  VBA-M. **Affine BG in the bitmap modes (3/4/5)**: BG2 was drawn without the
+  rotation/scaling matrix, so Mode-7-style effects showed the raw bitmap. It
+  now goes through `PA`/`PC` around the reference point `BG2X`/`BG2Y`, with the
+  mosaic grid, and pixels outside the bitmap are transparent (GBATEK "BG
+  Rotation/Scaling"). **Mosaic of affine BGs**: the reference point is rewound
+  along both axes to the start of the mosaic row; before only the vertical term
+  was subtracted, matching mGBA's `BACKGROUND_BITMAP_INIT`. **8-bit writes to
+  the sound registers** no longer lose the other byte: the read-modify-write
+  used the masked read (which hides the write-only frequency/envelope bits), so
+  a byte write such as `0x04000064` dropped the frequency low byte; it now
+  merges with a raw shadow of the register. **Sound channel 3** no longer
+  reloads its length on every `0x070` write (the length is set at `0x072` and
+  on trigger). **FIFO reset** (`SOUNDCNT_H` bits 11/15) clears the whole
+  resampler state, and the Direct Sound phase is now 32.32 so the resampling
+  has no truncation drift. **Direct3D 9**: the device is Reset when the window
+  is resized and `D3DERR_DEVICELOST`/`D3DERR_DEVICENOTRESET` are handled, so
+  the picture is no longer cropped after a resize. The picture keeps a 3:2
+  aspect ratio (letterboxed in black, integer scale when it fits) and uses
+  point filtering instead of stretching to the whole window. The save-state
+  format version is bumped to 5 (the I/O raw shadow was added).
+
 - **v1.4.20** - fixes the Pokemon Emerald intro (the "GAME FREAK presents"
   screen was missing, Groudon and Kyogre did not appear, and the background
   was distorted). Root cause: the BIOS decompression SWIs (LZ77, run-length,

@@ -19,3 +19,4 @@ __pycache__/
 
 # capturas A/V multi-GB (rec/av/*.rgb, *.pcm)
 rec/
+.openhands/

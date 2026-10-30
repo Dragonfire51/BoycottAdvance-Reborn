@@ -16,7 +16,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define GBA_VERSION  "v1.4.20"
+#define GBA_VERSION  "v1.4.22"
 #define GBA_NAME     "BoycottAdvance Reborn"
 #define GBA_TITLE    GBA_NAME " " GBA_VERSION
 
@@ -189,7 +189,7 @@ typedef struct {
     int      fifo_head[2], fifo_len[2];
     int8_t   fifo_held[2];
     int8_t   fifo_prev[2];      /* muestra anterior: interpolacion lineal al resamplear */
-    uint32_t fifo_frac[2];      /* posicion 16.16 dentro del periodo del timer */
+    uint64_t fifo_frac[2];      /* posicion 32.32 dentro del periodo del timer */
     int32_t  fifo_interp[2];    /* Direct Sound resampleado a 44100 Hz (Q8) */
 } Apu;
 
@@ -248,6 +248,11 @@ typedef struct GBA {
     bool     save_dirty;          /* battery save needs flushing to disk */
 
     uint8_t  io[0x400];           /* I/O registers window */
+    uint8_t  io_raw[0x400];       /* shadow of the raw halfword written to each
+                                     register, so an 8-bit write can be merged
+                                     with the previous value without going
+                                     through io_read16 (which masks the
+                                     write-only bits of the sound registers) */
 
     CpuRegs  cpu;
     CpuState cst;

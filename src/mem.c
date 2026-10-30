@@ -270,7 +270,32 @@ uint16_t io_read16(GBA *g, uint32_t addr) {
 /* =========================================================================
  * I/O writes (16-bit register space)
  * ========================================================================= */
+/* The sound and BG registers have write-only bits that io_read16 masks out
+ * (frequency, envelope, BG scroll/affine, windows...). An 8-bit write must be
+ * merged with the last RAW halfword written, not with the masked read, or the
+ * other half loses its bits (GBATEK: byte accesses to a 16-bit register are
+ * RMW). io_raw is that raw shadow; io_write16 keeps it up to date and the
+ * one-shot trigger bits are cleared afterwards so writing the second byte of
+ * the register does not re-fire them. */
+static void io_write16_impl(GBA *g, uint32_t addr, uint16_t v);
+
 void io_write16(GBA *g, uint32_t addr, uint16_t v) {
+    uint32_t reg = addr & 0x3FE;
+    g->io_raw[reg]     = (uint8_t)v;
+    g->io_raw[reg + 1] = (uint8_t)(v >> 8);
+    io_write16_impl(g, addr, v);
+    switch (reg) {
+    case 0x064: case 0x06C: case 0x074: case 0x07C:   /* PSG trigger (bit 15) */
+        g->io_raw[reg + 1] &= 0x7F;
+        break;
+    case 0x082:                                       /* FIFO A/B reset (bits 11/15) */
+        g->io_raw[reg + 1] &= 0x77;
+        break;
+    default: break;
+    }
+}
+
+static void io_write16_impl(GBA *g, uint32_t addr, uint16_t v) {
     uint32_t reg = addr & 0x3FE;
     Ppu *p = &g->ppu;
 
@@ -686,10 +711,14 @@ static void io_write8(GBA *g, uint32_t addr, uint8_t v) {
         else if (off < 10){ uint32_t s = (off - 8) * 8; d->count = (d->count & ~(0xFFu << s)) | ((uint32_t)v << s); return; }
         /* CNT_H: lectura-modificacion-escritura normal */
     }
-    uint16_t cur = io_read16(g, reg & ~1u);
+    /* Merge with the RAW shadow, not io_read16: the read masks the write-only
+       bits (frequency, envelope, BG scroll/affine, windows) so an 8-bit write
+       to e.g. 0x04000064 would otherwise drop the other byte's bits. */
+    uint32_t base = reg & ~1u;
+    uint16_t cur = (uint16_t)(g->io_raw[base] | (g->io_raw[base + 1] << 8));
     if (reg & 1) cur = (uint16_t)((cur & 0x00FF) | (v << 8));
     else         cur = (uint16_t)((cur & 0xFF00) | v);
-    io_write16(g, reg & ~1u, cur);
+    io_write16(g, base, cur);
 }
 
 void gba_write8(GBA *g, uint32_t addr, uint8_t v) {

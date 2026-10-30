@@ -45,10 +45,17 @@ void gba_reset(GBA *g) {
     memset(g->oam, 0, sizeof(g->oam));
     memset(g->pal, 0, sizeof(g->pal));
     memset(g->io, 0, sizeof(g->io));
+    memset(g->io_raw, 0, sizeof(g->io_raw));
     memset(&g->timer, 0, sizeof(g->timer));
     memset(&g->dma, 0, sizeof(g->dma));
     memset(&g->apu, 0, sizeof(g->apu));
     memset(&g->ppu, 0, sizeof(g->ppu));
+    /* GBATEK / mGBA GBAIOInit: the affine parameters reset to the identity
+       matrix (PA = PD = 256). Bitmap modes 3-5 use BG2's matrix, so a game
+       that never writes BG2PA/PD would otherwise render a degenerate
+       (collapsed) bitmap instead of the unscaled one. */
+    g->ppu.pa[0] = g->ppu.pd[0] = 256;
+    g->ppu.pa[1] = g->ppu.pd[1] = 256;
     g->cycle = 0;
     g->frame_base = 0;
     g->frame_count = 0;
@@ -360,7 +367,7 @@ int gba_save_state(GBA *g, const char *path) {
     size_t n = 0;
     /* store header */
     memcpy(buf+n, "BARS", 4); n += 4;
-    buf[n++] = 4;   /* version */
+    buf[n++] = 5;   /* version */
     /* CPU */
     memcpy(buf+n, &g->cpu, sizeof(g->cpu)); n += sizeof(g->cpu);
     memcpy(buf+n, &g->cst, sizeof(g->cst)); n += sizeof(g->cst);
@@ -372,6 +379,7 @@ int gba_save_state(GBA *g, const char *path) {
     memcpy(buf+n, g->oam, sizeof(g->oam));     n += sizeof(g->oam);
     memcpy(buf+n, g->pal, sizeof(g->pal));     n += sizeof(g->pal);
     memcpy(buf+n, g->io, sizeof(g->io));       n += sizeof(g->io);
+    memcpy(buf+n, g->io_raw, sizeof(g->io_raw)); n += sizeof(g->io_raw);
     memcpy(buf+n, g->save_mem, sizeof(g->save_mem)); n += sizeof(g->save_mem);
     memcpy(buf+n, &g->eeprom, sizeof(g->eeprom)); n += sizeof(g->eeprom);
     memcpy(buf+n, &g->ie, sizeof(g->ie)); n += sizeof(g->ie);
@@ -403,7 +411,7 @@ int gba_load_state(GBA *g, const char *path) {
     if (memcmp(buf+n, "BARS", 4) != 0) return -1;
     n += 4;
     int ver = buf[n++];
-    if (ver != 4) return -1;
+    if (ver != 5) return -1;
     size_t cpu_sz = sizeof(g->cpu);
     if (n + cpu_sz > got) return -1;
     memcpy(&g->cpu, buf+n, cpu_sz); n += cpu_sz;
@@ -418,6 +426,7 @@ int gba_load_state(GBA *g, const char *path) {
     memcpy(g->oam, buf+n, sizeof(g->oam)); n += sizeof(g->oam);
     memcpy(g->pal, buf+n, sizeof(g->pal)); n += sizeof(g->pal);
     memcpy(g->io, buf+n, sizeof(g->io)); n += sizeof(g->io);
+    memcpy(g->io_raw, buf+n, sizeof(g->io_raw)); n += sizeof(g->io_raw);
     memcpy(g->save_mem, buf+n, sizeof(g->save_mem)); n += sizeof(g->save_mem);
     memcpy(&g->eeprom, buf+n, sizeof(g->eeprom)); n += sizeof(g->eeprom);
     memcpy(&g->ie, buf+n, sizeof(g->ie)); n += sizeof(g->ie);

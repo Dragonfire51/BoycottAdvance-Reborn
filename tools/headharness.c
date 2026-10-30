@@ -171,8 +171,8 @@ int main(int argc, char **argv) {
                 else if (!strcmp(k, "bldalpha")) g->ppu.bldalpha = v;
                 else if (!strcmp(k, "bldy")) g->ppu.bldy = v;
                 else if (!strcmp(k, "mosaic")) g->ppu.mosaic = v;
-                else if (!strcmp(k, "bgx0")) g->ppu.refx[0] = v;
-                else if (!strcmp(k, "bgy0")) g->ppu.refy[0] = v;
+                else if (!strcmp(k, "bgx0")) { g->ppu.refx[0] = v; g->ppu.bgx[0] = v; }
+                else if (!strcmp(k, "bgy0")) { g->ppu.refy[0] = v; g->ppu.bgy[0] = v; }
                 else if (!strcmp(k, "pa0")) g->ppu.pa[0] = (int16_t)v;
                 else if (!strcmp(k, "pb0")) g->ppu.pb[0] = (int16_t)v;
                 else if (!strcmp(k, "pc0")) g->ppu.pc[0] = (int16_t)v;

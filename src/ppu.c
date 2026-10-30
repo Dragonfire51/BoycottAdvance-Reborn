@@ -108,7 +108,14 @@ static void render_affine_bg(GBA *g, int bgn, int y) {
     }
     int32_t pa = p->pa[a], pc = p->pc[a];
     int32_t rx = p->refx[a], ry = p->refy[a];
-    if (mos_v > 1) ry -= p->pd[a] * (y % mos_v);    /* first line of the mosaic row */
+    /* Mosaic: the whole block is colorized by its upper-left pixel, i.e. the
+       reference point is rewound along both axes to the start of the mosaic
+       row (GBATEK "Mosaic Function"; mGBA software-bg.c BACKGROUND_BITMAP_INIT
+       subtracts (inY % mosaicV) * dmx / * dmy). */
+    if (mos_v > 1) {
+        rx -= p->pb[a] * (y % mos_v);
+        ry -= p->pd[a] * (y % mos_v);
+    }
     for (int x = 0; x < SCREEN_W; x++) {
         int xs = x - (x % mos_h);
         int32_t sx = (rx + pa * xs) >> 8;
@@ -123,19 +130,43 @@ static void render_affine_bg(GBA *g, int bgn, int y) {
     }
 }
 
-/* ---- bitmap modes 3/4/5 (BG2) ------------------------------------------- */
+/* ---- bitmap modes 3/4/5 (BG2) -------------------------------------------
+ * BG2 in the bitmap modes is drawn through the rotation/scaling matrix (PA-PD)
+ * around the reference point BG2X/BG2Y, exactly like an affine BG, but the
+ * "map" is the framebuffer itself. GBATEK "BG Rotation/Scaling": the reference
+ * point specifies the source pixel shown at the upper-left of the display, and
+ * the Area Overflow bit is ignored (outside the bitmap is always transparent).
+ * Without the transform a game that programs the matrix (Mode 7-style effects)
+ * would render the raw bitmap. */
 static void render_bitmap(GBA *g, int mode, int y) {
+    Ppu *p = &g->ppu;
     uint16_t *out = lb.bg[2];
-    uint32_t page = ((g->ppu.dispcnt >> 4) & 1) * 0xA000u;
+    uint32_t page = ((p->dispcnt >> 4) & 1) * 0xA000u;
+    int W = (mode == 5) ? 160 : SCREEN_W;
+    int H = (mode == 5) ? 128 : SCREEN_H;
+    int mos_h = 1, mos_v = 1;
+    if (p->bgcnt[2] & 0x40) {                       /* BG2 mosaic enable */
+        mos_h = (p->mosaic & 0xF) + 1;
+        mos_v = ((p->mosaic >> 4) & 0xF) + 1;
+    }
+    int32_t pa = p->pa[0], pc = p->pc[0];
+    int32_t rx = p->refx[0], ry = p->refy[0];
+    if (mos_v > 1) {                                /* colorize from the block origin */
+        rx -= p->pb[0] * (y % mos_v);
+        ry -= p->pd[0] * (y % mos_v);
+    }
     for (int x = 0; x < SCREEN_W; x++) {
+        int xs = x - (x % mos_h);
+        int32_t sx = (rx + pa * xs) >> 8;
+        int32_t sy = (ry + pc * xs) >> 8;
+        if (sx < 0 || sx >= W || sy < 0 || sy >= H) { out[x] = TRANS; continue; }
         if (mode == 3) {
-            out[x] = read_vram16(g, ((uint32_t)y * 240 + x) * 2) & 0x7FFF;
+            out[x] = read_vram16(g, ((uint32_t)sy * W + (uint32_t)sx) * 2) & 0x7FFF;
         } else if (mode == 4) {
-            int idx = read_vram8(g, page + (uint32_t)y * 240 + x);
+            int idx = read_vram8(g, page + (uint32_t)sy * W + (uint32_t)sx);
             out[x] = idx ? read_pal(g, idx) : TRANS;
         } else {
-            out[x] = (x < 160 && y < 128)
-                   ? (read_vram16(g, page + ((uint32_t)y * 160 + x) * 2) & 0x7FFF) : TRANS;
+            out[x] = read_vram16(g, page + ((uint32_t)sy * W + (uint32_t)sx) * 2) & 0x7FFF;
         }
     }
 }
