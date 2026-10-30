@@ -827,6 +827,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     QueryPerformanceCounter(&t_frame); QueryPerformanceCounter(&t_fps);
     int framecount = 0;
     float fps = 0;
+    int skipc = 0;
+    double last_frame_ms = 0;
 
     int running = 1;
     MSG msg;
@@ -854,6 +856,18 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
             gba_run_frame(g);
         }
 
+        /* Frame skip: the CPU/PPU/APU above always run (skipping them would
+           break audio and timers); only compose+present, the expensive blit,
+           is skipped.  Auto raises the target when the previous frame missed
+           60 Hz, as VBA-M "Frame Skip: Automatic" does. */
+        int show_frame = 1;
+        if (!g_paused && g->rom_size > 0 && (cfg.frameskip > 0 || cfg.autoframeskip)) {
+            int target = cfg.frameskip;
+            if (cfg.autoframeskip && last_frame_ms > GBA_FRAME_MS && target < 5) target++;
+            if (++skipc <= target) show_frame = 0; else skipc = 0;
+        }
+
+        if (show_frame) {
         /* Recreate the framebuffer and presenter on demand. */
         RECT rc; GetClientRect(g_hwnd, &rc);
         int cw = rc.right - rc.left, ch = rc.bottom - rc.top;
@@ -872,6 +886,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
 
         compose_frame(&fb, fps);
         vid_present(video, fb.px, fb.w, fb.h);
+        }
 
         /* FPS counting + frame throttle.  The GBA runs 59.7275 Hz, i.e.
          * 16.7427 ms per frame.  The counter must be re-read *after* the
@@ -882,6 +897,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
         double dt = (double)(t1.QuadPart - t_fps.QuadPart) / (double)freq.QuadPart;
         if (dt >= 0.5) { fps = framecount / (float)dt; framecount = 0; t_fps = t1; }
         double frame_ms = (double)(t1.QuadPart - t_frame.QuadPart) * 1000.0 / (double)freq.QuadPart;
+        last_frame_ms = frame_ms;
         if (cfg.autothrottle && !g_paused && g->rom_size > 0 && frame_ms < GBA_FRAME_MS
             && !(cfg.sound_enable && g_audio.hwo)) {
             /* No audio device to pace against: fall back to a wall-clock sleep. */
