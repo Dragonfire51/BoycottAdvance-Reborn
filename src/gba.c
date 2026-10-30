@@ -239,9 +239,15 @@ void gba_update_keypad(GBA *g, uint16_t keys) {
 /* Run one video frame: step the PPU line by line, running the CPU for the
  * cycles each scanline takes, firing HBlank/VBlank/VCount interrupts. */
 static void run_frame_core(GBA *g) {
-    const uint32_t visible_cycles = 960;     /* 240 px * 4 ciclos */
-    const uint32_t hblank_cycles  = 272;     /* total 1232 por linea */
-    const uint32_t line_cycles    = visible_cycles + hblank_cycles;
+    /* La linea dura 1232 ciclos (GBATEK "LCD VBlank"): 240 px visibles = 960
+       ciclos, pero el flag/IRQ de HBlank y el DMA de HBlank NO se disparan al
+       acabar los pixeles visibles sino 48 ciclos despues, tras la cola de
+       fetch del PPU.  mGBA (VIDEO_HDRAW_LENGTH=1008 + VIDEO_HBLANK_LENGTH=224)
+       y VBA-M (lcdHDrawLen()=1008) coinciden en 1008; usar 960 adelantaba
+       todas las IRQ y el DMA de HBlank 48 ciclos por linea. */
+    const uint32_t hdraw_cycles   = 1008;    /* 240 px + 48 de cola de fetch */
+    const uint32_t hblank_cycles  = 224;     /* total 1232 por linea */
+    const uint32_t line_cycles    = hdraw_cycles + hblank_cycles;
     /* La PPU marca el reloj: cada linea dura exactamente 1232 ciclos y el frame
        228*1232 = 280896.  Los limites son absolutos respecto a `base`, de modo
        que si el CPU se pasa del limite al acabar una instruccion, la linea
@@ -288,7 +294,7 @@ static void run_frame_core(GBA *g) {
 
         /* parte visible de la linea: la CPU corre hasta el limite absoluto y al
            acabar se renderiza la linea con los registros tal como han quedado */
-        uint32_t vis_end = base + (uint32_t)line * line_cycles + visible_cycles;
+        uint32_t vis_end = base + (uint32_t)line * line_cycles + hdraw_cycles;
         uint32_t seg0 = g->cycle;
         int vis_budget = (int)(vis_end - seg0);
         if (vis_budget < 0) vis_budget = 0;

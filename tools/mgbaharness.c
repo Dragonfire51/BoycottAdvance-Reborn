@@ -67,8 +67,12 @@ int main(int argc, char** argv) {
     const char* findshot = getenv("FIND_SHOT");
     const char* reglog = getenv("REGLOG");
     FILE* rf = reglog ? fopen(reglog, "w") : NULL;
+    const char* pcmmon = getenv("PCMON");
+    FILE* pmf = pcmmon ? fopen(pcmmon, "w") : NULL;
     for (int f = 0; f < nframes; f++) {
         core->runFrame(core);
+        if (pmf) { int32_t pcv = 0; core->readRegister(core, "pc", &pcv);
+                   fprintf(pmf, "f%d pc=%08X\n", f, (unsigned)pcv); }
         if (rf) {
             fprintf(rf, "f%d dispcnt=%04X dispstat=%04X if=%04X ie=%04X ime=%d",
                     (int) core->frameCounter(core),

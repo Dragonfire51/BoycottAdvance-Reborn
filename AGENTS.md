@@ -1152,3 +1152,80 @@ pipeline de render. Siguiente paso: localizar la primera escritura divergente a
 OAM/paleta (watchpoint sobre 0x07000000 y 0x05000000) comparando con mGBA,
 prioritariamente contra VBA-M como pide el proyecto.
 
+## Video: el "glitch" de la intro es un desfase de arranque de 3 frames (2026-10-15)
+
+**Correccion de la conclusion anterior**: el watchpoint sobre OAM/paleta no
+hace falta, porque **no hay ninguna escritura divergente**. Volcando la memoria
+completa en cada frame (`DUMPDIR` en los dos harnesses) y comparando nuestro
+frame N contra los frames N-8..N+8 de mGBA:
+
+- `our f8 == ref f11`, `our f30 == ref f33`, `our f54 == ref f57`,
+  `our f100 == ref f103`, `our f250 == ref f253` — **offset +3 constante**, con
+  **diff de 1 byte en 32 KB** de IWRAM y OAM/paleta/VRAM/EWRAM **a cero**.
+- El offset arranca en +2 (frames 1-4), pasa a +3 en f5 y se mantiene hasta f42;
+  en f43-45 colapsa a 0 (el juego entra en una fase estatica y las lineas de
+  estado se reescriben). El desfase es un **escalon de arranque**, no una
+  deriva: nuestro `g->cycle` es exactamente `(f+1)*280896` en todos los
+  limites de frame (deriva 0.0000%).
+- Con el PC por frame (`PCMON=1`): mGBA alcanza el bucle del BIOS (pc=034C) en
+  f7 y nosotros en f4 — **arrancamos 3 frames antes**, que es el mismo offset
+  visto desde el otro lado. Es un desajuste de la duracion del arranque
+  (BIOS real vs HLE), ya conocido para Medabots en la nota de arriba.
+
+**La pantalla no alinea con ese offset** (el diff minimo en ventana movil es el
+mismo indice o menor, nunca N+3): la intro de Esmeralda es en gran parte estatica
+durante esos frames, asi que el diff de pantalla esta dominado por un problema
+**independiente** de mezcla/prioridad, no por el desfase. Un desfase no produce
+"pixeles con color equivocado en el mismo sitio" (eso seria un desplazamiento
+espacial); produce contenido de otro instante.
+
+**Herramienta**: `PCMON=<file>` en `tools/headharness.c` y
+`tools/mgbaharness.c` vuelca `fN pc=XXXXXXXX` por frame. Util para localizar en
+que frame entra cada emulador a una fase.
+
+## HBlank: el flag/IRQ se dispara en el ciclo 1008, no en 960 (2026-10-15)
+
+GBATEK "LCD VBlank" dice que la linea dura 1232 ciclos, pero el flag de HBlank
+(DISPSTAT bit 1), la IRQ de HBlank y el DMA de HBlank **no** se disparan al
+acabar los 960 ciclos de pixeles visibles: el PPU tiene una cola de fetch de 48
+ciclos. mGBA (`VIDEO_HDRAW_LENGTH = 1008`, `VIDEO_HBLANK_LENGTH = 224`) y VBA-M
+(`lcdHDrawLen() = 1008`, con comentario "hardware sets the HBlank flag at cycle
+1006; the legacy grid used 1008") coinciden en **1008 + 224**. Nosotros
+usabamos **960 + 272**, adelantando 48 ciclos por scanline todo el pipeline de
+HBlank (IRQ, DMA, latch de BGxHOFS/WINx/BLDx para HDMA). Corregido en
+`run_frame_core`.
+
+**Verificacion**: `gba_test_suite.py` 74 PASSED / 50 FAILED / 9 UNKNOWN,
+identico al baseline; deriva de ciclos 0.0000%; los tres targets compilan
+limpios. El cambio **no** altera el diff de pantalla de la intro, lo que
+confirma que el desfase de 3 frames es el factor dominante alli.
+
+## Auditoria DMA/VBlank contra mGBA y VBA-M (2026-10-15)
+
+Comparado el modelo de ciclos del DMA, que era la otra mitad del encargo:
+
+- **Arranque del DMA**: mGBA `currentDma->when = mTimingCurrentTime() + 3` y
+  `GBADMARunHblank(gba, cycles)` aplica `when = now + 3 + cycles`; VBA-M usa
+  `cpuDmaTicksToUpdate`/`cpuDmaRunning` con el mismo criterio (la concesion del
+  bus espera a que termine la instruccion en vuelo). Nosotros llamamos a
+  `dma_trigger(g, 1/2)` en el punto de la linea donde el hardware pone el flag,
+  lo que es equivalente para el juego (no modelamos el desfase de 3 ciclos de la
+  concesion del bus, pero ese detalle solo es observable con tests de ciclo
+  exacto tipo prefetcher, que ya fallaban en el baseline).
+- **Coste por palabra**: GBATEK "DMA Transfers" da `2N+2(n-1)S+xI`; nuestro
+  `dma_total_cycles` calcula `first + (count-1)*rest` con
+  `first = 2 + acc_src + acc_dst` y `rest = 2 + seq_src + seq_dst`, y mGBA hace
+  lo mismo (`cycles = 2 + waitstatesNonseq[src] + waitstatesNonseq[dst]`, luego
+  `info->cycles = waitstatesSeq[src] + waitstatesSeq[dst]` por palabra
+  siguiente). **Coincide**.
+- **Timing 3 (FIFO de sonido)**: forzamos 4 palabras de 32 bit con destino fijo
+  e ignoramos `DMAxCNT_L`, igual que GBATEK y mGBA.
+- **VBlank/HBlank**: la IRQ de VBlank se dispara en la linea 159 (un scanline
+  antes de que VCOUNT entre en 160-227), que es lo que hacen mGBA (`case
+  GBA_VIDEO_VERTICAL_PIXELS` dentro de `_startHdraw`) y VBA-M. El DMA de VBlank
+  se dispara en el mismo punto. La IRQ de HBlank se ha movido al ciclo 1008
+  (ver nota anterior).
+
+Conclusion: el modelo de DMA ya era correcto; la unica discrepancia real de
+timing encontrada es el limite de HBlank 960 -> 1008.
+

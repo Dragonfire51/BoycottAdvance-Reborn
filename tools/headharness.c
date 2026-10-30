@@ -31,8 +31,11 @@ int main(int argc, char **argv) {
     FILE *pcm = NULL;
     if (getenv("PCMDUMP")) pcm = fopen(getenv("PCMDUMP"), "wb");
 
+    const char* pcmmon = getenv("PCMON");
+    FILE* pmf = pcmmon ? fopen(pcmmon, "w") : NULL;
     for (int f = 0; f < nframes; f++) {
         gba_run_frame(g);
+        if (pmf) fprintf(pmf, "f%d pc=%08X\n", f, g->cpu.r[15]);
         if (pcm) {
             int16_t buf[4096];
             int n;
