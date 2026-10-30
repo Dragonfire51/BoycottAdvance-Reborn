@@ -448,7 +448,17 @@ static void do_action(int id) {
     case M_SAVESTATE:{ char p[64]; state_path(p,sizeof p); gba_save_state(g,p); break; }
     case M_EXIT: { SDL_Event q; q.type=SDL_QUIT; SDL_PushEvent(&q); break; }
     case M_ZOOM1: case M_ZOOM2: case M_ZOOM3: case M_ZOOM4:
-        cfg.zoom = id-M_ZOOM1+1; cfg.scalemode = 0; break;
+        cfg.zoom = id-M_ZOOM1+1; cfg.scalemode = 0;
+        /* The original resized the window to the new zoom. Only the native
+         * Win32 frontend did this; the SDL frontend changed cfg.zoom but
+         * left the window as it was, so the picture did not scale until the
+         * user resized the window by hand. */
+        if (g_win) {
+            if (SDL_GetWindowFlags(g_win) & SDL_WINDOW_MAXIMIZED)
+                SDL_RestoreWindow(g_win);
+            SDL_SetWindowSize(g_win, SCREEN_W*cfg.zoom, SCREEN_H*cfg.zoom);
+        }
+        break;
     case M_FLASHID: cfg.flashid = (cfg.flashid+1)%3; break;
     case M_SCANLINE: cfg.scanline = !cfg.scanline; break;
     case M_FIT: cfg.scalemode = (cfg.scalemode==1)?0:1; break;

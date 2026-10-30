@@ -538,9 +538,11 @@ static void poll_joy_capture(void) {
 
 /* Resize the window so the *client area* is exactly SCREEN_W x SCREEN_H times
  * the zoom. SetWindowPos takes window dimensions: sizing it with the bare
- * client size crops the picture by the frame/caption width. */
+ * client size crops the picture by the frame/caption width. A maximized
+ * window ignores SetWindowPos, so restore it first. */
 static void resize_for_zoom(void) {
     if (g_fs) return;                       /* fullscreen: client = screen */
+    if (IsZoomed(g_hwnd)) ShowWindow(g_hwnd, SW_RESTORE);
     RECT r = { 0, 0, SCREEN_W * cfg.zoom, SCREEN_H * cfg.zoom };
     AdjustWindowRectEx(&r, (DWORD)GetWindowLongPtrA(g_hwnd, GWL_STYLE), TRUE,
                        (DWORD)GetWindowLongPtrA(g_hwnd, GWL_EXSTYLE));
@@ -650,6 +652,18 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         if (g_client_w < 1) g_client_w = 1;
         if (g_client_h < 1) g_client_h = 1;
         break;
+    case WM_GETMINMAXINFO: {
+        /* Keep the client area at least 1x so the picture is never cropped
+         * to nothing when the user drags the frame, and so a restore after
+         * maximize returns to a usable size. */
+        MINMAXINFO *mm = (MINMAXINFO *)lp;
+        RECT r = { 0, 0, SCREEN_W, SCREEN_H };
+        AdjustWindowRectEx(&r, (DWORD)GetWindowLongPtrA(h, GWL_STYLE), TRUE,
+                           (DWORD)GetWindowLongPtrA(h, GWL_EXSTYLE));
+        mm->ptMinTrackSize.x = r.right - r.left;
+        mm->ptMinTrackSize.y = r.bottom - r.top;
+        return 0;
+    }
     case WM_KEYDOWN: {
         int vk = (int)wp;
         if (key_capture >= 0) { on_key_assign(vk); return 0; }
