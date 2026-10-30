@@ -93,7 +93,7 @@ static Audio g_audio;
 
 /* Fill a fragment from the APU (or silence when sound is off). */
 static void audio_fill(int16_t *dst) {
-    if (cfg.sound_enable && g) {
+    if (cfg.sound_enable && g && cfg.autothrottle) {
         apu_mix(g, dst, AUDIO_SAMPLES);
         if (cfg.reverse_stereo)
             for (int i = 0; i < AUDIO_SAMPLES; i++) {
@@ -102,6 +102,10 @@ static void audio_fill(int16_t *dst) {
                 dst[i*2+1] = l;
             }
     } else {
+        /* Muted, or fast-forwarding (autothrottle off): the emulation runs far
+           ahead of real time, so drop whatever the APU produced (otherwise the
+           ring overflows and the mixer emits garbage) and output silence. */
+        while (apu_drain(dst, AUDIO_SAMPLES) > 0) { /* discard */ }
         memset(dst, 0, (size_t)AUDIO_SAMPLES * 2 * sizeof(int16_t));
     }
 }
@@ -156,6 +160,7 @@ static int audio_open(void) {
         waveOutWrite(g_audio.hwo, &g_audio.hdr[i], sizeof(WAVEHDR));
     }
     g_audio.thread = CreateThread(NULL, 0, audio_thread, &g_audio, 0, NULL);
+    if (g_audio.thread) SetThreadPriority(g_audio.thread, THREAD_PRIORITY_TIME_CRITICAL);
     return 0;
 }
 static void audio_close(void) {
@@ -379,31 +384,25 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Affine BG in the bitmap modes (3/4/5): BG2 was drawn\n"
-      "    without the rotation/scaling matrix, so Mode-7-style\n"
-      "    effects showed the raw bitmap. Now it goes through\n"
-      "    PA/PC around the reference point (BG2X/BG2Y), with the\n"
-      "    mosaic grid, and pixels outside the bitmap are\n"
-      "    transparent (GBATEK 'BG Rotation/Scaling').\n"
-      "  - Mosaic of affine BGs: the reference point is rewound\n"
-      "    along BOTH axes to the start of the mosaic row; before\n"
-      "    only the vertical term was subtracted.\n"
-      "  - 8-bit writes to the sound registers no longer lose the\n"
-      "    other byte. The read-modify-write used the masked read\n"
-      "    (which hides the write-only frequency/envelope bits), so\n"
-      "    a byte write like 0x04000064 dropped the frequency low\n"
-      "    byte. It now merges with a raw shadow of the register.\n"
-      "  - Sound channel 3 no longer reloads its length on every\n"
-      "    0x070 write (the length is set at 0x072 and on trigger).\n"
-      "  - FIFO reset (SOUNDCNT_H bits 11/15) clears the whole\n"
-      "    resampler state, and the Direct Sound phase is now\n"
-      "    32.32 so the resampling has no truncation drift.\n"
-      "  - Direct3D 9: the device is Reset when the window is\n"
-      "    resized and D3DERR_DEVICELOST/NOTRESET are handled, so\n"
-      "    the picture is no longer cropped after a resize.\n"
-      "  - The picture keeps a 3:2 aspect ratio (letterboxed in\n"
-      "    black, integer scale when it fits) and uses point\n"
-      "    filtering instead of stretching to the whole window.";
+      "  - HBlank flag: DISPSTAT bit 1 always read 0 because\n"
+      "    nothing ever set it; a ROM that polls it for mid-frame\n"
+      "    raster effects saw no HBlank. It is now toggled on\n"
+      "    every scanline (GBATEK 4000004h).\n"
+      "  - VBlank: the IRQ, the VBlank DMA and the frame counter\n"
+      "    fired on line 159, one scanline early, so the game's\n"
+      "    VBlank handler (OAM/scroll/palette copy) ran during the\n"
+      "    last visible line and corrupted it. Moved to line 160,\n"
+      "    as GBATEK says (VBlank flag set in line 160..226).\n"
+      "  - 5->8 bit colour expansion now replicates the top bits,\n"
+      "    so white is 0xFF instead of 0xF8 (blitter and the F5\n"
+      "    screenshot).\n"
+      "  - Scaling snaps to a whole multiple when it fits, so the\n"
+      "    picture no longer has uneven (shimmering) pixel columns.\n"
+      "  - Audio is paced by the sound ring level instead of a\n"
+      "    coarse 16 ms sleep, which overflowed the ring (dropped\n"
+      "    samples) or starved it (repeated last sample) - both\n"
+      "    sound like crackle. Fast-forward now mutes the audio and\n"
+      "    the refill thread runs at time-critical priority.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {
@@ -473,7 +472,8 @@ static void save_screenshot(void) {
     fwrite("P6\n240 160\n255\n",1,14,f);
     for (int y2=0;y2<SCREEN_H;y2++) for (int x2=0;x2<SCREEN_W;x2++) {
         uint16_t c = g->ppu.frame[y2*SCREEN_W+x2];
-        fputc((c&0x1F)<<3,f); fputc(((c>>5)&0x1F)<<3,f); fputc(((c>>10)&0x1F)<<3,f);
+        int r5=c&0x1F, g5=(c>>5)&0x1F, b5=(c>>10)&0x1F;   /* 5->8: replicate top bits */
+        fputc((r5<<3)|(r5>>2),f); fputc((g5<<3)|(g5>>2),f); fputc((b5<<3)|(b5>>2),f);
     }
     fclose(f);
 }
@@ -720,6 +720,11 @@ static void compose_frame(FB *fb, float fps) {
         double lim = sx < sy ? sx : sy;
         if (s > lim) s = lim;
     }
+    /* Snap to a whole multiple so nearest-neighbour scaling keeps every pixel
+       the same width (a fractional factor makes columns/rows of uneven width,
+       which shimmers while scrolling). When the client is smaller than the
+       native size there is no integer factor left, so keep the fractional fit. */
+    if (s >= 1.0) s = (double)(int)s;
     int dstw = (int)(SCREEN_W * s), dsth = (int)(SCREEN_H * s);
     if (dstw < 1) dstw = 1;
     if (dsth < 1) dsth = 1;
@@ -835,8 +840,16 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
 
         poll_joy_capture();
 
-        /* Run one frame. */
+        /* Run one frame.  When sound is on, pace by the ring-buffer level:
+           let the audio device drain what is queued before producing more, so
+           the ring never overflows (dropped samples) or runs dry (repeated
+           last sample) - both are audible as crackle.  A time-based sleep
+           alone is too coarse (Sleep(1) granularity) and drifts. */
         if (!g_paused && g->rom_size > 0) {
+            if (cfg.autothrottle && cfg.sound_enable && g_audio.hwo) {
+                uint32_t t0 = GetTickCount();
+                while (apu_available() > 2048 && GetTickCount() - t0 < 50) Sleep(1);
+            }
             gba_update_keypad(g, key_state());
             gba_run_frame(g);
         }
@@ -869,7 +882,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
         double dt = (double)(t1.QuadPart - t_fps.QuadPart) / (double)freq.QuadPart;
         if (dt >= 0.5) { fps = framecount / (float)dt; framecount = 0; t_fps = t1; }
         double frame_ms = (double)(t1.QuadPart - t_frame.QuadPart) * 1000.0 / (double)freq.QuadPart;
-        if (cfg.autothrottle && !g_paused && g->rom_size > 0 && frame_ms < GBA_FRAME_MS) {
+        if (cfg.autothrottle && !g_paused && g->rom_size > 0 && frame_ms < GBA_FRAME_MS
+            && !(cfg.sound_enable && g_audio.hwo)) {
+            /* No audio device to pace against: fall back to a wall-clock sleep. */
             Sleep((DWORD)(GBA_FRAME_MS - frame_ms));
             QueryPerformanceCounter(&t1);
         }

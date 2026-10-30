@@ -150,10 +150,24 @@ static void audio_cb(void *ud, Uint8 *stream, int len) {
     GBA *gg = (GBA *)ud;
     int16_t *out = (int16_t *)stream;
     int n = len / 2 / AUDIO_CHANNELS;
-    if (!cfg.sound_enable) { memset(stream, 0, len); return; }
+    if (!cfg.sound_enable || !cfg.autothrottle) {
+        /* Muted, or fast-forwarding (autothrottle off): the emulation runs far
+           ahead of real time, so discard produced samples and emit silence
+           rather than let the ring overflow into garbage. */
+        while (apu_drain(out, n) > 0) { /* discard */ }
+        memset(stream, 0, len);
+        return;
+    }
     apu_mix(gg, out, n);
     if (cfg.reverse_stereo)
         for (int i = 0; i < n; i++) { int16_t l = out[i*2]; out[i*2] = out[i*2+1]; out[i*2+1] = l; }
+}
+
+/* Number of samples queued for the audio device. */
+static int audio_avail(void) {
+    if (!g_adev) return 0;
+    int hw = SDL_GetQueuedAudioSize(g_adev);
+    return hw > 0 ? hw / (int)(sizeof(int16_t) * AUDIO_CHANNELS) : 0;
 }
 
 /* --------------------------------------------------------------- key state */
@@ -398,31 +412,25 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Affine BG in the bitmap modes (3/4/5): BG2 was drawn\n"
-      "    without the rotation/scaling matrix, so Mode-7-style\n"
-      "    effects showed the raw bitmap. Now it goes through\n"
-      "    PA/PC around the reference point (BG2X/BG2Y), with the\n"
-      "    mosaic grid, and pixels outside the bitmap are\n"
-      "    transparent (GBATEK 'BG Rotation/Scaling').\n"
-      "  - Mosaic of affine BGs: the reference point is rewound\n"
-      "    along BOTH axes to the start of the mosaic row; before\n"
-      "    only the vertical term was subtracted.\n"
-      "  - 8-bit writes to the sound registers no longer lose the\n"
-      "    other byte. The read-modify-write used the masked read\n"
-      "    (which hides the write-only frequency/envelope bits), so\n"
-      "    a byte write like 0x04000064 dropped the frequency low\n"
-      "    byte. It now merges with a raw shadow of the register.\n"
-      "  - Sound channel 3 no longer reloads its length on every\n"
-      "    0x070 write (the length is set at 0x072 and on trigger).\n"
-      "  - FIFO reset (SOUNDCNT_H bits 11/15) clears the whole\n"
-      "    resampler state, and the Direct Sound phase is now\n"
-      "    32.32 so the resampling has no truncation drift.\n"
-      "  - Direct3D 9: the device is Reset when the window is\n"
-      "    resized and D3DERR_DEVICELOST/NOTRESET are handled, so\n"
-      "    the picture is no longer cropped after a resize.\n"
-      "  - The picture keeps a 3:2 aspect ratio (letterboxed in\n"
-      "    black, integer scale when it fits) and uses point\n"
-      "    filtering instead of stretching to the whole window.");
+      "  - HBlank flag: DISPSTAT bit 1 always read 0 because\n"
+      "    nothing ever set it; a ROM that polls it for mid-frame\n"
+      "    raster effects saw no HBlank. It is now toggled on\n"
+      "    every scanline (GBATEK 4000004h).\n"
+      "  - VBlank: the IRQ, the VBlank DMA and the frame counter\n"
+      "    fired on line 159, one scanline early, so the game's\n"
+      "    VBlank handler (OAM/scroll/palette copy) ran during the\n"
+      "    last visible line and corrupted it. Moved to line 160,\n"
+      "    as GBATEK says (VBlank flag set in line 160..226).\n"
+      "  - 5->8 bit colour expansion now replicates the top bits,\n"
+      "    so white is 0xFF instead of 0xF8 (blitter and the F5\n"
+      "    screenshot).\n"
+      "  - Scaling snaps to a whole multiple when it fits, so the\n"
+      "    picture no longer has uneven (shimmering) pixel columns.\n"
+      "  - Audio is paced by the sound ring level instead of a\n"
+      "    coarse 16 ms sleep, which overflowed the ring (dropped\n"
+      "    samples) or starved it (repeated last sample) - both\n"
+      "    sound like crackle. Fast-forward now mutes the audio and\n"
+      "    the refill thread runs at time-critical priority.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",
@@ -735,7 +743,8 @@ int main(int argc, char **argv) {
                 else if (k==SDLK_F3) { char p[64]; state_path(p,sizeof p); gba_load_state(g,p); }
                 else if (k==SDLK_F5) { FILE*f=fopen("shot.ppm","wb"); if(f){fwrite("P6\n240 160\n255\n",1,14,f);
                     for(int y2=0;y2<SCREEN_H;y2++)for(int x2=0;x2<SCREEN_W;x2++){uint16_t c=g->ppu.frame[y2*SCREEN_W+x2];
-                    fputc((c&0x1F)<<3,f);fputc(((c>>5)&0x1F)<<3,f);fputc(((c>>10)&0x1F)<<3,f);} fclose(f);} }
+                    int r5=c&0x1F,g5=(c>>5)&0x1F,b5=(c>>10)&0x1F;
+                    fputc((r5<<3)|(r5>>2),f);fputc((g5<<3)|(g5>>2),f);fputc((b5<<3)|(b5>>2),f);} fclose(f);} }
                 else if (k==SDLK_p) g_paused = !g_paused;
                 else if (k==SDLK_F11) toggle_fullscreen(win);
                 else if (k==SDLK_F9) show_history();
@@ -743,6 +752,12 @@ int main(int argc, char **argv) {
         }
 
         if (!g_paused && g->rom_size > 0) {
+            /* When sound is on, pace by the audio device queue so it never
+               overflows (dropped samples) or runs dry (repeated last sample). */
+            if (cfg.autothrottle && cfg.sound_enable && g_adev) {
+                uint32_t t0 = SDL_GetTicks();
+                while (audio_avail() > 2048 && SDL_GetTicks() - t0 < 50) SDL_Delay(1);
+            }
             gba_update_keypad(g, key_state());
             gba_run_frame(g);
             gba_apply_cheats(g);
@@ -830,13 +845,16 @@ int main(int argc, char **argv) {
         vid_present(video, fb.px, fb.w, fb.h);
 
         uint32_t now = SDL_GetTicks();
-        if (cfg.autothrottle && !g_paused) {
-            /* 16.7427 ms = 59.7275 Hz; re-read the clock after the delay so
+        if (cfg.autothrottle && !g_paused && !(cfg.sound_enable && g_adev)) {
+            /* No audio device to pace against: fall back to a wall-clock delay.
+             * 16.7427 ms = 59.7275 Hz; re-read the clock after the delay so
              * the wait is counted in this frame (otherwise every other
              * delay is skipped and the game runs ~1.5x too fast). */
             double el = (double)(now - last);
             if (el < 16.7427) SDL_Delay((uint32_t)(16.7427 - el));
             last = SDL_GetTicks();
+        } else {
+            last = now;
         }
         fps_n++;
         if (now-fps_t>=500) { fps = fps_n*1000.0f/(now-fps_t); fps_n=0; fps_t=now; }

@@ -81,7 +81,12 @@ void fb_blit_frame(FB *fb, int dx, int dy, int dw, int dh,
             int sx = i * SCREEN_W / dw;
             if (sx >= SCREEN_W) sx = SCREEN_W - 1;
             uint16_t c = srow[sx];
-            int r = (c & 0x1F) << 3, gg = ((c >> 5) & 0x1F) << 3, b = ((c >> 10) & 0x1F) << 3;
+            int r5 = c & 0x1F, g5 = (c >> 5) & 0x1F, b5 = (c >> 10) & 0x1F;
+            /* 5->8 bit expansion: replicate the top bits so white is 0xFF
+               (a plain <<3 only reaches 0xF8). */
+            int r = (r5 << 3) | (r5 >> 2);
+            int gg = (g5 << 3) | (g5 >> 2);
+            int b = (b5 << 3) | (b5 >> 2);
             if (dim) { r >>= 1; gg >>= 1; b >>= 1; }
             drow[px] = 0xFF000000u | ((uint32_t)r << 16) | ((uint32_t)gg << 8) | (uint32_t)b;
         }

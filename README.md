@@ -142,6 +142,28 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.23** - video and audio fixes from a second review against GBATEK and
+  VBA-M. **HBlank flag (F1)**: `DISPSTAT` bit 1 always read 0 because nothing
+  ever set `ppu.hblank`; a ROM that polls it for mid-frame raster effects saw no
+  HBlank at all. It is now cleared at the start of every scanline and set during
+  HBlank, as GBATEK (4000004h: "toggled in all lines, 0..227") requires.
+  **VBlank timing (F2)**: the VBlank IRQ, the VBlank DMA and the frame counter
+  fired on line 159, one scanline early, so the game's VBlank handler (OAM /
+  scroll / palette copy) ran during the last visible line and corrupted it. They
+  now fire on line 160, matching GBATEK ("V-Blank flag set in line 160..226, not
+  227"), mGBA (`GBA_VIDEO_VERTICAL_PIXELS`) and VBA-M (`VCOUNT == 160`).
+  **Colour expansion (F5)**: 5->8 bit now replicates the top bits, so white maps
+  to 0xFF instead of 0xF8, in both the blitter and the F5 screenshot.
+  **Scaling (F5)**: the picture snaps to a whole multiple when it fits, so
+  nearest-neighbour scaling no longer produces uneven, shimmering pixel columns.
+  **Audio pacing (F3)**: the loop is paced by the sound-ring level instead of a
+  coarse 16 ms `Sleep`, which overflowed the ring (dropped samples) or starved
+  it (repeated last sample); fast-forward mutes the audio instead of emitting
+  overflow garbage, and the waveOut refill thread runs at time-critical
+  priority. Verified headless (frames 60/300/600 PNG + 5 s WAV): the jsmolka
+  gba-tests and alyosha-tas suites go from 74 to 76 PASSED (`ppu/start_up_vbl_irq`
+  and `ppu/start_up_vbl_irq_halt` now pass) with no regressions; audio produces
+  220592 samples per 299 frames (44100.7 Hz) with `ringdrop=0`.
 - **v1.4.22** - PPU and audio fixes found by a code review against GBATEK and
   VBA-M. **Affine BG in the bitmap modes (3/4/5)**: BG2 was drawn without the
   rotation/scaling matrix, so Mode-7-style effects showed the raw bitmap. It

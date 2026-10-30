@@ -278,6 +278,9 @@ static void run_frame_core(GBA *g) {
     for (int line = 0; line < 228; line++) {
         int vm = (g->ppu.dispstat >> 8) & 0xFF;
         g->ppu.vcount = (uint16_t)line;
+        /* GBATEK (4000004h): the H-Blank flag is toggled on every scanline
+           (0..227); the visible part of the line starts out of HBlank. */
+        g->ppu.hblank = false;
 
         /* DISPSTAT bits 0-1: bit0 VBlank (lineas 160-226), bit1 HBlank en la
            parte no visible; bit2 VCount match.  Bit1 lo mantiene el nucleo. */
@@ -286,9 +289,13 @@ static void run_frame_core(GBA *g) {
         if (line == vm)  st |= 0x0004;                      /* VCount match */
         g->ppu.dispstat = st;
 
-        /* VBlank: la IRQ se dispara en la linea 159, un scanline antes de que
-           VCOUNT entre en la ventana 160-227 (como el hardware) */
-        if (line == 159) {
+        /* VBlank: GBATEK (4000004h) sets the V-Blank flag in line 160..226, and
+           mGBA (GBA_VIDEO_VERTICAL_PIXELS) and VBA-M (VCOUNT == 160) both raise
+           the VBlank IRQ / run the VBlank DMA when VCOUNT reaches 160, i.e. at
+           the start of the first hidden line.  Firing it in line 159 ran the
+           game's VBlank handler (OAM/scroll/palette copy) during the last
+           visible line and corrupted it. */
+        if (line == 160) {
             if (g->ppu.dispstat & 0x0008) g->if_reg |= IF_VBLANK;
             g->frame_count++;
             /* VBlankIntrWait satisfied; a wait on another mask is woken by
@@ -314,6 +321,7 @@ static void run_frame_core(GBA *g) {
            Los cambios de BGxHOFS, WINx, BLDx hechos aqui afectan a la linea
            siguiente (efectos de HDMA como Pokédex / transiciones). */
         g->ppu.dispstat |= 0x0002;
+        g->ppu.hblank = true;
         if (g->ppu.dispstat & 0x0010) g->if_reg |= IF_HBLANK;
         if (line < 160) dma_trigger(g, 2);          /* HBlank-scheduled DMA */
         uint32_t hb_end = base + (uint32_t)(line + 1) * line_cycles;
