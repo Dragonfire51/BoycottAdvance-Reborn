@@ -142,6 +142,14 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.24** - **Frame Skip is honoured**. The `FrameSkip` / `AutoFrameSkip`
+  INI keys and the Frame Skip menu entries were read and stored but never
+  consulted by the render loop, so the option did nothing. Only the blit
+  (compose + present) is now skipped every Nth frame; the CPU, PPU and APU
+  still run every frame, so audio and timers are unaffected. Auto raises the
+  target when the previous frame missed 60 Hz, as VBA-M does. Defaults (0/0)
+  keep the previous behaviour. Also adds `tools/headless.c`, which renders
+  frames 60/300/600 to PNG plus a stereo WAV from the same core the binary uses.
 - **v1.4.23** - video and audio fixes from a second review against GBATEK and
   VBA-M. **HBlank flag (F1)**: `DISPSTAT` bit 1 always read 0 because nothing
   ever set `ppu.hblank`; a ROM that polls it for mid-frame raster effects saw no

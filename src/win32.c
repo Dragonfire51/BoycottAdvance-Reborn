@@ -384,25 +384,14 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - HBlank flag: DISPSTAT bit 1 always read 0 because\n"
-      "    nothing ever set it; a ROM that polls it for mid-frame\n"
-      "    raster effects saw no HBlank. It is now toggled on\n"
-      "    every scanline (GBATEK 4000004h).\n"
-      "  - VBlank: the IRQ, the VBlank DMA and the frame counter\n"
-      "    fired on line 159, one scanline early, so the game's\n"
-      "    VBlank handler (OAM/scroll/palette copy) ran during the\n"
-      "    last visible line and corrupted it. Moved to line 160,\n"
-      "    as GBATEK says (VBlank flag set in line 160..226).\n"
-      "  - 5->8 bit colour expansion now replicates the top bits,\n"
-      "    so white is 0xFF instead of 0xF8 (blitter and the F5\n"
-      "    screenshot).\n"
-      "  - Scaling snaps to a whole multiple when it fits, so the\n"
-      "    picture no longer has uneven (shimmering) pixel columns.\n"
-      "  - Audio is paced by the sound ring level instead of a\n"
-      "    coarse 16 ms sleep, which overflowed the ring (dropped\n"
-      "    samples) or starved it (repeated last sample) - both\n"
-      "    sound like crackle. Fast-forward now mutes the audio and\n"
-      "    the refill thread runs at time-critical priority.";
+      "  - Frame Skip is now honoured: the INI keys and the\n"
+      "    menu entries were read but never used, so the option\n"
+      "    did nothing. Only the blit (compose+present) is\n"
+      "    skipped; the CPU/PPU/APU still run every frame, so\n"
+      "    audio and timers are unaffected. Auto raises the\n"
+      "    target when a frame misses 60 Hz (as VBA-M does).\n"
+      "  - Adds a headless export tool (frames 60/300/600 to PNG\n"
+      "    plus a stereo WAV) built from the same core.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {
