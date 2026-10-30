@@ -135,9 +135,47 @@ def build(out, timer_period=380, cnt_h=0x0304, table_words=8):
     make_rom(a.resolve(0x08000100), out)
 
 
+def build_psg(out, nr21=0x80, nr22=0xF1, freq=0x7C0):
+    """Synthetic PSG square-channel test (the menu "blip").
+
+    Channel 2 is triggered with a decreasing envelope, which is exactly what
+    Pokemon writes for its menu cursor sound.  Nothing else runs, so the
+    captured PCM is a pure square wave whose amplitude must decay from the
+    initial volume to zero over `step` ticks of the 512 Hz frame sequencer.
+    """
+    a = Asm()
+    a.L('start')
+    a.adr(2, 'pool')
+    a.ldr(0, 2, 4*0)              # r0 = 0x04000000 (IO base)
+
+    pool = [0x04000000]
+    i_sx = len(pool); pool.append(0x0080)   # SOUNDCNT_X: master on
+    i_sl = len(pool); pool.append(0xFF77)   # SOUNDCNT_L: max vol, all ch both sides
+    i_sh = len(pool); pool.append(0x0002)   # SOUNDCNT_H: PSG 100%
+    i_n21 = len(pool); pool.append((nr22 << 8) | nr21)  # NR21|NR22 at 0x068
+    i_n24 = len(pool); pool.append(freq | 0x8000)       # NR23/NR24 + trigger
+
+    a.ldr(1, 2, 4*i_sx);  a.strh(1, 0, 0x84)
+    a.ldr(1, 2, 4*i_sl);  a.strh(1, 0, 0x80)
+    a.ldr(1, 2, 4*i_sh);  a.strh(1, 0, 0x82)
+    a.ldr(1, 2, 4*i_n21); a.strh(1, 0, 0x68)   # duty + length + volume + envelope
+    a.ldr(1, 2, 4*i_n24); a.strh(1, 0, 0x6C)   # frequency + trigger
+    a.L('loop')
+    a.b('loop')
+    a.L('pool')
+    a.pool(*pool)
+    make_rom(a.resolve(0x08000100), out)
+
+
 if __name__ == "__main__":
-    out = sys.argv[1] if len(sys.argv) > 1 else "/workspace/BA/tmp_ds.gba"
-    tp = int(sys.argv[2]) if len(sys.argv) > 2 else 380
-    ch = int(sys.argv[3], 0) if len(sys.argv) > 3 else 0x0304
-    tw = int(sys.argv[4]) if len(sys.argv) > 4 else 8
-    build(out, tp, ch, tw)
+    if len(sys.argv) > 1 and sys.argv[1] == "psg":
+        out = sys.argv[2] if len(sys.argv) > 2 else "/workspace/BA/tmp_psg.gba"
+        nr22 = int(sys.argv[3], 0) if len(sys.argv) > 3 else 0xF1
+        freq = int(sys.argv[4], 0) if len(sys.argv) > 4 else 0x7C0
+        build_psg(out, nr22=nr22, freq=freq)
+    else:
+        out = sys.argv[1] if len(sys.argv) > 1 else "/workspace/BA/tmp_ds.gba"
+        tp = int(sys.argv[2]) if len(sys.argv) > 2 else 380
+        ch = int(sys.argv[3], 0) if len(sys.argv) > 3 else 0x0304
+        tw = int(sys.argv[4]) if len(sys.argv) > 4 else 8
+        build(out, tp, ch, tw)

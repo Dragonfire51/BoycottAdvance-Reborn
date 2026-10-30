@@ -518,19 +518,28 @@ static void gen_sample(GBA *g, int16_t *outl, int16_t *outr) {
     if (r > 511) r = 511;
     if (r < -512) r = -512;
 
-    /* Filtro paso alto (~28 Hz): quita el DC de PSG/FIFO como el condensador de
-       salida.  El estado va en Q8 (valor real * 256): con el estado sin escalar,
-       `y -= y>>8` es cero mientras |y|<256, el filtro degenera en un acumulador
-       y el DC se queda en la salida (tono unipolar, min=0 en vez de +-n).
-       La ganancia final es x48, la misma que mGBA en GBAAudioSample
-       (`sample * masterVolume(0x100) * 3 >> 4`).  Con x64 la salida quedaba un
-       33% por encima de la referencia (RMS 2531 vs 2032 en Pokemon Esmeralda,
-       y un 31% de mas en el test PSG sintetico). */
+    /* Salida: clamp por SOUNDBIAS (mGBA _applyBias).  El hardware mezcla los
+       canales en un nodo con la polarizacion de SOUNDBIAS y el ADC recorta a la
+       resolucion configurada; el DAC/condensador de salida quita el nivel
+       continuo.  Emular eso como un filtro paso alto digital era un error: el
+       filtro que habia (polo 255/256) no filtraba el DC (|y| < 256 hacia
+       `y -= y>>8` cero y degeneraba en acumulador), pero si diferenciaba la
+       senal, con una ganancia de ~1000 a la frecuencia de la onda cuadrada.  El
+       ataque de cada nota se hundia y decaia a lo largo de la nota, asi que el
+       "clic" del menu sonaba apagado y con cola (amplitud 5856-6192 con la
+       envolvente decreciente, frente a 5760 constante en mGBA).
+
+       Ahora se replica el clamp de mGBA: sumar la polarizacion de SOUNDBIAS,
+       recortar a la resolucion del ADC y restar la polarizacion, que deja la
+       salida centrada en 0 y a escala identica a la referencia
+       (x48 = 0x100 * 3 >> 4). */
     int32_t in[2] = { l, r }, o[2];
+    int bias = (a->bias & 0x3FF);
     for (int k = 0; k < 2; k++) {
-        a->hp_y[k] = ((in[k] - a->hp_x[k]) << 8) + a->hp_y[k] - a->hp_y[k] / 256;
-        a->hp_x[k] = in[k];
-        int32_t y = a->hp_y[k] / 256 * 48;
+        int32_t s = in[k] + bias;
+        if (s >= 0x400) s = 0x3FF;
+        else if (s < 0) s = 0;
+        int32_t y = (s - bias) * 48;
         if (y > 32767) y = 32767;
         if (y < -32768) y = -32768;
         o[k] = y;

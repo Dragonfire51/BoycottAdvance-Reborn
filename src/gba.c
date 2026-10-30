@@ -354,7 +354,7 @@ int gba_save_state(GBA *g, const char *path) {
     size_t n = 0;
     /* store header */
     memcpy(buf+n, "BARS", 4); n += 4;
-    buf[n++] = 3;   /* version */
+    buf[n++] = 4;   /* version */
     /* CPU */
     memcpy(buf+n, &g->cpu, sizeof(g->cpu)); n += sizeof(g->cpu);
     memcpy(buf+n, &g->cst, sizeof(g->cst)); n += sizeof(g->cst);
@@ -397,7 +397,7 @@ int gba_load_state(GBA *g, const char *path) {
     if (memcmp(buf+n, "BARS", 4) != 0) return -1;
     n += 4;
     int ver = buf[n++];
-    if (ver != 3) return -1;
+    if (ver != 4) return -1;
     size_t cpu_sz = sizeof(g->cpu);
     if (n + cpu_sz > got) return -1;
     memcpy(&g->cpu, buf+n, cpu_sz); n += cpu_sz;
