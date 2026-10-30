@@ -1118,3 +1118,37 @@ sea el de mGBA se manifiesta como distorsion del ataque, no como cambio de
 nivel, asi que comparar solo el RMS no lo detecta: hay que comparar la
 **envolvente** (amplitud pico a pico por bloque de ~1 ms) contra mGBA.
 
+## Video: el blending NO es la causa de la divergencia de la intro (2026-10-15)
+
+Comparando Pokemon Esmeralda con mGBA (BIOS real, `NOFASTBOOT=1`) la pantalla
+diverge a partir del frame **53** (~1.1% de pixeles). Se comprobo que **no** es
+un problema de efectos especiales ni de mezcla:
+
+- `winh`, `winv`, `winin`, `winout`, `mosaic`, `bldcnt` y `bldalpha` son
+  **identicos** a mGBA en los frames 1-60 (comparados con `REGLOG=1` en los dos
+  emuladores). No hay ningun frame con diferencia.
+- El OBJ 1D/2D (DISPCNT bit 6) esta implementado en `render_obj` y no explica
+  la diferencia.
+
+**Metodo de comparacion** (util para futuras divergencias):
+1. `BIOS=<bios> NOFASTBOOT=1 /tmp/hh <rom> <n> shot /tmp/o.ppm` (el harness usa
+   fastboot por defecto; hay que desactivarlo para que coincida con el default
+   real del app).
+2. `BIOS=<bios> /tmp/mgbah <rom> <n> /dev/null /tmp/r.ppm` y comparar.
+3. Para estado: `DUMPDIR=<dir> ... dump` en el nuestro y `DUMPDIR` en mGBA,
+   luego comparar vram/pal/oam byte a byte. En el frame 54 la **VRAM es
+   identica**, y difieren 30 bytes de OAM y 33 de paleta.
+4. Para descartar desfase de fase: comparar nuestro frame N contra los frames
+   N-3..N+3 de mGBA. Si el minimo no baja, no es un desfase.
+
+**Ojo con los falsos positivos**: un "match exacto" de OAM contra un frame
+concreto de mGBA puede ser coincidencia de ciclo de animacion (se encontro uno
+en f53 vs f56 que no se sostiene al mirar la pantalla). Hay que confirmar
+siempre con el diff de la pantalla completa, no solo con OAM/paleta.
+
+**Conclusion**: la divergencia restante nace en el estado/timing de la CPU
+(la VRAM de tiles coincide, pero la OAM y la paleta ya estan mal), no en el
+pipeline de render. Siguiente paso: localizar la primera escritura divergente a
+OAM/paleta (watchpoint sobre 0x07000000 y 0x05000000) comparando con mGBA,
+prioritariamente contra VBA-M como pide el proyecto.
+
