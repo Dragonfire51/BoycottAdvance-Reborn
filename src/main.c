@@ -34,6 +34,7 @@
 #define AUDIO_FREQ     44100
 #define AUDIO_CHANNELS 2
 #define MENUBAR_H      18
+#define GBA_FRAME_MS   16.7427   /* 59.7275 Hz, used by frame-skip auto */
 #define MAX_KEYS       12
 
 /* keypad bit order: A B Select Start Right Left Up Down R L (active low) */
@@ -691,6 +692,8 @@ int main(int argc, char **argv) {
 
     int running = 1; uint32_t last = SDL_GetTicks(), fps_t = last;
     int fps_n = 0; float fps = 0;
+    int skipc = 0;
+    double last_frame_ms = 0;
 
     while (running) {
         if (gui_active && gui_native_quit_requested()) running = 0;
@@ -763,6 +766,18 @@ int main(int argc, char **argv) {
             gba_apply_cheats(g);
         }
 
+        /* Frame skip: the CPU/PPU/APU above always run; only compose+present,
+           the expensive blit, is skipped.  Never skip while a dialog is open,
+           so the ROM picker and input capture stay responsive. */
+        int show_frame = 1;
+        if (!g_paused && g->rom_size > 0 && !dialog_kind
+            && (cfg.frameskip > 0 || cfg.autoframeskip)) {
+            int target = cfg.frameskip;
+            if (cfg.autoframeskip && last_frame_ms > GBA_FRAME_MS && target < 5) target++;
+            if (++skipc <= target) show_frame = 0; else skipc = 0;
+        }
+
+        if (show_frame) {
         /* (Re)create the framebuffer and, if the backend changed, the presenter. */
         int dw, dh; SDL_GetWindowSize(win, &dw, &dh);
         if (dw < 1) dw = 1;
@@ -843,8 +858,10 @@ int main(int argc, char **argv) {
         }
 
         vid_present(video, fb.px, fb.w, fb.h);
+        }
 
         uint32_t now = SDL_GetTicks();
+        last_frame_ms = (double)(now - last);
         if (cfg.autothrottle && !g_paused && !(cfg.sound_enable && g_adev)) {
             /* No audio device to pace against: fall back to a wall-clock delay.
              * 16.7427 ms = 59.7275 Hz; re-read the clock after the delay so
