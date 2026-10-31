@@ -33,8 +33,29 @@ int main(int argc, char **argv) {
 
     const char* pcmmon = getenv("PCMON");
     FILE* pmf = pcmmon ? fopen(pcmmon, "w") : NULL;
+    /* SEQDIR=<dir>[:stride]: write every Nth frame as a PPM (RGB) so the run
+       can be assembled into a video/GIF of the intro. */
+    const char* seqdir = getenv("SEQDIR");
+    int seqstride = 1;
+    if (seqdir) { const char* colon = strchr(seqdir, ':'); if (colon) seqstride = atoi(colon + 1); }
     for (int f = 0; f < nframes; f++) {
         gba_run_frame(g);
+        if (seqdir && (f % seqstride) == 0) {
+            char sp[600];
+            int n = (int)(strchr(seqdir, ':') ? strchr(seqdir, ':') - seqdir : (long)strlen(seqdir));
+            snprintf(sp, sizeof(sp), "%.*s/frame_%05d.ppm", n, seqdir, f);
+            FILE* sf = fopen(sp, "wb");
+            if (sf) {
+                fprintf(sf, "P6\n240 160\n255\n");
+                for (int i = 0; i < SCREEN_W * SCREEN_H; i++) {
+                    uint16_t c = g->ppu.frame[i];
+                    uint8_t r = (uint8_t)((c & 0x1F) << 3), gg = (uint8_t)(((c >> 5) & 0x1F) << 3), b = (uint8_t)(((c >> 10) & 0x1F) << 3);
+                    unsigned char rgb[3] = { (unsigned char)(r | (r >> 5)), (unsigned char)(gg | (gg >> 5)), (unsigned char)(b | (b >> 5)) };
+                    fwrite(rgb, 1, 3, sf);
+                }
+                fclose(sf);
+            }
+        }
         if (pmf) fprintf(pmf, "f%d pc=%08X\n", f, g->cpu.r[15]);
         if (pcm) {
             int16_t buf[4096];
