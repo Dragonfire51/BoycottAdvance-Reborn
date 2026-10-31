@@ -91,10 +91,21 @@ typedef struct {
 } Audio;
 static Audio g_audio;
 
-/* Fill a fragment from the APU (or silence when sound is off). */
+/* Fill a fragment from the APU.  With the throttle off the emulation runs far
+ * ahead of real time, so the ring fills much faster than the device drains it;
+ * rather than muting (or letting it overflow) we decimate to the newest
+ * fragment, so the sound keeps playing - fast and compressed, like other
+ * fast-forward implementations - which is what players expect during long
+ * intros. */
 static void audio_fill(int16_t *dst) {
-    if (cfg.sound_enable && g && cfg.autothrottle) {
-        apu_mix(g, dst, AUDIO_SAMPLES);
+    if (cfg.sound_enable && g) {
+        if (cfg.autothrottle) {
+            apu_mix(g, dst, AUDIO_SAMPLES);
+        } else {
+            int n = apu_drain_latest(dst, AUDIO_SAMPLES);
+            if (n < AUDIO_SAMPLES)
+                memset(dst + n * 2, 0, (size_t)(AUDIO_SAMPLES - n) * 2 * sizeof(int16_t));
+        }
         if (cfg.reverse_stereo)
             for (int i = 0; i < AUDIO_SAMPLES; i++) {
                 int16_t l = dst[i*2];
@@ -102,9 +113,7 @@ static void audio_fill(int16_t *dst) {
                 dst[i*2+1] = l;
             }
     } else {
-        /* Muted, or fast-forwarding (autothrottle off): the emulation runs far
-           ahead of real time, so drop whatever the APU produced (otherwise the
-           ring overflows and the mixer emits garbage) and output silence. */
+        /* Sound disabled: drop whatever the APU produced and output silence. */
         while (apu_drain(dst, AUDIO_SAMPLES) > 0) { /* discard */ }
         memset(dst, 0, (size_t)AUDIO_SAMPLES * 2 * sizeof(int16_t));
     }
@@ -205,20 +214,46 @@ static uint16_t key_state(void) {
  * the install directory is read-only (Program Files) we fall back to the
  * working directory so the settings still persist. */
 static const char *ini_cwd_path(void) { return "boycottadvance-reborn.ini"; }
-static const char *ini_path(void) {
-    static char path[MAX_PATH];
+/* Directory of the running executable, with a trailing backslash ("" if it
+   cannot be determined).  Data files (the INI, the BIOS dump) live next to the
+   EXE, not in whatever directory the process happened to be started from. */
+static const char *exe_dir(void) {
+    static char dir[MAX_PATH];
     static int resolved = 0;
     if (!resolved) {
         char exe[MAX_PATH];
         DWORD n = GetModuleFileNameA(NULL, exe, sizeof exe);
         resolved = 1;
+        dir[0] = 0;
         if (n > 0 && n < sizeof exe) {
             char *slash = strrchr(exe, '\\');
             if (slash) slash[1] = 0; else exe[0] = 0;
-            snprintf(path, sizeof path, "%sboycottadvance-reborn.ini", exe);
-        } else {
-            snprintf(path, sizeof path, "%s", ini_cwd_path());
+            snprintf(dir, sizeof dir, "%s", exe);
         }
+    }
+    return dir;
+}
+
+/* Resolve a data file: keep a relative path only when it really exists in the
+   current directory, otherwise look next to the EXE.  Without this the BIOS
+   dump is dropped whenever the CWD differs from the EXE directory (a shortcut,
+   a file association, a drag-and-drop), and the core silently falls back to the
+   HLE fast boot, which renders the intro differently. */
+static void resolve_asset(const char *name, char *out, size_t n) {
+    FILE *f = fopen(name, "rb");
+    if (f) { fclose(f); snprintf(out, n, "%s", name); return; }
+    snprintf(out, n, "%s%s", exe_dir(), name);
+}
+
+static const char *ini_path(void) {
+    static char path[MAX_PATH];
+    static int resolved = 0;
+    if (!resolved) {
+        resolved = 1;
+        if (exe_dir()[0])
+            snprintf(path, sizeof path, "%sboycottadvance-reborn.ini", exe_dir());
+        else
+            snprintf(path, sizeof path, "%s", ini_cwd_path());
     }
     return path;
 }
@@ -384,14 +419,16 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Frame Skip is now honoured: the INI keys and the\n"
-      "    menu entries were read but never used, so the option\n"
-      "    did nothing. Only the blit (compose+present) is\n"
-      "    skipped; the CPU/PPU/APU still run every frame, so\n"
-      "    audio and timers are unaffected. Auto raises the\n"
-      "    target when a frame misses 60 Hz (as VBA-M does).\n"
-      "  - Adds a headless export tool (frames 60/300/600 to PNG\n"
-      "    plus a stereo WAV) built from the same core.";
+      "  - Sound now keeps playing when 'Speedup Throttle' is\n"
+      "    off (fast-forward): the audio ring is decimated to\n"
+      "    its newest window instead of being muted, so long\n"
+      "    intros stay audible while the game runs fast.\n"
+      "  - HBlank IRQ served 6 cycles after the line boundary\n"
+      "    (matches mGBA, verified against hardware) so tight\n"
+      "    per-scanline raster handlers are timed correctly.\n"
+      "    DMA timing unchanged; frame clock stays exact.\n"
+      "  - The BIOS dump is now also looked up next to the\n"
+      "    executable, not only in the working directory.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {
@@ -760,7 +797,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     g = (GBA *)calloc(1, sizeof(GBA));
     if (!g) { MessageBoxA(NULL, "Not enough memory for the emulator core.", GBA_NAME, MB_OK|MB_ICONERROR); return 1; }
     gba_init(g);
-    gba_load_bios(g, "gba_bios.bin");
+    { char biospath[MAX_PATH]; resolve_asset("gba_bios.bin", biospath, sizeof biospath);
+      gba_load_bios(g, biospath); }
     g->bios_enabled = cfg.biosenable; g->bios_fastboot = cfg.biosfastboot;
     g->skip_intros = cfg.skipintros;
     g->frameskip = cfg.frameskip;

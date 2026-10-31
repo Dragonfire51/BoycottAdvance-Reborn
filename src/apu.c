@@ -111,6 +111,29 @@ int apu_drain(int16_t *stream, int maxframes) {
     return n;
 }
 
+/* Decimate the ring down to the newest nframes samples, so audio keeps playing
+ * (compressed, instead of muted) while the emulator fast-forwards.  Used when
+ * the emulation runs far ahead of real time: the ring fills much faster than
+ * the device drains it, so taking the most recent window keeps the sound
+ * roughly in sync without an ever-growing latency. */
+int apu_drain_latest(int16_t *stream, int maxframes) {
+    unsigned w = atomic_load_explicit(&ring_w, memory_order_acquire);
+    unsigned rd = atomic_load_explicit(&ring_r, memory_order_relaxed);
+    unsigned avail = w - rd;
+    if (avail > RING_FRAMES) { rd = w - RING_FRAMES; avail = RING_FRAMES; }
+    unsigned take = (avail > (unsigned)maxframes) ? (unsigned)maxframes : avail;
+    unsigned start = w - take;              /* keep the newest `take` frames */
+    int n = 0;
+    for (unsigned i = 0; i < take; i++) {
+        unsigned idx = (start + i) & (RING_FRAMES - 1);
+        stream[n * 2]     = ring[idx * 2];
+        stream[n * 2 + 1] = ring[idx * 2 + 1];
+        n++;
+    }
+    atomic_store_explicit(&ring_r, w, memory_order_release);
+    return n;
+}
+
 void apu_open(void) { }
 void apu_close(void) { }
 

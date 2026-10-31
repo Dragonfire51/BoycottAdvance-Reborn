@@ -322,11 +322,24 @@ static void run_frame_core(GBA *g) {
            siguiente (efectos de HDMA como Pokédex / transiciones). */
         g->ppu.dispstat |= 0x0002;
         g->ppu.hblank = true;
-        if (g->ppu.dispstat & 0x0010) g->if_reg |= IF_HBLANK;
         if (line < 160) dma_trigger(g, 2);          /* HBlank-scheduled DMA */
         uint32_t hb_end = base + (uint32_t)(line + 1) * line_cycles;
         uint32_t seg1 = g->cycle;
-        int hb_budget = (int)(hb_end - seg1);
+        /* GBATEK does not pin down the exact margin; mGBA
+           (src/gba/video.c _startHblank, "GBARaiseIRQ(..., cyclesLate - 6)",
+           verified against hardware) serves the HBlank IRQ 6 cycles after the
+           nominal line boundary, not at it.  A tight HBlank handler that
+           rewrites registers per scanline (the shimmer/distorsion effects of
+           the Pokemon/Fire Emblem intros) reads its registers one scanline too
+           early without the margin.  The DMA is not delayed: only the IRQ. */
+        uint32_t irq_at = seg1 + 6;
+        if (irq_at > hb_end) irq_at = hb_end;
+        int pre_budget = (int)(irq_at - seg1);
+        if (pre_budget < 0) pre_budget = 0;
+        io_update_timers(g, (uint32_t)pre_budget);
+        arm_execute(g, (uint32_t)pre_budget);
+        if (g->ppu.dispstat & 0x0010) g->if_reg |= IF_HBLANK;
+        int hb_budget = (int)(hb_end - g->cycle);
         if (hb_budget < 0) hb_budget = 0;
         io_update_timers(g, (uint32_t)hb_budget);
         arm_execute(g, (uint32_t)hb_budget);

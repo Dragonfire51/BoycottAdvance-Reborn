@@ -142,6 +142,18 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.25** - audio during fast-forward, plus a timing refinement. **Audio with
+  the throttle off**: switching "Speedup Throttle" off used to mute the sound
+  (the emulation runs far ahead of real time, so the mixer dropped every sample
+  to stop the ring overflowing). The sound now keeps playing: the ring is
+  decimated to its newest window (`apu_drain_latest`), so long intros are still
+  audible while the game runs fast. **HBlank IRQ margin**: the HBlank interrupt
+  is now served 6 cycles after the nominal line boundary, matching mGBA
+  (`src/gba/video.c _startHblank`, "GBARaiseIRQ(..., cyclesLate - 6)"). Without
+  the margin a tight HBlank handler (per-scanline raster effects) reads its
+  registers one scanline early. The DMA is not delayed, only the IRQ; the frame
+  clock stays exact at 280896 cycles. Both BIOS boot paths now resolve
+  `gba_bios.bin` next to the executable, not only in the working directory.
 - **v1.4.24** - **Frame Skip is honoured**. The `FrameSkip` / `AutoFrameSkip`
   INI keys and the Frame Skip menu entries were read and stored but never
   consulted by the render loop, so the option did nothing. Only the blit

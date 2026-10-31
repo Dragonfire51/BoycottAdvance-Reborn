@@ -9,6 +9,7 @@
  */
 #include "gba.h"
 #include "mem.h"
+#include <stdio.h>
 
 #define TRANS 0x8000u            /* marker: transparent pixel in a layer buffer */
 
@@ -421,6 +422,39 @@ void ppu_render_line(GBA *g, int y) {
         render_objs(g, y);
         composite_line(g, y);
     }
+#ifdef PPUDBG
+    /* One-shot runtime capture requested by the reviewer: on the first
+       "noisy" scanline of a frame (many colour transitions across the line),
+       print the affine-BG state so it can be told whether the glitch is a
+       runaway zoom (pa/pc absurd -> reads VRAM almost at random, which looks
+       exactly like TV static) or a wrap/overflow of sx,sy.  Also reports how
+       many pixels each layer contributes, to name the offending layer. */
+    {
+        static int dumped = 0;
+        if (y == 0) dumped = 0;
+        if (!dumped && !(dc & 0x0080)) {
+            /* "Noise" detector: a scanline whose pixels change colour on
+               almost every step (a still image is flat/blocky). */
+            int trans = 0;
+            for (int x = 1; x < SCREEN_W; x++) if (dst[x] != dst[x - 1]) trans++;
+            if (trans >= 150) {
+                int nb[4] = {0,0,0,0}, nobj = 0;
+                for (int x = 0; x < SCREEN_W; x++) {
+                    for (int b = 0; b < 4; b++) if (lb.bg[b][x] != TRANS) nb[b]++;
+                    if (lb.obj[x] != TRANS) nobj++;
+                }
+                dumped = 1;
+                fprintf(stderr,
+                    "PPUDBG f=%d y=%d mode=%d dc=%04X bg2cnt=%04X pa=%d pc=%d "
+                    "refx=%d refy=%d wrap=%d trans=%d bg=%d,%d,%d,%d obj=%d\n",
+                    (int)g->frame_count, y, dc & 7, dc, p->bgcnt[2],
+                    p->pa[0], p->pc[0], p->refx[0] >> 8, p->refy[0] >> 8,
+                    (p->bgcnt[2] >> 13) & 1, trans,
+                    nb[0], nb[1], nb[2], nb[3], nobj);
+            }
+        }
+    }
+#endif
     for (int i = 0; i < 2; i++) {
         p->refx[i] += p->pb[i];
         p->refy[i] += p->pd[i];

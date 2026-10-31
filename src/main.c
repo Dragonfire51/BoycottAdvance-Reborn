@@ -29,6 +29,7 @@
 #  include <dirent.h>
 #  include <sys/stat.h>
 #include <limits.h>
+#include <unistd.h>
 #endif
 
 #define AUDIO_FREQ     44100
@@ -151,15 +152,21 @@ static void audio_cb(void *ud, Uint8 *stream, int len) {
     GBA *gg = (GBA *)ud;
     int16_t *out = (int16_t *)stream;
     int n = len / 2 / AUDIO_CHANNELS;
-    if (!cfg.sound_enable || !cfg.autothrottle) {
-        /* Muted, or fast-forwarding (autothrottle off): the emulation runs far
-           ahead of real time, so discard produced samples and emit silence
-           rather than let the ring overflow into garbage. */
+    if (!cfg.sound_enable) {
+        /* Sound disabled: discard produced samples and emit silence. */
         while (apu_drain(out, n) > 0) { /* discard */ }
         memset(stream, 0, len);
         return;
     }
-    apu_mix(gg, out, n);
+    if (cfg.autothrottle) {
+        apu_mix(gg, out, n);
+    } else {
+        /* Fast-forwarding (autothrottle off): the ring fills far faster than
+           the device drains it, so decimate to the newest window and keep
+           playing (fast, compressed) instead of muting. */
+        int got = apu_drain_latest(out, n);
+        if (got < n) memset(out + got * 2, 0, (size_t)(n - got) * 2 * sizeof(int16_t));
+    }
     if (cfg.reverse_stereo)
         for (int i = 0; i < n; i++) { int16_t l = out[i*2]; out[i*2] = out[i*2+1]; out[i*2+1] = l; }
 }
@@ -413,14 +420,16 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Frame Skip is now honoured: the INI keys and the\n"
-      "    menu entries were read but never used, so the option\n"
-      "    did nothing. Only the blit (compose+present) is\n"
-      "    skipped; the CPU/PPU/APU still run every frame, so\n"
-      "    audio and timers are unaffected. Auto raises the\n"
-      "    target when a frame misses 60 Hz (as VBA-M does).\n"
-      "  - Adds a headless export tool (frames 60/300/600 to PNG\n"
-      "    plus a stereo WAV) built from the same core.");
+      "  - Sound now keeps playing when 'Speedup Throttle' is\n"
+      "    off (fast-forward): the audio ring is decimated to\n"
+      "    its newest window instead of being muted, so long\n"
+      "    intros stay audible while the game runs fast.\n"
+      "  - HBlank IRQ served 6 cycles after the line boundary\n"
+      "    (matches mGBA, verified against hardware) so tight\n"
+      "    per-scanline raster handlers are timed correctly.\n"
+      "    DMA timing unchanged; frame clock stays exact.\n"
+      "  - The BIOS dump is now also looked up next to the\n"
+      "    executable, not only in the working directory.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",
@@ -619,6 +628,27 @@ static void draw_menubar(FB *fb) {
 }
 
 /* ------------------------------------------------------------------- main */
+/* Resolve a data file (the BIOS dump) next to the executable, not in whatever
+   directory the process happened to be started from; keep a relative path when
+   it exists in the CWD. Mirrors the native frontend (win32.c). */
+static void resolve_asset(const char *name, char *out, size_t n) {
+    FILE *f = fopen(name, "rb");
+    if (f) { fclose(f); snprintf(out, n, "%s", name); return; }
+    char exe[PATH_MAX];
+#ifdef _WIN32
+    DWORD got = GetModuleFileNameA(NULL, exe, sizeof exe);
+    if (got > 0 && got < sizeof exe) {
+        char *slash = strrchr(exe, '\\');
+        if (slash) slash[1] = 0; else exe[0] = 0;
+    } else exe[0] = 0;
+#else
+    ssize_t got = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    if (got > 0) { exe[got] = 0; char *slash = strrchr(exe, '/'); if (slash) slash[1] = 0; }
+    else exe[0] = 0;
+#endif
+    snprintf(out, n, "%s%s", exe, name);
+}
+
 int main(int argc, char **argv) {
     const char *rom_arg = NULL;
     cfg_load("boycottadvance-reborn.ini");        /* defaults first */
@@ -637,7 +667,8 @@ int main(int argc, char **argv) {
     if (!g) { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, GBA_NAME,
         "Not enough memory for the emulator core.", NULL); SDL_Quit(); return 1; }
     gba_init(g);
-    gba_load_bios(g, "gba_bios.bin");
+    { char biospath[PATH_MAX]; resolve_asset("gba_bios.bin", biospath, sizeof biospath);
+      gba_load_bios(g, biospath); }
     g->bios_enabled = cfg.biosenable; g->bios_fastboot = cfg.biosfastboot;
     g->skip_intros = cfg.skipintros;
     g->frameskip = cfg.frameskip;
