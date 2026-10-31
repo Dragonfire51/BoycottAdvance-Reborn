@@ -370,17 +370,19 @@ static void io_write16_impl(GBA *g, uint32_t addr, uint16_t v) {
     case 0x03E: p->bgy[1] = sext28(((uint32_t)p->bgy[1] & 0xFFFFu) | ((uint32_t)(v & 0x0FFF) << 16)); p->refy[1] = p->bgy[1]; return;
     /* ventanas / mosaic / blend (GBATEK: WIN0H 0x40, WIN1H 0x42, WIN0V 0x44,
        WIN1V 0x46, WININ 0x48, WINOUT 0x4A, MOSAIC 0x4C, BLDCNT 0x50) */
-    case 0x040: case 0x042: {   /* WIN0H/WIN1H: X2>240 o X1>X2 => X2=240 (GBATEK) */
+    case 0x040: case 0x042: {   /* WIN0H/WIN1H (GBATEK "LCD I/O Window Feature") */
         int w = (reg == 0x040) ? 0 : 1;
         uint8_t x2 = v & 0xFF, x1 = (v >> 8) & 0xFF;
-        if (x2 > 240 || x1 > x2) x2 = 240;
+        /* X2>240 reads back as 240.  X1>X2 is NOT collapsed: the window wraps
+           (see composite_line); only the >240 clamp is applied here. */
+        if (x2 > 240) x2 = 240;
         p->winh[w] = (uint16_t)((x1 << 8) | x2);
         return;
     }
-    case 0x044: case 0x046: {   /* WIN0V/WIN1V: Y2>160 o Y1>Y2 => Y2=160 (GBATEK) */
+    case 0x044: case 0x046: {   /* WIN0V/WIN1V */
         int w = (reg == 0x044) ? 0 : 1;
         uint8_t y2 = v & 0xFF, y1 = (v >> 8) & 0xFF;
-        if (y2 > 160 || y1 > y2) y2 = 160;
+        if (y2 > 160) y2 = 160;
         p->winv[w] = (uint16_t)((y1 << 8) | y2);
         return;
     }

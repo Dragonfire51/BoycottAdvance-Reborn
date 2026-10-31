@@ -321,6 +321,13 @@ static uint16_t fade(uint16_t c, int evy, bool up) {
     return out;
 }
 
+/* Window horizontal membership.  A range whose end is not greater than its
+   start wraps around the right edge (GBATEK "LCD I/O Window Feature" calls
+   X1>X2 garbage but mGBA/VBA-M both wrap), so test the two segments. */
+static bool in_win_x(int x, int x1, int x2) {
+    return (x1 <= x2) ? (x >= x1 && x < x2) : (x >= x1 || x < x2);
+}
+
 /* ---- windows + priority resolution + blending ----------------------------- */
 static void composite_line(GBA *g, int y) {
     Ppu *p = &g->ppu;
@@ -332,10 +339,16 @@ static void composite_line(GBA *g, int y) {
     for (int w = 0; w < 2; w++) {
         int x1 = p->winh[w] >> 8, x2 = p->winh[w] & 0xFF;
         int y1 = p->winv[w] >> 8, y2 = p->winv[w] & 0xFF;
-        if (x2 > 240 || x1 > x2) x2 = 240;           /* GBATEK: garbage -> 240 / 160 */
-        if (y2 > 160 || y1 > y2) y2 = 160;
+        /* GBATEK "LCD I/O Window Feature" reads X2>240 as 240 and Y2>160 as
+           160, but a range whose end precedes its start wraps around the edge
+           instead of collapsing: mGBA _breakWindow splits X1>X2 into
+           [0,X2)+[X1,240) and VBA-M CPUUpdateWindow0 tests (i>=x1 || i<x2).
+           Clamping X2 to 240 for the X1>X2 case lost the wrapped part. */
+        if (x2 > 240) x2 = 240;
+        if (y2 > 160) y2 = 160;
         wx1[w] = x1; wx2[w] = x2;
-        wy[w] = (dc & (0x2000 << w)) && y >= y1 && y < y2;
+        wy[w] = (dc & (0x2000 << w)) && ((y1 <= y2) ? (y >= y1 && y < y2)
+                                                   : (y >= y1 || y < y2));
     }
     uint8_t win_ctl[2] = { (uint8_t)(p->winin & 0x3F), (uint8_t)((p->winin >> 8) & 0x3F) };
     uint8_t out_ctl = (uint8_t)(p->winout & 0x3F);
@@ -351,8 +364,8 @@ static void composite_line(GBA *g, int y) {
     for (int x = 0; x < SCREEN_W; x++) {
         uint8_t m = 0x3F;                            /* bits 0-3 BG, 4 OBJ, 5 effects */
         if (anywin) {
-            if      (wy[0] && x >= wx1[0] && x < wx2[0])        m = win_ctl[0];
-            else if (wy[1] && x >= wx1[1] && x < wx2[1])        m = win_ctl[1];
+            if      (wy[0] && in_win_x(x, wx1[0], wx2[0]))      m = win_ctl[0];
+            else if (wy[1] && in_win_x(x, wx1[1], wx2[1]))      m = win_ctl[1];
             else if ((dc & 0x8000) && lb.obj_win[x])            m = obj_ctl;
             else                                                m = out_ctl;
         }
