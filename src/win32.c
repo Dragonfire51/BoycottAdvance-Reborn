@@ -20,6 +20,7 @@
 #include "video.h"
 #include "icon.h"
 #include "gui.h"
+#include "export.h"
 #include "uiactions.h"
 #include <windows.h>
 #include <mmsystem.h>
@@ -781,17 +782,42 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
         LPWSTR w = GetCommandLineW();
         int argc = 0; LPWSTR *argv = CommandLineToArgvW(w, &argc);
         static char romarg[512]; romarg[0] = 0;
+        static char exp_dir[512], exp_pngs[128];
+        int exp_frames = 0; double exp_wav = 0; int do_export = 0;
         for (int i = 1; i < argc; i++) {
             if (argv[i][0] == L'-') {
                 if (!_wcsicmp(argv[i], L"-sound")) cfg.sound_enable = 1;
                 else if (!_wcsicmp(argv[i], L"-bios")) cfg.biosenable = 1;
                 else if (!_wcsicmp(argv[i], L"-fastboot")) cfg.biosfastboot = 1;
+                else if (!_wcsicmp(argv[i], L"-export") && i + 4 < argc) {
+                    WideCharToMultiByte(CP_UTF8, 0, argv[++i], -1, exp_dir, sizeof exp_dir, NULL, NULL);
+                    exp_frames = _wtoi(argv[++i]);
+                    WideCharToMultiByte(CP_UTF8, 0, argv[++i], -1, exp_pngs, sizeof exp_pngs, NULL, NULL);
+                    exp_wav = _wtof(argv[++i]);
+                    do_export = 1;
+                }
             } else {
                 WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, romarg, sizeof romarg, NULL, NULL);
                 rom_arg = romarg;
             }
         }
         LocalFree(argv);
+
+        if (do_export) {
+            int pngs[32], npng = 0;
+            const char *p = exp_pngs;
+            while (*p && npng < 32) {
+                char *end; long v = strtol(p, &end, 10);
+                if (end == p) break;
+                pngs[npng++] = (int)v;
+                p = (*end == ',') ? end + 1 : end;
+            }
+            if (!rom_arg) return 2;
+            char biospath[MAX_PATH];
+            resolve_asset("gba_bios.bin", biospath, sizeof biospath);
+            const char *bios = GetFileAttributesA(biospath) != INVALID_FILE_ATTRIBUTES ? biospath : NULL;
+            return export_run(rom_arg, bios, exp_dir, exp_frames, pngs, npng, exp_wav);
+        }
     }
 
     g = (GBA *)calloc(1, sizeof(GBA));

@@ -15,6 +15,7 @@
 #include "video.h"
 #include "icon.h"
 #include "gui.h"
+#include "export.h"
 #include "uiactions.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_syswm.h>
@@ -652,12 +653,38 @@ static void resolve_asset(const char *name, char *out, size_t n) {
 int main(int argc, char **argv) {
     const char *rom_arg = NULL;
     cfg_load("boycottadvance-reborn.ini");        /* defaults first */
+    /* -export <outdir> <frames> <f1,f2,...> <wavsec>: headless evidence run
+       (PNG screenshots + WAV) from the same core code as this build, with no
+       window or audio device.  Handled before SDL is initialised. */
+    const char *exp_dir = NULL, *exp_pngs = NULL;
+    int exp_frames = 0; double exp_wav = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i],"-help")) { printf("Options: -help -autosave -sound -bios -fastboot [rom]\n"); return 0; }
         else if (!strcmp(argv[i],"-sound")) cfg.sound_enable = 1;
         else if (!strcmp(argv[i],"-bios")) cfg.biosenable = 1;
         else if (!strcmp(argv[i],"-fastboot")) cfg.biosfastboot = 1;
+        else if (!strcmp(argv[i],"-export") && i + 4 < argc) {
+            exp_dir = argv[++i]; exp_frames = atoi(argv[++i]);
+            exp_pngs = argv[++i]; exp_wav = atof(argv[++i]);
+        }
         else if (argv[i][0] != '-') rom_arg = argv[i];
+    }
+
+    if (exp_dir) {
+        int pngs[32], npng = 0;
+        const char *p = exp_pngs;
+        while (*p && npng < 32) {
+            char *end; long v = strtol(p, &end, 10);
+            if (end == p) break;
+            pngs[npng++] = (int)v;
+            p = (*end == ',') ? end + 1 : end;
+        }
+        if (!rom_arg) { fprintf(stderr, "-export needs a ROM\n"); return 2; }
+        char biospath[PATH_MAX]; resolve_asset("gba_bios.bin", biospath, sizeof biospath);
+        FILE *bt = fopen(biospath, "rb");
+        const char *bios = NULL;
+        if (bt) { fclose(bt); bios = biospath; }
+        return export_run(rom_arg, bios, exp_dir, exp_frames, pngs, npng, exp_wav);
     }
 
     if (SDL_Init(SDL_INIT_VIDEO|SDL_INIT_AUDIO|SDL_INIT_GAMECONTROLLER) < 0) {

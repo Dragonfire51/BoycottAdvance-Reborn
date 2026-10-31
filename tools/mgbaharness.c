@@ -35,6 +35,10 @@ int main(int argc, char** argv) {
     mCoreConfigInit(&core->config, "core");
     const char* skipbios = getenv("SKIPBIOS");
     if (skipbios) mCoreConfigSetValue(&core->config, "skipBios", skipbios);
+    /* mGBA defaults to IDLE_LOOP_REMOVE, which skips idle loops and breaks the
+       cycle-accuracy tests; use the faithful "ignore" for comparisons. */
+    mCoreConfigSetValue(&core->config, "idleOptimization", "ignore");
+    core->loadConfig(core, &core->config);
 
     static mColor fb[240 * 160];
     if (core->setVideoBuffer) {

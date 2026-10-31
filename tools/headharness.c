@@ -20,6 +20,7 @@ int main(int argc, char **argv) {
     const char *cmd = argv[3];
 
     GBA *g = calloc(1, sizeof(GBA));
+    gba_init(g);
     if (!gba_load_rom(g, rom)) { fprintf(stderr, "load fail\n"); return 1; }
     const char *bios = getenv("BIOS");
     if (bios) gba_load_bios(g, bios);
