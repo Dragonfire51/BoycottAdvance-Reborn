@@ -423,6 +423,22 @@ void ppu_render_line(GBA *g, int y) {
         composite_line(g, y);
     }
 #ifdef PPUDBG
+    /* Affine-BG animation trace (reviewer request): log BG2's matrix and
+       reference at a fixed scanline across a frame window, WITHOUT the noise
+       filter, to tell an intentional focus/dissolve effect (pa ramps toward
+       0x100) from a runaway/never-updated pa (stuck at e.g. 0x2000 = scale x32,
+       which samples the tilemap pseudo-randomly and looks like TV static). */
+    if (y == 72 && (dc & 7) == 1) {
+        static int n = 0;
+        if (g->frame_count >= 2655 && g->frame_count <= 2685 && n < 40) {
+            n++;
+            fprintf(stderr, "AFFDBG f=%d pa=%d pb=%d pc=%d pd=%d refx=%d refy=%d bg2cnt=%04X\n",
+                    (int)g->frame_count, p->pa[0], p->pb[0], p->pc[0], p->pd[0],
+                    p->refx[0] >> 8, p->refy[0] >> 8, p->bgcnt[2]);
+        }
+    }
+#endif
+#ifdef PPUDBG
     /* One-shot runtime capture requested by the reviewer: on the first
        "noisy" scanline of a frame (many colour transitions across the line),
        print the affine-BG state so it can be told whether the glitch is a
