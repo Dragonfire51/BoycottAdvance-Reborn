@@ -261,6 +261,11 @@ typedef struct GBA {
     uint32_t cycle;               /* absolute cycle counter (16.78MHz) */
     uint32_t frame_base;          /* ideal start cycle of the current frame (PPU clock) */
 
+    /* ---- serial (SIO) normal mode (GBATEK "SIO Normal Mode") ---------- */
+    uint16_t sio_cnt;             /* SIOCNT: bit 7 = start/busy, bit 14 = IRQ */
+    uint32_t sio_data;            /* SIODATA8 (0x12A) / SIODATA32 (0x120/0x122) */
+    uint32_t sio_deadline;        /* absolute cycle when the transfer completes */
+
     /* ---- bus: region waitstates + GamePak prefetch buffer ----------------
        GBATEK "Memory Map" / "GamePak Prefetch".  Indexed by the top nibble of
        the address (region).  ns = first (non-sequential) access, s = following

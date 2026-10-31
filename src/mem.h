@@ -24,6 +24,7 @@ void io_write16(GBA *g, uint32_t addr, uint16_t v);
 uint16_t io_read16(GBA *g, uint32_t addr);
 void io_update_timers(GBA *g, uint32_t cycles);
 void io_trigger_keypad(GBA *g, uint32_t cycles);
+void sio_update(GBA *g, uint32_t cycles);   /* SIO normal-mode transfer completion */
 void dma_run(GBA *g, int ch);
 void dma_trigger(GBA *g, int timing);
 void dma_fifo_request(GBA *g, int fifo);   /* timing 3: sound FIFO A (0) / B (1) */

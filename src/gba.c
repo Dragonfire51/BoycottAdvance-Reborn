@@ -123,6 +123,7 @@ void gba_reset(GBA *g) {
        with the IRQ bit set (0x6003).  Our HLE fast boot left it at zero, which
        a title that polls SIOCNT (link menus, some save routines) can see. */
     g->io[0x128] = 0x03; g->io[0x129] = 0x60;
+    g->sio_cnt = 0x6003; g->sio_data = 0; g->sio_deadline = 0;
     /* Point the IRQ vector at the BIOS default handler, as the real BIOS does.
        Only meaningful when a BIOS image is mapped: with fast boot and no dump
        the BIOS region reads as zero, so an interrupt taken before the game
@@ -314,6 +315,7 @@ static void run_frame_core(GBA *g) {
         if (vis_budget < 0) vis_budget = 0;
         io_update_timers(g, (uint32_t)vis_budget);
         arm_execute(g, (uint32_t)vis_budget);
+        sio_update(g, 0);
         apu_step(g, g->cycle - seg0);
         if (line < 160) ppu_render_line(g, line);
 
@@ -343,6 +345,7 @@ static void run_frame_core(GBA *g) {
         if (hb_budget < 0) hb_budget = 0;
         io_update_timers(g, (uint32_t)hb_budget);
         arm_execute(g, (uint32_t)hb_budget);
+        sio_update(g, 0);
         apu_step(g, g->cycle - seg1);
     }
     g->ppu.vcount = 0;
@@ -388,7 +391,7 @@ int gba_save_state(GBA *g, const char *path) {
     size_t n = 0;
     /* store header */
     memcpy(buf+n, "BARS", 4); n += 4;
-    buf[n++] = 5;   /* version */
+    buf[n++] = 6;   /* version */
     /* CPU */
     memcpy(buf+n, &g->cpu, sizeof(g->cpu)); n += sizeof(g->cpu);
     memcpy(buf+n, &g->cst, sizeof(g->cst)); n += sizeof(g->cst);
@@ -406,6 +409,9 @@ int gba_save_state(GBA *g, const char *path) {
     memcpy(buf+n, &g->ie, sizeof(g->ie)); n += sizeof(g->ie);
     memcpy(buf+n, &g->if_reg, sizeof(g->if_reg)); n += sizeof(g->if_reg);
     memcpy(buf+n, &g->ime, sizeof(g->ime)); n += sizeof(g->ime);
+    memcpy(buf+n, &g->sio_cnt, sizeof(g->sio_cnt)); n += sizeof(g->sio_cnt);
+    memcpy(buf+n, &g->sio_data, sizeof(g->sio_data)); n += sizeof(g->sio_data);
+    memcpy(buf+n, &g->sio_deadline, sizeof(g->sio_deadline)); n += sizeof(g->sio_deadline);
     memcpy(buf+n, &g->ppu, sizeof(g->ppu)); n += sizeof(g->ppu);
     memcpy(buf+n, &g->timer, sizeof(g->timer)); n += sizeof(g->timer);
     memcpy(buf+n, &g->dma, sizeof(g->dma)); n += sizeof(g->dma);
@@ -432,7 +438,7 @@ int gba_load_state(GBA *g, const char *path) {
     if (memcmp(buf+n, "BARS", 4) != 0) return -1;
     n += 4;
     int ver = buf[n++];
-    if (ver != 5) return -1;
+    if (ver != 6) return -1;
     size_t cpu_sz = sizeof(g->cpu);
     if (n + cpu_sz > got) return -1;
     memcpy(&g->cpu, buf+n, cpu_sz); n += cpu_sz;
@@ -453,6 +459,9 @@ int gba_load_state(GBA *g, const char *path) {
     memcpy(&g->ie, buf+n, sizeof(g->ie)); n += sizeof(g->ie);
     memcpy(&g->if_reg, buf+n, sizeof(g->if_reg)); n += sizeof(g->if_reg);
     memcpy(&g->ime, buf+n, sizeof(g->ime)); n += sizeof(g->ime);
+    memcpy(&g->sio_cnt, buf+n, sizeof(g->sio_cnt)); n += sizeof(g->sio_cnt);
+    memcpy(&g->sio_data, buf+n, sizeof(g->sio_data)); n += sizeof(g->sio_data);
+    memcpy(&g->sio_deadline, buf+n, sizeof(g->sio_deadline)); n += sizeof(g->sio_deadline);
     memcpy(&g->ppu, buf+n, sizeof(g->ppu)); n += sizeof(g->ppu);
     memcpy(&g->timer, buf+n, sizeof(g->timer)); n += sizeof(g->timer);
     memcpy(&g->dma, buf+n, sizeof(g->dma)); n += sizeof(g->dma);

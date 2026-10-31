@@ -835,8 +835,10 @@ static void thumb_exec_at(GBA *g, uint16_t insn) {
         int cc = (insn >> 8) & 0xF;
         if (cc == 0xE) { set_pc(g, next); add_cycles(g, 1); return; }   /* condicion 1110: indefinida */
         int32_t off = (int8_t)(insn & 0xFF);
-        set_pc(g, cond_holds(cpsr, (uint32_t)cc) ? (r15(g) + 4 + (uint32_t)(off * 2)) : next);
-        add_cycles(g, 2); return;
+        bool taken = cond_holds(cpsr, (uint32_t)cc);
+        set_pc(g, taken ? (r15(g) + 4 + (uint32_t)(off * 2)) : next);
+        /* GBATEK THUMB.16: 2S+1N si se salta, 1S si no. */
+        add_cycles(g, taken ? 3 : 1); return;
     }
 
     /* formato 18: salto incondicional (1110) */
@@ -877,6 +879,19 @@ void thumb_exec(GBA *g) {
 void arm_execute(GBA *g, uint32_t max_cycles) {
     uint32_t start = g->cycle;
     while (g->cycle - start < max_cycles) {
+        /* SIO normal-mode transfer: complete it at its exact deadline, not at
+           the segment boundary, so the serial IRQ and the halt wake land on
+           the right cycle (a test that reads TM0CNT_L in the handler sees the
+           transfer time, GBATEK "4000128h - SIOCNT"). */
+        if (g->sio_cnt & 0x0080) {
+            if ((int32_t)(g->cycle - g->sio_deadline) >= 0) {
+                sio_update(g, 0);
+            } else if (g->cst.halt) {
+                uint32_t budget_left = max_cycles - (g->cycle - start);
+                uint32_t until = g->sio_deadline - g->cycle;
+                if (until < budget_left) { g->cycle = g->sio_deadline; sio_update(g, 0); continue; }
+            }
+        }
         /* SWI 04h/05h (IntrWait/VBlankIntrWait): only the awaited IRQ releases
            the halt.  Unrelated IRQs are ignored by the BIOS wait loop, so the
            game handler must not run while we are waiting (GBATEK SWI 04h/05h). */

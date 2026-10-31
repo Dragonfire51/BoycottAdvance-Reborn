@@ -208,6 +208,11 @@ uint16_t io_read16(GBA *g, uint32_t addr) {
     uint32_t reg = addr & 0x3FE;
     Ppu *p = &g->ppu;
 
+    /* La transferencia serie puede haber vencido dentro del segmento actual
+       sin que el bucle de linea la haya drenado todavia; completarla antes de
+       leer evita que SIODATA8 devuelva datos obsoletos (GBATEK). */
+    if (g->sio_cnt & 0x0080) sio_update(g, 0);
+
     /* ---- DMA: 12 bytes por canal (0x0B0, 0x0BC, 0x0C8, 0x0D4).
        GBATEK: SAD/DAD/CNT_L son de solo escritura; solo CNT_H se lee. ---- */
     if (reg >= 0x0B0 && reg <= 0x0DF) {
@@ -410,8 +415,23 @@ static void io_write16_impl(GBA *g, uint32_t addr, uint16_t v) {
         return;
     }
     /* ---- serial / keypad ---- */
-    case 0x120: case 0x122: case 0x128:
+    case 0x120: case 0x122:
         g->io[reg] = v & 0xFF; g->io[reg+1] = v >> 8; return;
+    case 0x128: {
+        /* SIOCNT. Normal mode (bits 12-13 = 0): a 0->1 edge on the start bit
+           (7) with the internal clock starts a transfer. GBATEK "4000128h -
+           SIOCNT" clears the start bit and shifts in the received byte when
+           it finishes, raising the serial IRQ if bit 14 is set. */
+        uint16_t old = (uint16_t)(g->io[0x128] | (g->io[0x129] << 8));
+        g->io[0x128] = v & 0xFF; g->io[0x129] = v >> 8;
+        g->sio_cnt = v;
+        if (!(v & 0x3000) && (v & 0x0080) && !(old & 0x0080)) {
+            int bits = (v & 0x1000) ? 32 : 8;
+            uint32_t hz = (v & 0x0002) ? 2097152u : 262144u;   /* 2MHz / 256kHz */
+            g->sio_deadline = g->cycle + (uint32_t)bits * 16777216u / hz;
+        }
+        return;
+    }
     case 0x130: return;                                   /* KEYINPUT read-only */
     case 0x132: g->io[0x132] = v & 0xFF; g->io[0x133] = v >> 8; return;
     /* ---- interrupts / waitstate ---- */
@@ -546,6 +566,30 @@ void io_update_timers(GBA *g, uint32_t cycles) {
         if (ticks) timer_add(g, i, ticks);
     }
 }
+
+/* SIO normal-mode completion (GBATEK "4000128h - SIOCNT"): when the deadline
+   of an in-flight transfer passes, clear the start bit and latch the byte
+   shifted in from the SI line. With nothing driving the line it reads high
+   (0xFF), which is what a standalone GBA without a link cable receives. The
+   serial IRQ fires if SIOCNT bit 14 was set. */
+void sio_update(GBA *g, uint32_t cycles) {
+    (void)cycles;
+    if (!(g->sio_cnt & 0x0080)) return;
+    if ((int32_t)(g->cycle - g->sio_deadline) < 0) return;
+    if (g->sio_cnt & 0x1000) {                 /* 32-bit normal */
+        g->sio_data = 0xFFFFFFFFu;
+        g->io[0x120] = 0xFF; g->io[0x121] = 0xFF;
+        g->io[0x122] = 0xFF; g->io[0x123] = 0xFF;
+    } else {                                   /* 8-bit normal */
+        g->sio_data = 0xFF;
+        g->io[0x12A] = 0xFF;                   /* bits 8-15 keep the written value */
+    }
+    g->sio_cnt &= ~0x0080;
+    g->io[0x128] = (uint8_t)(g->sio_cnt & 0xFF);
+    g->io[0x129] = (uint8_t)(g->sio_cnt >> 8);
+    if (g->sio_cnt & 0x4000) g->if_reg |= IF_SERIAL;
+}
+
 
 /* KEYCNT: bit 14 = IRQ, bit 15 = 0 OR / 1 AND, bits 0-9 = teclas elegidas.
    key_input es activo en bajo, asi que se invierte para trabajar con "pulsadas". */
