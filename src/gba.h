@@ -152,6 +152,7 @@ typedef struct {
     int word;
     uint32_t src_latch;      /* valores escritos en DMAxSAD / DMAxDAD */
     uint32_t dst_latch;
+    uint16_t cnt_h_raw;      /* DMAxCNT_H enmascarado (bit 11 difiere DMA0-2 vs DMA3) */
 } DmaChan;
 
 /* ---- APU state ----------------------------------------------------------- */

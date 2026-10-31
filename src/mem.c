@@ -214,10 +214,7 @@ uint16_t io_read16(GBA *g, uint32_t addr) {
         int ch = (int)((reg - 0x0B0) / 12);
         if (((reg - 0x0B0) % 12) == 10) {
             DmaChan *d = &g->dma[ch];
-            return (uint16_t)((d->dst_ctl << 5) | (d->src_ctl << 7) |
-                   (d->repeat ? 0x0200 : 0) | (d->word ? 0x0400 : 0) |
-                   (d->timing << 12) | (d->irq_enable ? 0x4000 : 0) |
-                   (d->enabled ? 0x8000 : 0));
+            return (uint16_t)((d->cnt_h_raw & 0x7FFF) | (d->enabled ? 0x8000 : 0));
         }
         return 0;
     }
@@ -255,6 +252,9 @@ uint16_t io_read16(GBA *g, uint32_t addr) {
                           (t->enabled ? 0x80 : 0));
     }
     /* ---- serial / keypad ---- */
+    case 0x136: case 0x142: case 0x15A:
+    case 0x206: case 0x20A: case 0x302:
+        return 0;                                             /* registros no usados (GBATEK) */
     case 0x130: return (uint16_t)(g->key_input & 0x3FF);      /* KEYINPUT (0 = pulsado) */
     case 0x132: return g->io[0x132] | (g->io[0x133] << 8);    /* KEYCNT */
     /* ---- interrupts / waitstate ---- */
@@ -311,6 +311,7 @@ static void io_write16_impl(GBA *g, uint32_t addr, uint16_t v) {
         case 8: d->count = v; return;       /* se enmascara a 14/16 bit al disparar */
         case 10: {
             bool was = d->enabled;
+            d->cnt_h_raw = v & (ch == 3 ? 0xFFE0 : 0xF7E0);   /* GBATEK: bit 11 solo en DMA3 */
             d->dst_ctl = (v >> 5) & 3;
             d->src_ctl = (v >> 7) & 3;
             d->repeat = (v >> 9) & 1;
@@ -337,8 +338,8 @@ static void io_write16_impl(GBA *g, uint32_t addr, uint16_t v) {
     case 0x000: p->dispcnt = v; return;
     case 0x004: p->dispstat = v & 0xFFB8; return;          /* bits 0-2 solo lectura */
     case 0x006: return;                                    /* VCOUNT read-only */
-    case 0x008: p->bgcnt[0] = v; return;
-    case 0x00A: p->bgcnt[1] = v; return;
+    case 0x008: p->bgcnt[0] = v & 0xDFFF; return;   /* bit 13 (Area Overflow) no existe en BG0 */
+    case 0x00A: p->bgcnt[1] = v & 0xDFFF; return;   /* idem BG1 (solo los BGs afines lo usan) */
     case 0x00C: p->bgcnt[2] = v; return;
     case 0x00E: p->bgcnt[3] = v; return;
     case 0x010: p->bghofs[0] = v & 0x1FF; return;
