@@ -23,7 +23,10 @@ def read_ini(d):
             line = line.strip()
             if "=" in line and not line.startswith("["):
                 k, v = line.split("=", 1)
-                cfg[k.strip()] = int(v.strip())
+                try:
+                    cfg[k.strip()] = int(v.strip())
+                except ValueError:
+                    pass  # non-numeric keys (e.g. irq baselines) are ignored
     return cfg
 
 
@@ -55,6 +58,7 @@ def main():
     cfg = read_ini(d)
     pref = "/tmp/cinema_%s" % os.path.basename(d)
     worst = 0
+    last_c = 0
     for i in range(cfg["frames"]):
         f = cfg["skip"] + i
         p = "%s_f%d" % (pref, f)
@@ -67,9 +71,17 @@ def main():
         a = ours(p)
         b = png_rgb(bp)
         c = sum(1 for x, y in zip(a, b) if x != y)
-        worst = max(worst, c)
-        print("  frame %d: diff %d / 38400 (%.2f%%)" % (f, c, 100.0 * c / 38400))
-    print("%s: worst %.2f%%" % (os.path.basename(d), 100.0 * worst / 38400))
+        # mGBA blends in 8-bit and we blend in 5-bit per GBATEK
+        # (I = MIN(31, I1st*EVA + I2nd*EVB)), so a +-1 rounding difference is
+        # not a divergence.  Count those separately from real mismatches.
+        r = sum(1 for x, y in zip(a, b)
+                if any(abs(x[k] - y[k]) > 1 for k in range(3)))
+        worst = max(worst, r)
+        last_c = c
+        print("  frame %d: diff %d / 38400 (%.2f%%), of which >1/channel: %d"
+              % (f, c, 100.0 * c / 38400, r))
+    print("%s: worst %.2f%% (real), %.2f%% (exact)"
+          % (os.path.basename(d), 100.0 * worst / 38400, 100.0 * last_c / 38400))
 
 
 main()
