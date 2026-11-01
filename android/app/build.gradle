@@ -1,0 +1,54 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.boycottadvance.reborn'
+    compileSdk 34
+    ndkVersion '26.1.10909125'
+
+    defaultConfig {
+        applicationId "com.boycottadvance.reborn"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "1.4.28"
+        externalNativeBuild {
+            cmake {
+                cppFlags "-std=c99"
+            }
+        }
+        ndk {
+            // Native emulator core: build for the usual phone ABIs.
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+}
+
+dependencies {
+    // Everything uses the Android framework directly (no appcompat needed).
+}

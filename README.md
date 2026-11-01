@@ -127,6 +127,34 @@ The `.deb` needs `dpkg-deb` (from `dpkg`); the `.rpm` is built only when
 its `gba_bios.bin` under `/usr/lib/boycottadvance-reborn/`, a launcher symlink
 in `/usr/bin`, a desktop entry and a 32x32 icon.
 
+### Android
+
+The Android port reuses the same C99 emulation core; only the frontend and
+the video/audio backends are new (OpenGL ES 2.0 for video, `AudioTrack` for
+sound, a native touch-control overlay and the app's own file browser).
+
+```sh
+cd android
+./gradlew assembleDebug      # -> app/build/outputs/apk/debug/app-debug.apk
+```
+
+Requirements: JDK 17+, the Android SDK with `platforms;android-34`,
+`build-tools;34.0.0`, `ndk;26.1.10909125` and `cmake;3.22.1`. Point
+`android/local.properties` at your SDK (`sdk.dir=...`). The APK ships the
+`arm64-v8a`, `armeabi-v7a` and `x86_64` ABIs.
+
+The port has the same features as the desktop builds (ROM and BIOS loading
+through its own file browser, reset, ten savestate slots, sound toggles,
+scanline/smoothing, fast-forward, ROM info) and adds on-screen GBA controls:
+a D-pad, A/B, L/R and SELECT/START, all multi-touch. ROMs and BIOS images
+are picked with the in-app browser, which starts in the app's folder, the
+shared storage or `Download`.
+
+The JNI layer is verified without a device: `tools/android_jni_test.sh`
+compiles the very same `jni_bridge.c` for the desktop, loads it from a JVM
+and checks that the frame it produces is **bit-identical** to the desktop
+build's output for the same ROM.
+
 ### Running
 
 ```sh
@@ -156,6 +184,18 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 `P` pause, `F1` about, `F9` history, `F11` fullscreen, `Esc` quit.
 
 ## Version history
+
+- **v1.4.28** - Android port.
+  A working **Android app** built from the same C99 emulation core. The core
+  is untouched; the port adds a portable frontend wrapper (`acore.c`, the
+  settings/ROM/state/audio glue shared with the desktop), a JNI bridge, an
+  OpenGL ES 2.0 video backend, `AudioTrack` sound, the app's **own file
+  browser** for picking ROMs and BIOS images, and **on-screen GBA controls**
+  (D-pad, A/B, L/R, SELECT/START, multi-touch). The APK ships the
+  `arm64-v8a`, `armeabi-v7a` and `x86_64` ABIs. CI builds it
+  (`.github/workflows/android-apk.yml`) and a JNI parity check
+  (`tools/android_jni_test.sh`) proves the Android path drives a
+  **bit-identical** frame to the desktop build.
 
 - **v1.4.27** - Linux packages and an Android port study.
   **`make packages`** builds distributable **`.deb`** and **`.rpm`** packages

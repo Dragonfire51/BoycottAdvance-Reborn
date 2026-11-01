@@ -21,3 +21,6 @@ __pycache__/
 dist/
 rec/
 .openhands/
+
+# savestate slots written by the emulator
+*.ss[0-9]

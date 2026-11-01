@@ -1,0 +1,57 @@
+name: android-apk
+
+# Builds the Android APK (all ABIs) and runs the JNI parity check that proves
+# the Android port drives the same emulation core as the desktop builds.
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'android/**'
+      - 'src/**'
+      - 'tools/android_jni_test.sh'
+      - 'tools/acore_test.c'
+      - '.github/workflows/android-apk.yml'
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'src/**'
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0 ndk;26.1.10909125 cmake;3.22.1'
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Verify the APK contains the native libraries
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          unzip -l "$APK" | grep -E 'lib/(arm64-v8a|armeabi-v7a|x86_64)/libboycottadvance.so'
+
+      - name: JNI parity check (desktop JVM)
+        run: |
+          # No ROM is committed, so generate nothing: this check only needs the
+          # JNI layer to link and load. It uses a tiny synthetic ROM.
+          python3 tools/gen_android_smoke.py /tmp/smoke.gba
+          sh tools/android_jni_test.sh /tmp/smoke.gba -
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: boycottadvance-reborn-android
+          path: android/app/build/outputs/apk/debug/app-debug.apk

@@ -1,25 +1,47 @@
-# Evaluación del port a Android
+# Port a Android
 
-Documento de viabilidad del port de BoycottAdvance Reborn a Android. No es
-una guía de port terminada: es un análisis del código actual (v1.4.26),
-del trabajo que falta y de los riesgos, para decidir si se aborda.
+Estado: **implementado** (v1.4.28). Este documento empezó como estudio de
+viabilidad (v1.4.26) y ahora describe el port real. El núcleo no cambió:
+el port es un frontend nuevo sobre el mismo C99.
 
 ## 1. Resumen
 
-El port es **viable y de coste moderado**. La razón es que el proyecto ya
-está separado en dos capas con una frontera limpia:
+El port es **viable y de coste moderado**, y así se ha hecho. La razón es
+que el proyecto ya estaba separado en dos capas con una frontera limpia:
 
 - Un **núcleo de emulación** en C99 puro, sin dependencias de plataforma.
 - Una **capa de presentación** por plataforma: SDL2 (Linux/macOS), Win32
-  nativo (GDI/Direct3D9/WinMM), y una composición de UI en software
-  (`fb.c`) que ya es independiente del backend de vídeo.
+  nativo (GDI/Direct3D9/WinMM), y ahora Android (OpenGL ES 2.0 + AudioTrack).
 
 Android es, desde el punto de vista del código, una plataforma más: se
-añade un frontend (Android NDK + Java/Kotlin de arranque) que use el mismo
-núcleo y un backend de vídeo/audio nuevo. No hay que reescribir el
-emulador.
+añadió un frontend (Android NDK + Java) que usa el mismo núcleo y un
+backend de vídeo/audio nuevo. No hubo que reescribir el emulador.
 
-## 2. Estado actual del código (evidencia)
+## 1.1 Lo que se construyó (v1.4.28)
+
+| Pieza | Archivos | Notas |
+|---|---|---|
+| Wrapper portable del frontend | `android/app/src/main/cpp/acore.{c,h}` | Ajustes, carga ROM/BIOS, estados, audio, conversión ARGB. **Sin dependencias de SO.** Compartido con el test de escritorio. |
+| Puente JNI | `android/app/src/main/cpp/jni_bridge.c` | Traduce las llamadas Java a `acore`. Compila también en Linux para probarlo en una JVM. |
+| Vídeo | `GbaRenderer.java` | OpenGL ES 2.0; textura 240x160, aspecto 3:2 con barras negras, GL_NEAREST (GL_LINEAR si se activa el suavizado). |
+| Audio | `EmulatorThread.java` | `AudioTrack` en modo stream; el dispositivo es el reloj (bloquea en `write`), igual que los frontends de escritorio. |
+| Controles táctiles | `TouchControlsView.java` | D-pad (zona circular con zona muerta), A/B, L/R, SELECT/START; multitáctil. |
+| Explorador de archivos propio | `FilePickerActivity.java` | Árbol de directorios, modos ROM (.gba/.zip/.7z) y BIOS (.bin/.rom/.gba), arranca en la carpeta de la app / almacenamiento / Download. |
+| Actividad principal | `MainActivity.java` | Barra superior, menú, reinicio, 10 ranuras de estado, toggles de sonido/scanline/suavizado, fast-forward, info de ROM. |
+| Build | `android/app/src/main/cpp/CMakeLists.txt`, `build.gradle` | CMake vía NDK; ABIs `arm64-v8a`, `armeabi-v7a`, `x86_64`. |
+
+## 1.2 Verificación
+
+Sin dispositivo no se puede "ver" la pantalla, así que la prueba es dura y
+reproducible: `tools/android_jni_test.sh` compila **el mismo**
+`jni_bridge.c` + `acore.c` + núcleo para Linux, carga la `.so` desde una JVM
+real y compara el CRC del frame que produce con el de la ruta de escritorio
+(`tools/acore_test.c`). Resultado: **bit-idéntico** (mismo CRC para el mismo
+ROM y mismo número de frames), y el número de muestras PCM coincide
+exactamente (735 por frame). El CI además compila el APK y verifica que
+contiene las tres ABIs.
+
+## 2. Estado del código del núcleo (evidencia)
 
 | Componente | Archivos | Dependencias de plataforma |
 |---|---|---|

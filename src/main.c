@@ -421,13 +421,14 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Linux packages: 'make packages' builds a .deb\n"
-      "    and (if rpmbuild is present) a .rpm of the Linux\n"
-      "    frontend. Both ship the binary and gba_bios.bin\n"
-      "    under /usr/lib/boycottadvance-reborn/, a launcher\n"
-      "    in /usr/bin, a desktop entry and a 32x32 icon.\n"
-      "  - docs/android-port.md: feasibility study for an\n"
-      "    Android port (clean core, SDL2 or NDK frontend).");
+      "  - Android port: a working app built from the\n"
+      "    same C99 core. OpenGL ES 2.0 video, AudioTrack\n"
+      "    sound, its own ROM/BIOS file browser and\n"
+      "    on-screen GBA controls (D-pad, A/B, L/R,\n"
+      "    SELECT/START, multi-touch). APK for arm64-v8a,\n"
+      "    armeabi-v7a and x86_64. CI builds it and a JNI\n"
+      "    parity check proves a bit-identical frame.\n"
+      "  - Desktop builds unchanged (Linux/Windows).");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",
