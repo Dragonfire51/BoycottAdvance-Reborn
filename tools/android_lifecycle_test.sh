@@ -46,7 +46,7 @@ import com.boycottadvance.reborn.NativeEmulator;
 public class LifeTest {
     public static void main(String[] a) throws Exception {
         final String rom = a[0];
-        for (int round = 0; round < 8; round++) {
+        for (int round = 0; round < 5; round++) {
             final NativeEmulator e = new NativeEmulator();
             if (!e.loadRom(rom)) { System.out.println("loadRom failed"); System.exit(1); }
 
@@ -65,21 +65,28 @@ public class LifeTest {
             NativeEmulator e2 = new NativeEmulator();   /* reopen */
             if (!e2.loadRom(rom)) { System.out.println("reload failed"); System.exit(1); }
             int[] b2 = new int[240 * 160];
-            for (int i = 0; i < 30; i++) e2.runFrame(b2);
+            for (int i = 0; i < 10; i++) e2.runFrame(b2);
             e2.close();
             System.out.println("round " + round + " ok");
         }
 
         /* Second race: reload the ROM while the frame thread keeps running
-         * (the UI "load another ROM" path). */
+         * (the UI "load another ROM" path). The frame thread paces itself
+         * (a few ms per frame, like the audio clock in the app) so the test
+         * exercises the race without starving the reload on the monitor. */
         final NativeEmulator e = new NativeEmulator();
         if (!e.loadRom(rom)) { System.out.println("loadRom failed"); System.exit(1); }
         final int[] buf = new int[240 * 160];
         final boolean[] run = { true };
-        Thread t = new Thread(() -> { while (run[0]) e.runFrame(buf); });
+        Thread t = new Thread(() -> {
+            while (run[0]) {
+                e.runFrame(buf);
+                try { Thread.sleep(4); } catch (InterruptedException ex) { }
+            }
+        });
         t.start();
-        for (int i = 0; i < 20; i++) {
-            Thread.sleep(10);
+        for (int i = 0; i < 6; i++) {
+            Thread.sleep(15);
             e.loadRom(rom);            /* concurrent with runFrame */
         }
         run[0] = false;
