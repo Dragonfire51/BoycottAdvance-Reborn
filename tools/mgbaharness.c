@@ -82,7 +82,32 @@ int main(int argc, char** argv) {
     if (seqdir) { colon2 = strchr(seqdir, ':'); if (colon2) seqstride = atoi(colon2 + 1); }
     int startf = getenv("STARTF") ? atoi(getenv("STARTF")) : 0;
     for (int f = 0; f < startf; f++) core->runFrame(core);
+    /* KEYS="START@950:5,A@1100:5": same script syntax as our -keys, applied
+       through core->setKeys so both emulators see identical input. */
+    const char* keyscript = getenv("KEYS");
+    static uint16_t kmask[60000];
+    if (keyscript) {
+        char buf[8192]; strncpy(buf, keyscript, sizeof buf - 1); buf[sizeof buf - 1] = 0;
+        char* tok = strtok(buf, ",");
+        while (tok) {
+            char* at = strchr(tok, '@');
+            if (at) {
+                *at = 0;
+                int bit = -1;
+                if (!strcmp(tok,"A")) bit=0; else if(!strcmp(tok,"B")) bit=1;
+                else if(!strcmp(tok,"SELECT")) bit=2; else if(!strcmp(tok,"START")) bit=3;
+                else if(!strcmp(tok,"RIGHT")) bit=4; else if(!strcmp(tok,"LEFT")) bit=5;
+                else if(!strcmp(tok,"UP")) bit=6; else if(!strcmp(tok,"DOWN")) bit=7;
+                else if(!strcmp(tok,"R")) bit=8; else if(!strcmp(tok,"L")) bit=9;
+                char* e; long fr = strtol(at+1, &e, 10); long hd = 8;
+                if (*e == ':') hd = strtol(e+1, &e, 10);
+                if (bit >= 0) for (long k = fr; k < fr+hd && k < 60000; k++) kmask[k] |= (1u<<bit);
+            }
+            tok = strtok(NULL, ",");
+        }
+    }
     for (int f = startf; f < nframes; f++) {
+        if (core->setKeys) core->setKeys(core, kmask[f]);
         core->runFrame(core);
         if (seqdir && core->getPixels && ((f - startf) % seqstride) == 0) {
             const void* pix; size_t stride;

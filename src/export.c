@@ -130,11 +130,45 @@ static void wav_header(FILE *f, uint32_t data_bytes) {
     fwrite("data", 1, 4, f); fwrite(&data_bytes, 4, 1, f);
 }
 
+/* Keypad bit order matches KP_* in main.c / KEYINPUT (active low). */
+static uint16_t key_bit(const char *name, int len) {
+    struct { const char *n; int b; } t[] = {
+        {"A",0},{"B",1},{"SELECT",2},{"START",3},{"RIGHT",4},{"LEFT",5},
+        {"UP",6},{"DOWN",7},{"R",8},{"L",9},
+    };
+    for (size_t i = 0; i < sizeof t / sizeof t[0]; i++)
+        if ((int)strlen(t[i].n) == len && !strncmp(name, t[i].n, (size_t)len))
+            return (uint16_t)(1u << t[i].b);
+    return 0;
+}
+
+/* Parses a key script into per-frame hold masks.  Returns a malloc'd array of
+ * `frames+1` masks (1-based, index f = keys held while frame f is emulated). */
+static uint16_t *parse_keys(const char *script, int frames) {
+    uint16_t *mask = calloc((size_t)frames + 1, sizeof(uint16_t));
+    if (!mask || !script) return mask;
+    const char *p = script;
+    while (*p) {
+        const char *at = strchr(p, '@');
+        if (!at) break;
+        uint16_t bit = key_bit(p, (int)(at - p));
+        char *end; long fr = strtol(at + 1, &end, 10);
+        long hold = 8;
+        if (*end == ':') hold = strtol(end + 1, &end, 10);
+        if (hold < 1) hold = 1;
+        if (bit && fr >= 1)
+            for (long f = fr; f < fr + hold && f <= frames; f++) mask[f] |= bit;
+        p = (*end == ',') ? end + 1 : end;
+    }
+    return mask;
+}
+
 /* Sequence export for video assembly: one PNG per frame (frame_000000.png
  * ...) plus a WAV of the whole run.  Uses write_png so the frames come from
- * exactly the same core as the interactive build. */
+ * exactly the same core as the interactive build.  keys (may be NULL) is a
+ * script of button presses, see export.h. */
 int export_video(const char *rom, const char *bios, const char *outdir,
-                 int frames) {
+                 int frames, const char *keys) {
     GBA *g = calloc(1, sizeof(GBA));
     if (!g) return 1;
     gba_init(g);
@@ -144,6 +178,8 @@ int export_video(const char *rom, const char *bios, const char *outdir,
     if (!gba_load_rom(g, rom)) { fprintf(stderr, "export: cannot load %s\n", rom); free(g); return 1; }
     gba_reset(g);
 
+    uint16_t *kmask = parse_keys(keys, frames);
+
     char path[1024];
     snprintf(path, sizeof path, "%s/audio.wav", outdir);
     FILE *wav = fopen(path, "wb");
@@ -151,6 +187,8 @@ int export_video(const char *rom, const char *bios, const char *outdir,
     if (wav) wav_header(wav, 0);
 
     for (int f = 1; f <= frames; f++) {
+        /* KEYINPUT is active low: bit set = released, cleared = pressed. */
+        gba_update_keypad(g, (uint16_t)(0x03FFu & ~(kmask ? kmask[f] : 0)));
         gba_run_frame(g);
         snprintf(path, sizeof path, "%s/frame_%06d.png", outdir, f - 1);
         write_png(path, g->ppu.frame);
@@ -168,6 +206,7 @@ int export_video(const char *rom, const char *bios, const char *outdir,
         fclose(wav);
     }
     fprintf(stderr, "export_video: %d frames, %u bytes PCM\n", frames, wav_bytes);
+    free(kmask);
     free(g);
     return 0;
 }

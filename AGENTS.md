@@ -1278,3 +1278,34 @@ Comparado el modelo de ciclos del DMA, que era la otra mitad del encargo:
 Conclusion: el modelo de DMA ya era correcto; la unica discrepancia real de
 timing encontrada es el limite de HBlank 960 -> 1008.
 
+
+## 2026-11-01: grabacion headless con entrada (-keys)
+
+Se anadio soporte de guion de teclas al modo headless para poder grabar
+gameplay (no solo intros estaticas):
+
+- `src/export.c`/`export.h`: `export_video()` acepta ahora un `keys` opcional.
+  Sintaxis `NAME@FRAME[:HOLD]` separada por comas (A B SELECT START RIGHT LEFT
+  UP DOWN R L; FRAME 1-based, HOLD por defecto 8). El parser construye una
+  mascara por frame y llama a `gba_update_keypad()` antes de cada
+  `gba_run_frame()` (KEYINPUT activo en bajo).
+- `src/main.c`: nuevo flag `-keys "<guion>"` para `-video`.
+- `tools/mgbaharness.c`: variable de entorno `KEYS` con la misma sintaxis,
+  aplicada via `core->setKeys()` (GBA_KEY_A=0..GBA_KEY_L=9), para comparar los
+  dos emuladores con la MISMA entrada.
+
+Uso:
+```
+./boycottadvance-reborn -video <dir> 5400 -keys "START@950:5" "<rom>"
+ffmpeg -y -framerate 60 -i <dir>/frame_%06d.png -i <dir>/audio.wav \
+  -vf scale=960:640:flags=neighbor -c:v libx264 -crf 18 -pix_fmt yuv420p \
+  -c:a aac -b:a 128k -shortest -movflags +faststart out.mp4
+```
+
+Medabots AX Rokusho: `START@950:5` entra al menu y al gameplay; la transicion de
+DISPCNT nuestra (`1002@10, 9802@120, 0000@270, 0140@290, 3140@860, 3F40@1250/2590`)
+coincide con mGBA con los mismos inputs. Con BIOS real la demo del attract llega
+al gameplay en f1250 sin input.
+
+Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
+(releases `video-esmeralda-90s` y `video-medabots-90s`).

@@ -19,8 +19,16 @@ int export_run(const char *rom, const char *bios, const char *outdir,
                int frames, const int *pngs, int npng, double wavsec);
 
 /* Sequence export for video assembly: one PNG per frame (frame_000000.png
- * ...) plus a WAV of the whole run.  Same core code as export_run. */
+ * ...) plus a WAV of the whole run.  Uses write_png so the frames come from
+ * exactly the same core as the interactive build.
+ *
+ * keys is an optional script of button presses so a recording can drive the
+ * game past menus into gameplay.  Syntax: comma-separated
+ *   NAME@FRAME[:HOLD]
+ * where NAME is one of A B SELECT START RIGHT LEFT UP DOWN R L, FRAME is the
+ * 1-based frame to press it on and HOLD (default 8) is how many frames it is
+ * held.  Example: "START@120,A@400:4,START@600".  NULL disables input. */
 int export_video(const char *rom, const char *bios, const char *outdir,
-                 int frames);
+                 int frames, const char *keys);
 
 #endif

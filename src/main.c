@@ -658,7 +658,7 @@ int main(int argc, char **argv) {
        window or audio device.  Handled before SDL is initialised. */
     const char *exp_dir = NULL, *exp_pngs = NULL;
     int exp_frames = 0; double exp_wav = 0;
-    const char *vid_dir = NULL; int vid_frames = 0;
+    const char *vid_dir = NULL; int vid_frames = 0; const char *vid_keys = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i],"-help")) { printf("Options: -help -autosave -sound -bios -fastboot [rom]\n"); return 0; }
         else if (!strcmp(argv[i],"-sound")) cfg.sound_enable = 1;
@@ -671,6 +671,9 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i],"-video") && i + 2 < argc) {
             vid_dir = argv[++i]; vid_frames = atoi(argv[++i]);
         }
+        else if (!strcmp(argv[i],"-keys") && i + 1 < argc) {
+            vid_keys = argv[++i];
+        }
         else if (argv[i][0] != '-') rom_arg = argv[i];
     }
 
@@ -680,7 +683,7 @@ int main(int argc, char **argv) {
         FILE *bt = fopen(biospath, "rb");
         const char *bios = NULL;
         if (bt) { fclose(bt); bios = biospath; }
-        return export_video(rom_arg, bios, vid_dir, vid_frames);
+        return export_video(rom_arg, bios, vid_dir, vid_frames, vid_keys);
     }
 
     if (exp_dir) {
