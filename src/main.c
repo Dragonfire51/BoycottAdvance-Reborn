@@ -421,20 +421,13 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Graphics fixes (audit vs GBATEK/mGBA/VBA-M):\n"
-      "    * BIOS affine-set (BgAffineSet/ObjAffineSet) used\n"
-      "      a wrong fixed-point shift, turning OBJ affine\n"
-      "      matrices into 0x7FFF and pushing scaled sprites\n"
-      "      off-screen. Restores the 'GAME FREAK presents'\n"
-      "      logo in the Pokemon Emerald intro.\n"
-      "    * CpuFastSet always copies 32-bit words (GBATEK),\n"
-      "      not halfwords. Fixes the Medabots AX palette\n"
-      "      (~12.3% of the screen was wrong; now 0.00%).\n"
-      "    * Window ranges with x1>x2 / y1>y2 wrap around\n"
-      "      the screen edge instead of collapsing.\n"
-      "    * Normal-mode SIO transfers finish on time.\n"
-      "  - New headless capture: -video <dir> <frames>\n"
-      "    [-keys \"...\"] writes PNG frames + a WAV.");
+      "  - Linux packages: 'make packages' builds a .deb\n"
+      "    and (if rpmbuild is present) a .rpm of the Linux\n"
+      "    frontend. Both ship the binary and gba_bios.bin\n"
+      "    under /usr/lib/boycottadvance-reborn/, a launcher\n"
+      "    in /usr/bin, a desktop entry and a 32x32 icon.\n"
+      "  - docs/android-port.md: feasibility study for an\n"
+      "    Android port (clean core, SDL2 or NDK frontend).");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

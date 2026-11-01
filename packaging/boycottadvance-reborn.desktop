@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=BoycottAdvance Reborn
+GenericName=Game Boy Advance Emulator
+Comment=Clean-room Game Boy Advance emulator
+Exec=boycottadvance-reborn %f
+Icon=boycottadvance-reborn
+Terminal=false
+Categories=Game;Emulator;
+MimeType=application/x-gba-rom;
+Keywords=gba;gameboy;emulator;nintendo;

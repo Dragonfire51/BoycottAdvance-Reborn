@@ -21,10 +21,17 @@ jobs:
         run: |
           mkdir -p dist
           cp boycottadvance-reborn dist/boycottadvance-reborn-linux-x86_64
+      - name: Build .deb and .rpm
+        run: |
+          sudo apt-get install -y rpm
+          sh packaging/build-packages.sh
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x86_64
-          path: dist/boycottadvance-reborn-linux-x86_64
+          path: |
+            dist/boycottadvance-reborn-linux-x86_64
+            dist/*.deb
+            dist/*.rpm
 
   windows:
     runs-on: ubuntu-latest
@@ -95,7 +102,7 @@ jobs:
       - name: Source tarball
         run: |
           P=boycottadvance-reborn-${GITHUB_REF_NAME}
-          git archive --format=tar --prefix=$P/ HEAD src Makefile Makefile.win32 README.md .gitignore assets tools \
+          git archive --format=tar --prefix=$P/ HEAD src Makefile Makefile.win32 README.md .gitignore assets tools packaging \
             | gzip -9 > boycottadvance-reborn-${GITHUB_REF_NAME}-src.tar.gz
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -105,5 +112,7 @@ jobs:
             boycottadvance-reborn-macos
             boycottadvance-reborn-win32.zip
             boycottadvance-reborn-win64.zip
+            boycottadvance-reborn_*_amd64.deb
+            boycottadvance-reborn-*.x86_64.rpm
             boycottadvance-reborn-*-src.tar.gz
           generate_release_notes: true

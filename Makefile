@@ -33,4 +33,7 @@ src/icon.res: src/icon.rc assets/icon.ico
 clean:
 	rm -f $(OBJ) boycottadvance-reborn
 
-.PHONY: all clean
+packages: boycottadvance-reborn
+	sh packaging/build-packages.sh
+
+.PHONY: all clean packages

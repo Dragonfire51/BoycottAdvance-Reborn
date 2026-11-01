@@ -112,6 +112,21 @@ make -f Makefile.win32 ARCH=i686       # i686   -> boycottadvance-reborn-i686.ex
 
 On Windows with MSYS2/MinGW: `pacman -S mingw-w64-x86_64-gcc`
 
+### Linux packages (.deb / .rpm)
+
+`make packages` builds distributable packages of the Linux frontend:
+
+```sh
+make packages
+# dist/boycottadvance-reborn_<version>_amd64.deb
+# dist/boycottadvance-reborn-<version>-1.x86_64.rpm
+```
+
+The `.deb` needs `dpkg-deb` (from `dpkg`); the `.rpm` is built only when
+`rpmbuild` is installed, otherwise it is skipped. Both install the binary and
+its `gba_bios.bin` under `/usr/lib/boycottadvance-reborn/`, a launcher symlink
+in `/usr/bin`, a desktop entry and a 32x32 icon.
+
 ### Running
 
 ```sh
@@ -141,6 +156,16 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 `P` pause, `F1` about, `F9` history, `F11` fullscreen, `Esc` quit.
 
 ## Version history
+
+- **v1.4.27** - Linux packages and an Android port study.
+  **`make packages`** builds distributable **`.deb`** and **`.rpm`** packages
+  of the Linux frontend: the binary and its `gba_bios.bin` go under
+  `/usr/lib/boycottadvance-reborn/`, with a launcher symlink in `/usr/bin`,
+  a desktop entry and a 32x32 icon. The `.rpm` is built only when `rpmbuild`
+  is available. CI now builds and publishes both packages with each release.
+  Added **`docs/android-port.md`**, a feasibility study for an Android port:
+  the emulation core is platform-independent C99, so the work is a new
+  frontend/backends, not a core rewrite.
 
 - **v1.4.26** - graphics fixes: several sprite/background glitches were fixed
   after an audit against GBATEK, mGBA and VBA-M.
