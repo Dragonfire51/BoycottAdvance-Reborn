@@ -250,13 +250,13 @@ static void swi_affine_set(GBA *g) {
         aff_angle(theta, &c, &s);                         /* 1.15 each */
 
         /* A = sx*cos,  B = -sx*sin,  C = sy*sin,  D = sy*cos (all 8.8 -> 1.15) */
-        int32_t A = (sx * c) >> 7;                        /* 8.8 * 1.15 = 16.23 -> /256 = A in 8.8 */
-        int32_t B = (-sx * s) >> 7;
-        int32_t C = (sy * s) >> 7;
-        int32_t D = (sy * c) >> 7;
+        int32_t A = (sx * c) >> 15;                       /* 8.8 * 1.15 -> 8.8 */
+        int32_t B = (-sx * s) >> 15;
+        int32_t C = (sy * s) >> 15;
+        int32_t D = (sy * c) >> 15;
 
-        int32_t rx = ox - ((A * cx) >> 8) - ((B * cy) >> 8);
-        int32_t ry = oy - ((C * cx) >> 8) - ((D * cy) >> 8);
+        int32_t rx = ox - A * cx - B * cy;
+        int32_t ry = oy - C * cx - D * cy;
 
         gba_write16(g, dst + 0, (uint16_t)aff_sat16(A));
         gba_write16(g, dst + 2, (uint16_t)aff_sat16(B));
@@ -288,10 +288,10 @@ static void swi_obj_affine_set(GBA *g) {
         int32_t c, s;
         aff_angle(theta, &c, &s);
 
-        int32_t A = (sx * c) >> 7;      /* 8.8 * 1.15 -> 8.8 */
-        int32_t B = (-sx * s) >> 7;
-        int32_t C = (sy * s) >> 7;
-        int32_t D = (sy * c) >> 7;
+        int32_t A = (sx * c) >> 15;     /* 8.8 * 1.15 -> 8.8 */
+        int32_t B = (-sx * s) >> 15;
+        int32_t C = (sy * s) >> 15;
+        int32_t D = (sy * c) >> 15;
 
         gba_write16(g, dst + 0*diff, (uint16_t)aff_sat16(A));
         gba_write16(g, dst + 1*diff, (uint16_t)aff_sat16(B));

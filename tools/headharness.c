@@ -39,9 +39,11 @@ int main(int argc, char **argv) {
     const char* seqdir = getenv("SEQDIR");
     int seqstride = 1;
     if (seqdir) { const char* colon = strchr(seqdir, ':'); if (colon) seqstride = atoi(colon + 1); }
-    for (int f = 0; f < nframes; f++) {
+    int startf = getenv("STARTF") ? atoi(getenv("STARTF")) : 0;
+    for (int f = 0; f < startf; f++) gba_run_frame(g);
+    for (int f = startf; f < nframes; f++) {
         gba_run_frame(g);
-        if (seqdir && (f % seqstride) == 0) {
+        if (seqdir && ((f - startf) % seqstride) == 0) {
             char sp[600];
             int n = (int)(strchr(seqdir, ':') ? strchr(seqdir, ':') - seqdir : (long)strlen(seqdir));
             snprintf(sp, sizeof(sp), "%.*s/frame_%05d.ppm", n, seqdir, f);
@@ -105,9 +107,9 @@ int main(int argc, char **argv) {
             (uint16_t)g->ppu.pc[i], (uint16_t)g->ppu.pd[i],
             (unsigned)g->ppu.refx[i], (unsigned)g->ppu.refy[i]);
         printf("\n");
-        printf("win/bld: winh=%04X/%04X winv=%04X/%04X winin=%04X winout=%04X bldcnt=%04X blda=%04X bldy=%04X\n",
+        printf("win/bld: winh=%04X/%04X winv=%04X/%04X winin=%04X winout=%04X bldcnt=%04X blda=%04X bldy=%04X mosaic=%04X\n",
             g->ppu.winh[0], g->ppu.winh[1], g->ppu.winv[0], g->ppu.winv[1],
-            g->ppu.winin, g->ppu.winout, g->ppu.bldcnt, g->ppu.bldalpha, g->ppu.bldy);
+            g->ppu.winin, g->ppu.winout, g->ppu.bldcnt, g->ppu.bldalpha, g->ppu.bldy, g->ppu.mosaic);
     }
     printf("apu: master=%d sample_acc=%llu ring_avail=%d lfsr=%04X\n",
            g->apu.master, (unsigned long long)g->apu.sample_acc,

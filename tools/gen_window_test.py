@@ -58,7 +58,7 @@ def make_rom(code, vram, pal, out):
     for a in range(DATA_OFF + len(vram), PAL_OFF, 4): r[a:a+4] = inst
     open(out, "wb").write(bytes(r)); print("wrote", out)
 
-def gen(x1, x2, out):
+def gen(x1, x2, out, vert=False):
     a = Asm(); a.L('start')
     a.adr(2, 'pool')
     a.ldr(0, 2, 28)                              # r0 = 0x04000000
@@ -73,8 +73,9 @@ def gen(x1, x2, out):
     a.ldr(3, 1, 0); a.str_(3, 0, 0); a.add_(0, 0, 5); a.add_(1, 1, 5)
     a.subs(4, 4, 1); a.bne('cp2')
     a.ldr(0, 2, 28)                              # r0 = 0x04000000
-    a.ldr(1, 2, 40); a.strh(1, 0, 0x40)          # WIN0H = (x1<<8)|x2
-    a.ldr(1, 2, 44); a.strh(1, 0, 0x44)          # WIN0V = (0<<8)|160
+    # Horizontal dims: either the tested WIN0H range (horiz) or full width (vert)
+    a.ldr(1, 2, 60 if vert else 40); a.strh(1, 0, 0x40)   # WIN0H
+    a.ldr(1, 2, 64 if vert else 44); a.strh(1, 0, 0x44)   # WIN0V
     a.ldr(1, 2, 48); a.strh(1, 0, 0x48)          # WININ = BG2 inside WIN0 + effects
     a.ldr(1, 2, 52); a.strh(1, 0, 0x4A)          # WINOUT = 0 (backdrop outside)
     a.ldr(1, 2, 32); a.strh(1, 0, 0x00)          # DISPCNT = mode4 + BG2 + WIN0
@@ -87,14 +88,23 @@ def gen(x1, x2, out):
            0x04000000,
            0x2404,                                    # DISPCNT
            0,                                         # (unused)
-           ((x1 & 0xFF) << 8) | (x2 & 0xFF),          # WIN0H
-           (0 << 8) | 160,                            # WIN0V
+           ((x1 & 0xFF) << 8) | (x2 & 0xFF),          # WIN0H (horiz) / (unused vert)
+           (0 << 8) | 160,                            # WIN0V (horiz) / (unused vert)
            0x0024,                                    # WININ: BG2 + effects inside WIN0
            0x0000,                                    # WINOUT: nothing outside
-           4)
-    vram = bytes(((x & 0xFF) for _y in range(160) for x in range(240)))
+           4,
+           (0 << 8) | 240,                            # vert: WIN0H full width
+           ((x1 & 0xFF) << 8) | (x2 & 0xFF))          # vert: WIN0V = (Y1<<8)|Y2
+    if vert:
+        vram = bytes((1 for _y in range(160) for _x in range(240)))
+    else:
+        vram = bytes(((x & 0xFF) for _y in range(160) for x in range(240)))
     pal = b"".join(struct.pack('<H', ((k & 31) << 10) | ((k & 31) << 5) | (k & 31)) for k in range(256))
+    if vert:
+        pal = struct.pack('<H', 0) + struct.pack('<H', 31) + pal[4:]   # idx0 black, idx1 red
     make_rom(a.resolve(0x08000000 + CODE_OFF), bytes(vram), bytes(pal), out)
 
 if __name__ == "__main__":
-    gen(int(sys.argv[1], 0), int(sys.argv[2], 0), sys.argv[3] if len(sys.argv) > 3 else "/tmp/win.gba")
+    vert = "-v" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "-v"]
+    gen(int(args[0], 0), int(args[1], 0), args[2] if len(args) > 2 else "/tmp/win.gba", vert=vert)

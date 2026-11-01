@@ -57,6 +57,7 @@ int main(int argc, char** argv) {
         }
     }
     core->reset(core);
+    if (core->setAudioBufferSize) core->setAudioBufferSize(core, 0x1000);
 
     if (getenv("FASTBOOT")) {
         /* replicate our fastboot state: forced blank + VBlank IRQ armed */
@@ -73,8 +74,36 @@ int main(int argc, char** argv) {
     FILE* rf = reglog ? fopen(reglog, "w") : NULL;
     const char* pcmmon = getenv("PCMON");
     FILE* pmf = pcmmon ? fopen(pcmmon, "w") : NULL;
-    for (int f = 0; f < nframes; f++) {
+    /* SEQDIR=<dir>: write every frame as an RGB PPM, so a whole run can be
+       phase-aligned frame by frame against our own SEQDIR output. */
+    const char* seqdir = getenv("SEQDIR");
+    int seqstride = 1;
+    const char* colon2 = NULL;
+    if (seqdir) { colon2 = strchr(seqdir, ':'); if (colon2) seqstride = atoi(colon2 + 1); }
+    int startf = getenv("STARTF") ? atoi(getenv("STARTF")) : 0;
+    for (int f = 0; f < startf; f++) core->runFrame(core);
+    for (int f = startf; f < nframes; f++) {
         core->runFrame(core);
+        if (seqdir && core->getPixels && ((f - startf) % seqstride) == 0) {
+            const void* pix; size_t stride;
+            core->getPixels(core, &pix, &stride);
+            const uint32_t* p = pix;
+            char sp[600];
+            snprintf(sp, sizeof(sp), "%.*s/frame_%05d.ppm", (int)(colon2 ? colon2 - seqdir : (long)strlen(seqdir)), seqdir, f);
+            FILE* sf = fopen(sp, "wb");
+            if (sf) {
+                fprintf(sf, "P6\n240 160\n255\n");
+                for (int y = 0; y < 160; y++)
+                    for (int x = 0; x < 240; x++) {
+                        uint32_t c = p[y * (stride / 4) + x];
+                        unsigned char rgb[3] = { (unsigned char)(c & 0xFF),
+                                                 (unsigned char)((c >> 8) & 0xFF),
+                                                 (unsigned char)((c >> 16) & 0xFF) };
+                        fwrite(rgb, 1, 3, sf);
+                    }
+                fclose(sf);
+            }
+        }
         if (pmf) { int32_t pcv = 0; core->readRegister(core, "pc", &pcv);
                    fprintf(pmf, "f%d pc=%08X\n", f, (unsigned)pcv); }
         if (rf) {
@@ -219,6 +248,10 @@ int main(int argc, char** argv) {
         printf("\n");
         printf("screen regs:");
         for (uint32_t a = 0x04000040; a <= 0x0400005E; a += 2)
+            printf(" %03X=%04X", a, core->rawRead16(core, a, 0));
+        printf("\n");
+        printf("rot regs:");
+        for (uint32_t a = 0x04000020; a <= 0x0400003E; a += 2)
             printf(" %03X=%04X", a, core->rawRead16(core, a, 0));
         printf("\n");
     }

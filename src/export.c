@@ -130,6 +130,48 @@ static void wav_header(FILE *f, uint32_t data_bytes) {
     fwrite("data", 1, 4, f); fwrite(&data_bytes, 4, 1, f);
 }
 
+/* Sequence export for video assembly: one PNG per frame (frame_000000.png
+ * ...) plus a WAV of the whole run.  Uses write_png so the frames come from
+ * exactly the same core as the interactive build. */
+int export_video(const char *rom, const char *bios, const char *outdir,
+                 int frames) {
+    GBA *g = calloc(1, sizeof(GBA));
+    if (!g) return 1;
+    gba_init(g);
+    if (bios) gba_load_bios(g, bios);
+    g->bios_enabled = bios ? 1 : 0;
+    g->bios_fastboot = bios ? 0 : 1;
+    if (!gba_load_rom(g, rom)) { fprintf(stderr, "export: cannot load %s\n", rom); free(g); return 1; }
+    gba_reset(g);
+
+    char path[1024];
+    snprintf(path, sizeof path, "%s/audio.wav", outdir);
+    FILE *wav = fopen(path, "wb");
+    uint32_t wav_bytes = 0;
+    if (wav) wav_header(wav, 0);
+
+    for (int f = 1; f <= frames; f++) {
+        gba_run_frame(g);
+        snprintf(path, sizeof path, "%s/frame_%06d.png", outdir, f - 1);
+        write_png(path, g->ppu.frame);
+        if (wav) {
+            int16_t buf[4096];
+            int n;
+            while ((n = apu_drain(buf, 2048)) > 0) {
+                fwrite(buf, sizeof(int16_t) * 2, (size_t)n, wav);
+                wav_bytes += (uint32_t)n * 4;
+            }
+        }
+    }
+    if (wav) {
+        if (fseek(wav, 0, SEEK_SET) == 0) wav_header(wav, wav_bytes);
+        fclose(wav);
+    }
+    fprintf(stderr, "export_video: %d frames, %u bytes PCM\n", frames, wav_bytes);
+    free(g);
+    return 0;
+}
+
 int export_run(const char *rom, const char *bios, const char *outdir,
                int frames, const int *pngs, int npng, double wavsec) {
     GBA *g = calloc(1, sizeof(GBA));

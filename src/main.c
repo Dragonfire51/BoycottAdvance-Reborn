@@ -658,6 +658,7 @@ int main(int argc, char **argv) {
        window or audio device.  Handled before SDL is initialised. */
     const char *exp_dir = NULL, *exp_pngs = NULL;
     int exp_frames = 0; double exp_wav = 0;
+    const char *vid_dir = NULL; int vid_frames = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i],"-help")) { printf("Options: -help -autosave -sound -bios -fastboot [rom]\n"); return 0; }
         else if (!strcmp(argv[i],"-sound")) cfg.sound_enable = 1;
@@ -667,7 +668,19 @@ int main(int argc, char **argv) {
             exp_dir = argv[++i]; exp_frames = atoi(argv[++i]);
             exp_pngs = argv[++i]; exp_wav = atof(argv[++i]);
         }
+        else if (!strcmp(argv[i],"-video") && i + 2 < argc) {
+            vid_dir = argv[++i]; vid_frames = atoi(argv[++i]);
+        }
         else if (argv[i][0] != '-') rom_arg = argv[i];
+    }
+
+    if (vid_dir) {
+        if (!rom_arg) { fprintf(stderr, "-video needs a ROM\n"); return 2; }
+        char biospath[PATH_MAX]; resolve_asset("gba_bios.bin", biospath, sizeof biospath);
+        FILE *bt = fopen(biospath, "rb");
+        const char *bios = NULL;
+        if (bt) { fclose(bt); bios = biospath; }
+        return export_video(rom_arg, bios, vid_dir, vid_frames);
     }
 
     if (exp_dir) {

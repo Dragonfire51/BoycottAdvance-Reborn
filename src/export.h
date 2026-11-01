@@ -18,4 +18,9 @@
 int export_run(const char *rom, const char *bios, const char *outdir,
                int frames, const int *pngs, int npng, double wavsec);
 
+/* Sequence export for video assembly: one PNG per frame (frame_000000.png
+ * ...) plus a WAV of the whole run.  Same core code as export_run. */
+int export_video(const char *rom, const char *bios, const char *outdir,
+                 int frames);
+
 #endif
