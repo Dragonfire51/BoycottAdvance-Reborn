@@ -83,6 +83,55 @@ de GBATEK. Mapa de ventanas correcto: WIN0H `0x040`, WIN1H `0x042`, WIN0V
 BLDCNT `0x050`, BLDALPHA `0x052`, BLDY `0x054`. (El commit 8653e81 de v1.4.13
 los desplazo +4 bytes y rompio todas las capas con ventana.)
 
+## FIX 2026-11-01: logo "GAME FREAK" ausente en la intro de Esmeralda (affine-set)
+
+- **Sintoma**: la intro de Pokemon Esmeralda no dibujaba el cartel "GAME FREAK".
+  Nuestros frames f440-780 tenian 0-2 px de logo; VBA-M dibuja 583 px en f600/f700.
+  (Verificado headless: los PPM de mGBA estan en orden **BGR**, hay que permutar
+  canales al comparar; VBA-M y nuestro `shot` ya salen en RGB.)
+- **Cadena de la causa**: las matrices afines de OBJ 12-20 de OAM valian **0x7FFF**
+  (saturacion int16) en vez del valor real. Traza de la escritura (OAMWATCH en
+  `mem.c`): `CPUSET32 f459 pc=082EE812 src=0300247C dst=07000184 v=7FFF0C00`.
+  `pc=082EE812` es el retorno tras `svc #0xb` (CpuSet): el juego copia un
+  template de OAM desde IWRAM a `0x07000000` cada frame. El `0x7FFF` ya estaba en
+  IWRAM, generado por la SWI **0x0F ObjAffineSet** (tambien 0x0E BgAffineSet).
+- **Causa raiz** (`src/bios.c`, `swi_obj_affine_set` y `swi_affine_set`): el
+  producto `sx` (escala 8.8) x coseno (**1.15**, tabla `AFF_SCALE=32768`) se
+  desplazaba `>> 7`, dando un resultado 16.16 saturado a 0x7FFF. El
+  desplazamiento correcto es **`>> 15`** (8.8 * 1.15 -> 8.8). Medido: con
+  `sx=512` (escala 2.0) y `theta=0` (`c=32768`), `>>7` daba 131072 (saturado a
+  32767) y `>>15` da 512, que es lo que mGBA/VBA-M escriben.
+  Ademas `rx/ry` de BgAffineSet tenian un `>>8` de mas que compensaba el error
+  anterior; ahora `rx = ox - A*cx - B*cy` (sin desplazamiento, como mGBA).
+- **Referencia**: GBATEK "BIOS Functions - BgAffineSet/ObjAffineSet"; mGBA
+  `src/gba/bios.c` `_ObjAffineSet` (`a*256` desde float, equivalente a `>>15`);
+  VBA-M `src/core/gba/internal/gbaBios.cpp` `BIOS_ObjAffineSet` (`>>14` con su
+  tabla seno en 1.14). Los tres coinciden en producir un elemento 8.8.
+- **Verificacion headless** (mismo codigo que el .exe, `boycottadvance-reborn
+  -video <dir> 720 <rom>`; PNG por frame + WAV, todo desde el core):
+  logo px ANTES->DESPUES = f500 2->537, f600 2->583, f700 2->583
+  (VBA-M f600/f700 = 583); region del logo (y64..85,x45..199) f700 diff = 0 px.
+  El residuo de f600 fuera del logo es desfase de fase (mejor match en f610).
+- **Sin regresion**: Fire Emblem (usa BgAffineSet) f300/f500 **0 px** de
+  diferencia antes/despues; suite `gba-tests` **76 PASSED** (identico baseline).
+  Los 3 targets compilan sin warnings; win32/win64 sin SDL2 (solo
+  KERNEL32/USER32/GDI32/SHELL32/d3d9/winmm/comdlg32/msvcrt).
+- **P1-P6 / A1-A6 / V1-V2 del checklist del revisor**: revisados contra GBATEK,
+  mGBA y VBA-M. P1 (affine BG en modos bitmap) y P2 (mosaic con pb/pd) ya
+  estaban en `render_bitmap`/`render_affine_bg`; P3 (recarga de BGxX/Y con
+  `sext28` en cada escritura) ya en `mem.c` casos 0x28-0x3E; P4 (ventana con
+  wrap `x1>x2`, identico a VBA-M `CPUUpdateWindow0`) ya en `ppu.c`; P5 (OBJ 2D
+  con wrap de columna `&0x1F`, GBATEK "Two Dimensional Character Mapping" /
+  mGBA `maskLo=0x3FE`) ya en `render_objs`; P6 (render de linea antes de HBlank
+  DMA/IRQ, y HBlank DMA solo en lineas <160) ya en `gba.c`. A1 (pacing:
+  `apu_available()>2048` -> sleep en `win32.c`/`main.c`), A2 (`apu_fifo_tick`
+  con fase 32.32 al ritmo del timer), A3 (`io_raw` como shadow crudo en
+  escrituras de 8 bit), A4 (sin reinicio de longitud en 0x070), A5 (reset de
+  FIFO limpia `fifo_prev/frac/interp`), A6 (`lsum*(vol+1)*pv/2` y ganancia final
+  x48) ya implementados. V1 (Reset de D3D9 en resize + DEVICELOST/NOTRESET) y
+  V2 (`fit_rect` 3:2 con letterbox + filtros POINT explicitos) ya en `video.c`.
+  No se reescribio ninguno de estos: solo el fix del affine-set.
+
 ## RELEASE v1.4.20 (publicado 2026-10-28)
 
 - **Causa raiz de los glitches de la intro de Pokemon Esmeralda** (faltaba el
