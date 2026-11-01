@@ -47,9 +47,16 @@ public final class NativeEmulator {
         handle = create();
     }
 
-    public boolean isValid() { return handle != 0; }
+    public synchronized boolean isValid() { return handle != 0; }
 
-    public void close() {
+    /**
+     * Every call that reaches the core is synchronized on this instance.
+     * The frame loop runs on its own thread while the UI thread may close the
+     * session or load another ROM; without this the core could be freed (or
+     * mutated) mid-frame, which is a use-after-free. The monitor also gives
+     * the happens-before edge that makes the handle==0 check below reliable.
+     */
+    public synchronized void close() {
         if (handle != 0) { destroy(handle); handle = 0; }
     }
 
@@ -71,19 +78,21 @@ public final class NativeEmulator {
     public  static native void    setInt(long h, int key, int value);
     public  static native int     getInt(long h, int key);
 
-    /* Convenience wrappers bound to this instance. */
-    public boolean loadBios(String path)   { return handle != 0 && loadBios(handle, path); }
-    public boolean loadRom(String path)    { return handle != 0 && loadRom(handle, path); }
-    public boolean romLoaded()             { return handle != 0 && romLoaded(handle); }
-    public String  romInfo()               { return handle != 0 ? romInfo(handle) : ""; }
-    public void    reset()                 { if (handle != 0) reset(handle); }
-    public void    saveBattery()           { if (handle != 0) saveBattery(handle); }
-    public void    setKeys(int mask)       { if (handle != 0) setKeys(handle, mask); }
-    public void    runFrame(int[] out)     { if (handle != 0) runFrame(handle, out); }
-    public int     audioMix(short[] out, int n) { return handle != 0 ? audioMix(handle, out, n) : 0; }
-    public int     audioAvailable()        { return handle != 0 ? audioAvailable(handle) : 0; }
-    public int     saveState(int slot)     { return handle != 0 ? saveState(handle, slot) : -1; }
-    public int     loadState(int slot)     { return handle != 0 ? loadState(handle, slot) : -1; }
-    public void    setInt(int key, int v)  { if (handle != 0) setInt(handle, key, v); }
-    public int     getInt(int key)         { return handle != 0 ? getInt(handle, key) : 0; }
+    /* Convenience wrappers bound to this instance. All synchronized so the
+     * UI thread can never free or mutate the core while the frame thread is
+     * inside a native call. */
+    public synchronized boolean loadBios(String path)   { return handle != 0 && loadBios(handle, path); }
+    public synchronized boolean loadRom(String path)    { return handle != 0 && loadRom(handle, path); }
+    public synchronized boolean romLoaded()             { return handle != 0 && romLoaded(handle); }
+    public synchronized String  romInfo()               { return handle != 0 ? romInfo(handle) : ""; }
+    public synchronized void    reset()                 { if (handle != 0) reset(handle); }
+    public synchronized void    saveBattery()           { if (handle != 0) saveBattery(handle); }
+    public synchronized void    setKeys(int mask)       { if (handle != 0) setKeys(handle, mask); }
+    public synchronized void    runFrame(int[] out)     { if (handle != 0) runFrame(handle, out); }
+    public synchronized int     audioMix(short[] out, int n) { return handle != 0 ? audioMix(handle, out, n) : 0; }
+    public synchronized int     audioAvailable()        { return handle != 0 ? audioAvailable(handle) : 0; }
+    public synchronized int     saveState(int slot)     { return handle != 0 ? saveState(handle, slot) : -1; }
+    public synchronized int     loadState(int slot)     { return handle != 0 ? loadState(handle, slot) : -1; }
+    public synchronized void    setInt(int key, int v)  { if (handle != 0) setInt(handle, key, v); }
+    public synchronized int     getInt(int key)         { return handle != 0 ? getInt(handle, key) : 0; }
 }

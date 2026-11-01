@@ -16,6 +16,7 @@ on:
       - 'android/**'
       - 'src/**'
       - 'tools/android_zip_test.sh'
+      - 'tools/android_lifecycle_test.sh'
       - '.github/workflows/android-apk.yml'
   workflow_dispatch:
 
@@ -54,6 +55,9 @@ jobs:
 
       - name: Zip ROM loading check (desktop JVM)
         run: sh tools/android_zip_test.sh /tmp/smoke.gba
+
+      - name: Session lifecycle check (no use-after-free)
+        run: sh tools/android_lifecycle_test.sh /tmp/smoke.gba
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

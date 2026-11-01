@@ -58,10 +58,17 @@ public final class EmulatorThread extends Thread {
     public boolean isFastForward() { return fastForward; }
     public float fps() { return fps; }
 
+    /**
+     * Stops the loop and waits for the thread to leave runFrame() before
+     * returning. The caller (onDestroy) frees the native session right after,
+     * so joining here is what prevents freeing the core while this thread is
+     * still inside a native call.
+     */
     public void shutdown() {
         running = false;
         setPaused(true);
         interrupt();
+        try { join(2000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 
     /** Copy the latest rendered frame into out (must be W*H ints). */

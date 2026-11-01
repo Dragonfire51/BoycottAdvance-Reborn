@@ -231,9 +231,11 @@ static void apu_fifo_tick(GBA *g) {
             if (a->fifo_len[f] <= 16) dma_fifo_request(g, f);
         }
         int32_t s0 = a->fifo_prev[f], s1 = a->fifo_held[f];
-        /* fifo_frac es 32.32: la parte fraccionaria en Q8 es frac >> 24. */
-        a->fifo_interp[f] = (s0 << 8)
-            + (int32_t)(((int64_t)(s1 - s0) * (int64_t)a->fifo_frac[f]) >> 24);
+        /* fifo_frac es 32.32: la parte fraccionaria en Q8 es frac >> 24.
+           Se multiplica en vez de desplazar porque s0/s1 pueden ser negativos
+           y un desplazamiento a la izquierda de un valor con signo es UB. */
+        a->fifo_interp[f] = (int32_t)((int64_t)s0 * 256
+            + (((int64_t)(s1 - s0) * (int64_t)a->fifo_frac[f]) >> 24));
     }
 }
 

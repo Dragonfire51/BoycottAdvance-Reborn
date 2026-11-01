@@ -44,7 +44,15 @@ contiene las tres ABIs.
 `tools/android_zip_test.sh` cubre la carga de `.zip`: comprime una ROM, la
 extrae con el **mismo** `ZipRom.java` que usa la app y comprueba que el
 fichero extraído corre en el núcleo con el **mismo CRC** que el `.gba`
-original. Los dos scripts corren en el CI.
+original. Los tres scripts corren en el CI.
+
+`tools/android_lifecycle_test.sh` cubre el **ciclo de vida de la sesión**, que
+es lo que hacía que la app se cerrara sola al abrir un juego. Lanza el hilo de
+emulación con el **mismo** `NativeEmulator` y, mientras corre, cierra la sesión
+y abre otra (y recarga la ROM a mitad de ejecución), todo bajo
+AddressSanitizer. Antes del arreglo: `heap-use-after-free` en
+`bios_track_fetch` (el hilo de UI liberaba el núcleo con el hilo de emulación
+dentro de `runFrame`). Después: sin informe de ASan.
 
 ## 2. Estado del código del núcleo (evidencia)
 
@@ -138,10 +146,17 @@ Se eligió el backend propio (GLES2 + AudioTrack + SAF) reutilizando solo el
 - **Almacenamiento**: en Android 11+ no se puede listar una carpeta
   compartida sin SAF; por eso el explorador propio se apoya en
   `ACTION_OPEN_DOCUMENT_TREE` y el permiso se persiste.
+- **Concurrencia (resuelto)**: la emulación corre en su propio hilo y la UI
+  puede cerrar la sesión o cargar otra ROM en cualquier momento. Todas las
+  llamadas al núcleo desde `NativeEmulator` están `synchronized` y
+  `EmulatorThread.shutdown()` hace `join()` antes de que la UI libere el
+  núcleo; sin eso había un `heap-use-after-free` al reabrir un juego.
 
 ## 6. Estado
 
 Implementado y verificado en la medida en que se puede sin dispositivo:
-APK construido, JNI y carga de `.zip` comprobados contra el núcleo de
-escritorio con CRCs idénticos. Queda pendiente la prueba en un teléfono real
-(pantalla táctil y audio). El núcleo **no requiere cambios**.
+APK construido, JNI, carga de `.zip` y ciclo de vida de la sesión comprobados
+contra el núcleo de escritorio con CRCs idénticos y sin informe de ASan. Queda
+pendiente la prueba en un teléfono real (pantalla táctil y audio). El núcleo de
+emulación **no requiere cambios**: el único cambio en `src/` es un
+desplazamiento de signo indefinido en `apu.c` (UB, no un fallo funcional).
