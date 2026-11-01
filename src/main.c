@@ -421,16 +421,20 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Sound now keeps playing when 'Speedup Throttle' is\n"
-      "    off (fast-forward): the audio ring is decimated to\n"
-      "    its newest window instead of being muted, so long\n"
-      "    intros stay audible while the game runs fast.\n"
-      "  - HBlank IRQ served 6 cycles after the line boundary\n"
-      "    (matches mGBA, verified against hardware) so tight\n"
-      "    per-scanline raster handlers are timed correctly.\n"
-      "    DMA timing unchanged; frame clock stays exact.\n"
-      "  - The BIOS dump is now also looked up next to the\n"
-      "    executable, not only in the working directory.");
+      "  - Graphics fixes (audit vs GBATEK/mGBA/VBA-M):\n"
+      "    * BIOS affine-set (BgAffineSet/ObjAffineSet) used\n"
+      "      a wrong fixed-point shift, turning OBJ affine\n"
+      "      matrices into 0x7FFF and pushing scaled sprites\n"
+      "      off-screen. Restores the 'GAME FREAK presents'\n"
+      "      logo in the Pokemon Emerald intro.\n"
+      "    * CpuFastSet always copies 32-bit words (GBATEK),\n"
+      "      not halfwords. Fixes the Medabots AX palette\n"
+      "      (~12.3% of the screen was wrong; now 0.00%).\n"
+      "    * Window ranges with x1>x2 / y1>y2 wrap around\n"
+      "      the screen edge instead of collapsing.\n"
+      "    * Normal-mode SIO transfers finish on time.\n"
+      "  - New headless capture: -video <dir> <frames>\n"
+      "    [-keys \"...\"] writes PNG frames + a WAV.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

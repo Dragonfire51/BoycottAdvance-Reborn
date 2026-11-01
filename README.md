@@ -142,6 +142,30 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.26** - graphics fixes: several sprite/background glitches were fixed
+  after an audit against GBATEK, mGBA and VBA-M.
+  **BIOS affine-set fixed point (`BgAffineSet` / `ObjAffineSet`, SWI 0x0E/0x0F)**:
+  the routines multiplied the 8.8 scale by the 1.15 cosine and shifted right by
+  7, producing a 16.16 value that saturated to `0x7FFF`. Any non-trivial scale
+  turned the OAM affine matrix into `0x7FFF` and pushed the sprites out of
+  range. GBATEK (and both mGBA and VBA-M) produce an **8.8** element as
+  `(sx*c)>>15`. This was the missing **"GAME FREAK presents"** logo in the
+  Pokemon Emerald intro (logo pixels 2 -> 583, matching VBA-M).
+  **`CpuFastSet` (SWI 0x0C) always copies 32-bit words**: it was treating bit 26
+  of the control word as a 16/32-bit size selector and copying halfwords when
+  clear. GBATEK is explicit that `CpuFastSet` runs in 32-byte blocks of
+  `LDMIA/STMIA r2-r9` and rounds the wordcount up to a multiple of 8 words.
+  Medabots AX loaded its palette with a "16-bit" `CpuFastSet`, so palette
+  entries 24-63 stayed at zero and the screen diverged a stable ~12.3% from
+  frame 1000 on. After the fix the palette and VRAM are byte-identical to mGBA
+  and the diff is **0.00%** (frames 1000-1500).
+  **Window ranges wrap (P4)**: `WIN0H/WIN1H/WIN0V/WIN1V` with `x1 > x2` /
+  `y1 > y2` now wrap around the screen edge instead of collapsing to an empty
+  window, as GBATEK describes and VBA-M implements.
+  **Normal-mode SIO** transfers now complete on their exact deadline.
+  Also adds a headless capture mode: `-video <dir> <frames> [-keys "..."]`
+  renders one PNG per frame plus a stereo WAV from the same core the binary
+  uses, so gameplay can be recorded (and diffed against mGBA) without a display.
 - **v1.4.25** - audio during fast-forward, plus a timing refinement. **Audio with
   the throttle off**: switching "Speedup Throttle" off used to mute the sound
   (the emulation runs far ahead of real time, so the mixer dropped every sample
