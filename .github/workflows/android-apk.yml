@@ -15,6 +15,8 @@ on:
     paths:
       - 'android/**'
       - 'src/**'
+      - 'tools/android_zip_test.sh'
+      - '.github/workflows/android-apk.yml'
   workflow_dispatch:
 
 jobs:
@@ -49,6 +51,9 @@ jobs:
           # JNI layer to link and load. It uses a tiny synthetic ROM.
           python3 tools/gen_android_smoke.py /tmp/smoke.gba
           sh tools/android_jni_test.sh /tmp/smoke.gba -
+
+      - name: Zip ROM loading check (desktop JVM)
+        run: sh tools/android_zip_test.sh /tmp/smoke.gba
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

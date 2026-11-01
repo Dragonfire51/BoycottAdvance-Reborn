@@ -26,7 +26,7 @@ backend de vídeo/audio nuevo. No hubo que reescribir el emulador.
 | Vídeo | `GbaRenderer.java` | OpenGL ES 2.0; textura 240x160, aspecto 3:2 con barras negras, GL_NEAREST (GL_LINEAR si se activa el suavizado). |
 | Audio | `EmulatorThread.java` | `AudioTrack` en modo stream; el dispositivo es el reloj (bloquea en `write`), igual que los frontends de escritorio. |
 | Controles táctiles | `TouchControlsView.java` | D-pad (zona circular con zona muerta), A/B, L/R, SELECT/START; multitáctil. |
-| Explorador de archivos propio | `FilePickerActivity.java` | Árbol de directorios, modos ROM (.gba/.zip/.7z) y BIOS (.bin/.rom/.gba), arranca en la carpeta de la app / almacenamiento / Download. |
+| Explorador de archivos propio | `FilePickerActivity.java`, `RomStore.java`, `ZipRom.java` | UI propia sobre el **Storage Access Framework** (Android 11+ ignora `requestLegacyExternalStorage`): "Carpeta" concede acceso a una carpeta (permiso persistido), "Archivo" elige un documento suelto, "App" muestra la carpeta privada. Modos ROM (.gba/.agb/.bin/.zip/.7z) y BIOS (.bin/.rom/.gba). Los `.zip` se descomprimen con `ZipRom` (primer `.gba/.agb/.bin` de dentro). |
 | Actividad principal | `MainActivity.java` | Barra superior, menú, reinicio, 10 ranuras de estado, toggles de sonido/scanline/suavizado, fast-forward, info de ROM. |
 | Build | `android/app/src/main/cpp/CMakeLists.txt`, `build.gradle` | CMake vía NDK; ABIs `arm64-v8a`, `armeabi-v7a`, `x86_64`. |
 
@@ -40,6 +40,11 @@ real y compara el CRC del frame que produce con el de la ruta de escritorio
 ROM y mismo número de frames), y el número de muestras PCM coincide
 exactamente (735 por frame). El CI además compila el APK y verifica que
 contiene las tres ABIs.
+
+`tools/android_zip_test.sh` cubre la carga de `.zip`: comprime una ROM, la
+extrae con el **mismo** `ZipRom.java` que usa la app y comprueba que el
+fichero extraído corre en el núcleo con el **mismo CRC** que el `.gba`
+original. Los dos scripts corren en el CI.
 
 ## 2. Estado del código del núcleo (evidencia)
 
@@ -74,65 +79,47 @@ Puntos concretos verificados:
   frontend. En Android no se reutiliza tal cual: Android quiere UI nativa
   (botones táctiles, menú de la app), no una barra de menús dibujada.
 
-## 3. Trabajo necesario para el port
+## 3. Cómo quedó resuelto cada punto
 
-1. **Proyecto Android (NDK)**. Añadir un árbol `android/` (Gradle) con:
-   - `CMakeLists.txt` que compile el núcleo + `fb.c` como biblioteca
-     (`libmain.so`); sin SDL, sin `main.c`/`win32.c`/`gui.c`/`video.c`.
-   - Módulo Java/Kotlin: `Activity`, ciclo de vida, permiso de
-     almacenamiento, selector de ROM, gestión de `.sav`.
+1. **Proyecto Android (NDK)**. Árbol `android/` con Gradle; `CMakeLists.txt`
+   compila el núcleo + `acore.c` + `jni_bridge.c` como `libboycottadvance.so`
+   (sin SDL, sin `main.c`/`win32.c`/`gui.c`/`video.c`).
 
-2. **Backend de vídeo**. Lo más barato y de mejor relación esfuerzo/calidad
-   en Android moderno:
-   - **Opción A (recomendada)**: renderizar el ARGB8888 de `fb.c` a una
-     `SurfaceView`/`TextureView` con OpenGL ES 2.0 (una textura + un quad).
-     Es ~150-250 líneas, equivalente al backend SDL de `video.c`.
-   - **Opción B**: `ANativeWindow` + `ANativeWindow_lock`/`unlockAndPost`
-     (blit directo), aún más simple, sin GL.
-   La UI táctil (botones A/B/L/R, D-pad, START/SELECT, pausa, ajustes) se
-   dibuja en el propio `fb.c` o con `View`s de Android superpuestos.
+2. **Backend de vídeo**: OpenGL ES 2.0 (`GbaRenderer.java`), una textura y un
+   quad, aspecto 3:2 con barras negras. La UI táctil son `View`s superpuestos.
 
-3. **Backend de audio**. El APU ya entrega un flujo estéreo 44.1 kHz por el
-   ring buffer (`apu_mix`/`apu_drain`). En Android:
-   - **AAudio** (API 26+) o **OpenSL ES** (más antiguo), en modo callback,
-     consumiendo `apu_mix` igual que hace SDL en el frontend de escritorio.
-   - Alternativa: SDL2 también existe para Android (`SDL_Android`), lo que
-     permitiría reutilizar `main.c` casi entero; ver §4.
+3. **Backend de audio**: `AudioTrack` en modo stream (`EmulatorThread.java`),
+   consumiendo `acore_audio_mix`; el dispositivo marca el ritmo igual que en
+   escritorio.
 
-4. **Entrada**. Sustituir teclado/joystick por toque + mandos Bluetooth
-   (`InputDevice`, o el subsistema joystick de SDL si se usa SDL2). El
-   núcleo ya expone `gba_update_keypad(g, mask)` con máscara activa en bajo.
+4. **Entrada**: `TouchControlsView` (D-pad, A/B, L/R, SELECT/START,
+   multitáctil) → `acore_set_keys` (máscara activa en bajo).
 
-5. **Almacenamiento / rutas**. El núcleo resuelve ficheros con rutas
-   relativas y `<stdio.h>` (`fopen`). En Android hay que pasar rutas
-   absolutas (p. ej. bajo `getFilesDir()` o SAF → copia a caché) y
-   sustituir la resolución de `gba_bios.bin` "junto al ejecutable" por un
-   recurso empaquetado en `assets/` extraído a fichero en el primer
-   arranque. El BIOS no se incluye por defecto; la app puede arrancar con
-   el stub fast-boot o pedir el dump al usuario.
+5. **Almacenamiento / rutas**. El núcleo usa `fopen` y escribe el `.sav` y los
+   savestates junto a la ROM, así que necesita una **ruta real**. Con Android
+   11+ `File.listFiles()` sobre carpetas compartidas devuelve vacío (scoped
+   storage), por lo que el explorador usa el **Storage Access Framework** y
+   `RomStore` copia el documento elegido (o el `.gba` extraído del `.zip`) a
+   `getFilesDir()/roms/`, que es siempre escribible sin permisos. El BIOS se
+   elige igual; si no hay dump, el núcleo arranca con el fast-boot.
 
-6. **Ciclo de vida**. Pausar/reanudar emulación y audio en `onPause`/
-   `onResume`; guardado de batería (`.sav`) al salir.
+6. **Ciclo de vida**: `onPause`/`onResume` pausan emulación y audio; el `.sav`
+   se guarda al pausar y al salir.
 
-## 4. Atajo: usar SDL2 para Android
+## 4. Por qué no se usó SDL2
 
-El proyecto ya tiene un frontend SDL2 completo (`main.c`, 958 líneas) que
-hace exactamente lo que Android necesita: ventana, audio, entrada,
-redimensionado. SDL2 tiene port oficial a Android. Reutilizándolo:
+Se evaluó reutilizar el frontend SDL2 de escritorio (`main.c`) con el port
+oficial de SDL2 para Android, que sería el camino más corto. Se descartó:
 
-- `main.c` + `fb.c` + núcleo compilan con el NDK casi tal cual.
-- Se añade un pequeño `android-project` estándar de SDL
-  (`SDLActivity`, `AndroidManifest.xml`, `build.gradle`) y se empaqueta
-  `main.c` como `libmain.so` (el patrón habitual de SDL en Android).
-- La barra de menús dibujada en `fb.c` se puede conservar o sustituir por
-  UI táctil.
+- El requisito del proyecto es **cero SDL2 en Windows** y un frontend nativo;
+  meter SDL2 por la puerta de Android contradice ese criterio y añade una
+  dependencia grande.
+- La UI de escritorio (barra de menús dibujada en `fb.c`) no encaja con
+  Android: aquí la UI es táctil y nativa.
+- El APK con la ruta nativa queda en ~200 KB sin dependencias externas.
 
-Ventaja: **es el camino más corto** y reutiliza código ya probado. Coste:
-depender de SDL2 en Android (una dependencia grande, pero madura) y
-adaptar el frontend de teclado a táctil.
-
-La opción sin SDL (punto 2) da una app más pequeña y "nativa", a cambio de
-escribir el backend de vídeo/audio a mano.
+Se eligió el backend propio (GLES2 + AudioTrack + SAF) reutilizando solo el
+**núcleo**, que es lo que garantiza el comportamiento idéntico.
 
 ## 5. Riesgos y consideraciones
 
@@ -141,26 +128,20 @@ escribir el backend de vídeo/audio a mano.
   32 bits habría que medir. El render del PPU es software (`ppu.c`), ya
   probado en escritorio.
 - **Precisión de audio**: el ring buffer del APU usa `stdatomic` y un
-  productor/consumidor; hay que respetar el mismo modelo en el callback de
-  AAudio/OpenSL (no bloquear en el callback).
+  productor/consumidor; `AudioTrack.write` bloquea y sirve de reloj, igual
+  que en escritorio.
 - **Tamaño de la ROM en memoria**: el núcleo carga la ROM completa en RAM
   (`calloc` de `rom_size`); ROMs de 16-32 MB son normales, aceptable en
   Android actual.
-- **BIOS**: por motivos legales no se distribuye; la app debe funcionar sin
-  él (fast-boot) o pedirlo al usuario, igual que en escritorio.
-- **Mantenimiento**: un tercer frontend multiplica la superficie a
-  mantener. Si se elige SDL2, el coste de mantenimiento es bajo porque
-  comparte `main.c`; si se elige nativo, hay que mantener dos backends de
-  vídeo/audio además del Win32 y el SDL de escritorio.
+- **BIOS**: por motivos legales no se distribuye; la app funciona sin él
+  (fast-boot) o lo pide al usuario, igual que en escritorio.
+- **Almacenamiento**: en Android 11+ no se puede listar una carpeta
+  compartida sin SAF; por eso el explorador propio se apoya en
+  `ACTION_OPEN_DOCUMENT_TREE` y el permiso se persiste.
 
-## 6. Recomendación
+## 6. Estado
 
-Abordar el port **usando el frontend SDL2 existente** como primer paso
-(menor coste, máxima reutilización, ya probado). Si más adelante se quiere
-una app más pequeña y nativa, migrar el backend de vídeo a
-OpenGL ES / `ANativeWindow` y el de audio a AAudio, reutilizando el núcleo
-sin cambios.
-
-Estimación orientativa del primer paso (SDL2 en Android): árbol de proyecto
-Gradle + `AndroidManifest` + `SDLActivity` + empaquetado del núcleo +
-entrada táctil básica. El núcleo **no requiere cambios**.
+Implementado y verificado en la medida en que se puede sin dispositivo:
+APK construido, JNI y carga de `.zip` comprobados contra el núcleo de
+escritorio con CRCs idénticos. Queda pendiente la prueba en un teléfono real
+(pantalla táctil y audio). El núcleo **no requiere cambios**.

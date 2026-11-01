@@ -4,9 +4,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.opengl.GLSurfaceView;
-import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.view.Gravity;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -113,12 +111,15 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         thread = new EmulatorThread(emu);
         thread.start();
 
-        /* Auto-load BIOS + last ROM if they exist. */
+        /* Auto-load BIOS + last ROM if they still exist. */
         String bios = prefs.getString("bios", null);
         if (bios != null && new File(bios).exists()) emu.loadBios(bios);
         String lastRom = prefs.getString("last_rom", null);
-        if (lastRom != null && new File(lastRom).exists()) loadRom(lastRom);
-        else pickRom();
+        if (lastRom != null && new File(lastRom).exists()) {
+            importAndLoadRom(lastRom, new File(lastRom).getName());
+        } else {
+            pickRom();
+        }
     }
 
     /* ---- settings ---- */
@@ -140,25 +141,63 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         if (renderer != null) renderer.setSmooth(prefs.getInt("smooth", 0) != 0);
     }
 
-    private void putBool(String k, boolean v) { prefs.edit().putBoolean(k, v).apply(); }
-
-    private boolean getFlag(String k, boolean d) { return prefs.getBoolean(k, d); }
-
     /* ---- ROM / BIOS ---- */
     private void pickRom() {
         Intent i = new Intent(this, FilePickerActivity.class);
         i.putExtra(FilePickerActivity.EXTRA_MODE, FilePickerActivity.MODE_ROM);
-        String last = prefs.getString("last_rom", null);
-        if (last != null) i.putExtra(FilePickerActivity.EXTRA_PATH, last);
         startActivityForResult(i, REQ_ROM);
     }
 
     private void pickBios() {
         Intent i = new Intent(this, FilePickerActivity.class);
         i.putExtra(FilePickerActivity.EXTRA_MODE, FilePickerActivity.MODE_BIOS);
-        String last = prefs.getString("bios", null);
-        if (last != null) i.putExtra(FilePickerActivity.EXTRA_PATH, last);
         startActivityForResult(i, REQ_BIOS);
+    }
+
+    /**
+     * A ROM is up to 16 MB and may have to be copied out of a content:// URI
+     * or unzipped, so the work runs off the UI thread with the emulation
+     * paused; the frame loop restarts when the ROM is in place.
+     */
+    private void importAndLoadRom(final String ref, final String name) {
+        thread.setPaused(true);
+        Toast.makeText(this, "Cargando " + name + "...", Toast.LENGTH_SHORT).show();
+        new Thread(new Runnable() {
+            @Override public void run() {
+                final File rom;
+                try {
+                    rom = RomStore.resolve(MainActivity.this, ref, name);
+                } catch (Exception e) {
+                    failOnUi("No se pudo leer el archivo: " + e.getMessage());
+                    return;
+                }
+                if (rom == null) { failOnUi("No se pudo abrir " + name); return; }
+                final boolean ok = emu.loadRom(rom.getAbsolutePath());
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        if (ok) {
+                            prefs.edit().putString("last_rom", rom.getAbsolutePath()).apply();
+                            updateStatus();
+                            thread.setPaused(false);
+                        } else {
+                            thread.setPaused(false);
+                            Toast.makeText(MainActivity.this,
+                                    "No se pudo cargar la ROM (ni .gba ni .zip con una dentro)",
+                                    Toast.LENGTH_LONG).show();
+                        }
+                    }
+                });
+            }
+        }, "RomImport").start();
+    }
+
+    private void failOnUi(final String msg) {
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                thread.setPaused(false);
+                Toast.makeText(MainActivity.this, msg, Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     private void loadRom(String path) {
@@ -183,18 +222,42 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
         if (res != RESULT_OK || data == null) return;
-        String path = data.getStringExtra(FilePickerActivity.RESULT_PATH);
-        if (path == null) return;
-        if (req == REQ_ROM) loadRom(path);
-        else if (req == REQ_BIOS) {
-            if (emu.loadBios(path)) {
-                prefs.edit().putString("bios", path).apply();
-                Toast.makeText(this, "BIOS: " + new File(path).getName(), Toast.LENGTH_SHORT).show();
-                if (emu.romLoaded()) emu.reset();
-            } else {
-                Toast.makeText(this, "BIOS invalido (necesita 16 KB)", Toast.LENGTH_LONG).show();
+        String ref  = data.getStringExtra(FilePickerActivity.RESULT_REF);
+        String name = data.getStringExtra(FilePickerActivity.RESULT_NAME);
+        if (ref == null) return;
+        if (name == null) name = ref;
+        if (req == REQ_ROM) importAndLoadRom(ref, name);
+        else if (req == REQ_BIOS) importAndLoadBios(ref, name);
+    }
+
+    private void importAndLoadBios(final String ref, final String name) {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                final File f;
+                try {
+                    f = RomStore.resolve(MainActivity.this, ref, name);
+                } catch (Exception e) {
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                            "No se pudo leer el BIOS", Toast.LENGTH_LONG).show());
+                    return;
+                }
+                if (f == null) return;
+                final boolean ok = emu.loadBios(f.getAbsolutePath());
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        if (ok) {
+                            prefs.edit().putString("bios", f.getAbsolutePath()).apply();
+                            Toast.makeText(MainActivity.this,
+                                    "BIOS: " + f.getName(), Toast.LENGTH_SHORT).show();
+                            if (emu.romLoaded()) emu.reset();
+                        } else {
+                            Toast.makeText(MainActivity.this,
+                                    "BIOS invalido (necesita 16 KB)", Toast.LENGTH_LONG).show();
+                        }
+                    }
+                });
             }
-        }
+        }, "BiosImport").start();
     }
 
     /* ---- menu ---- */
@@ -291,9 +354,12 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         new android.app.AlertDialog.Builder(this)
             .setTitle("BoycottAdvance Reborn")
             .setMessage("Emulador GBA (C).\n\n" +
-                        "Version 1.4.27\n" +
+                        "Version 1.4.28\n" +
                         "Nucleo C99 compartido con los builds de escritorio.\n\n" +
-                        "Controles: D-pad, A/B, L/R, SELECT/START en pantalla.")
+                        "Controles: D-pad, A/B, L/R, SELECT/START en pantalla.\n\n" +
+                        "Carga de ROMs: usa \"Carpeta\" para dar acceso a la carpeta\n" +
+                        "donde tengas los .gba (o .zip), o \"Archivo\" para elegir\n" +
+                        "un archivo suelto.")
             .setPositiveButton("OK", null)
             .show();
     }
