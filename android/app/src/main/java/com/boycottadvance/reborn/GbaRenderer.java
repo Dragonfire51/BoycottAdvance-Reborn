@@ -43,7 +43,13 @@ public class GbaRenderer implements GLSurfaceView.Renderer {
     private final int[] texBytes = new int[EmulatorThread.W * EmulatorThread.H];
 
     private int program, texId, aPos, aTex, uTex;
-    private FloatBuffer quad;
+    private QuadBuffer quad;
+    /* Direct buffer for the texture upload, reused every frame: allocating a
+     * fresh 150 KB direct buffer per frame (9 MB/s) can exhaust direct memory
+     * and throw OutOfMemoryError on low-end devices. */
+    private final ByteBuffer texBuf = ByteBuffer
+            .allocateDirect(EmulatorThread.W * EmulatorThread.H * 4)
+            .order(ByteOrder.nativeOrder());
     private int viewW = 1, viewH = 1;
     private volatile boolean smooth = false;
 
@@ -67,10 +73,7 @@ public class GbaRenderer implements GLSurfaceView.Renderer {
         applyFilter();
         GLES20.glClearColor(0f, 0f, 0f, 1f);
 
-        float[] verts = new float[] { 0f, 0f, 1f, 1f };
-        quad = ByteBuffer.allocateDirect(verts.length * 4)
-                .order(ByteOrder.nativeOrder()).asFloatBuffer();
-        quad.put(verts).position(0);
+        quad = new QuadBuffer();
     }
 
     private void applyFilter() {
@@ -97,8 +100,8 @@ public class GbaRenderer implements GLSurfaceView.Renderer {
             texBytes[i] = ((c & 0x00FF0000) >> 16) | (c & 0x0000FF00) |
                           ((c & 0x000000FF) << 16) | 0xFF000000;
         }
-        ByteBuffer buf = ByteBuffer.allocateDirect(texBytes.length * 4)
-                .order(ByteOrder.nativeOrder());
+        ByteBuffer buf = texBuf;
+        buf.clear();
         buf.asIntBuffer().put(texBytes);
         buf.position(0);
 
@@ -118,21 +121,14 @@ public class GbaRenderer implements GLSurfaceView.Renderer {
         if (viewAspect > targetAspect) sx = targetAspect / viewAspect;
         else sy = viewAspect / targetAspect;
 
-        float[] verts = new float[] {
-            -sx, -sy,  0f, 1f,   /* bottom-left, tex (0,1) */
-             sx, -sy,  1f, 1f,   /* bottom-right */
-            -sx,  sy,  0f, 0f,   /* top-left */
-             sx,  sy,  1f, 0f    /* top-right */
-        };
-        quad.clear();
-        quad.put(verts).position(0);
+        FloatBuffer qb = quad.update(sx, sy);
 
         int stride = 4 * 4;
-        quad.position(0);
-        GLES20.glVertexAttribPointer(aPos, 2, GLES20.GL_FLOAT, false, stride, quad);
+        qb.position(0);
+        GLES20.glVertexAttribPointer(aPos, 2, GLES20.GL_FLOAT, false, stride, qb);
         GLES20.glEnableVertexAttribArray(aPos);
-        quad.position(2);
-        GLES20.glVertexAttribPointer(aTex, 2, GLES20.GL_FLOAT, false, stride, quad);
+        qb.position(2);
+        GLES20.glVertexAttribPointer(aTex, 2, GLES20.GL_FLOAT, false, stride, qb);
         GLES20.glEnableVertexAttribArray(aTex);
 
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);

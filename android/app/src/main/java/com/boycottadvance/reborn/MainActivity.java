@@ -59,7 +59,12 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         glView = new GLSurfaceView(this);
         glView.setEGLContextClientVersion(2);
         renderer = new GbaRenderer(new GbaRenderer.FrameSource() {
-            @Override public void copyFrame(int[] out) { thread.copyFrame(out); }
+            /* The GL thread can call this before onCreate assigns `thread`
+             * (setContentView already attaches the surface), so guard it. */
+            @Override public void copyFrame(int[] out) {
+                EmulatorThread t = thread;
+                if (t != null) t.copyFrame(out);
+            }
         });
         glView.setRenderer(renderer);
         glView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
@@ -354,7 +359,7 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         new android.app.AlertDialog.Builder(this)
             .setTitle("BoycottAdvance Reborn")
             .setMessage("Emulador GBA (C).\n\n" +
-                        "Version 1.4.28\n" +
+                        "Version 1.4.30\n" +
                         "Nucleo C99 compartido con los builds de escritorio.\n\n" +
                         "Controles: D-pad, A/B, L/R, SELECT/START en pantalla.\n\n" +
                         "Carga de ROMs: usa \"Carpeta\" para dar acceso a la carpeta\n" +
