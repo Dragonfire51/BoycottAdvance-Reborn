@@ -120,7 +120,7 @@ int main(int argc, char** argv) {
                 fprintf(sf, "P6\n240 160\n255\n");
                 for (int y = 0; y < 160; y++)
                     for (int x = 0; x < 240; x++) {
-                        uint32_t c = p[y * (stride / 4) + x];
+                        uint32_t c = p[y * stride + x];
                         unsigned char rgb[3] = { (unsigned char)(c & 0xFF),
                                                  (unsigned char)((c >> 8) & 0xFF),
                                                  (unsigned char)((c >> 16) & 0xFF) };
@@ -178,7 +178,7 @@ int main(int argc, char** argv) {
                         fprintf(fo, "P6\n240 160\n255\n");
                         for (int y = 0; y < 160; y++)
                             for (int x = 0; x < 240; x++) {
-                                uint32_t c = p[y * (stride / 4) + x];
+                                uint32_t c = p[y * stride + x];
                                 unsigned char rgb[3];
                                 rgb[0] = c & 0xFF; rgb[1] = (c >> 8) & 0xFF; rgb[2] = (c >> 16) & 0xFF;
                                 fwrite(rgb, 1, 3, fo);
@@ -223,7 +223,7 @@ int main(int argc, char** argv) {
             const uint32_t* p = pix;
             for (int y = 0; y < 160; y++)
                 for (int x = 0; x < 240; x++) {
-                    uint32_t c = p[y * (stride / 4) + x];
+                    uint32_t c = p[y * stride + x];
                     unsigned char rgb[3];
                     rgb[0] = c & 0xFF; rgb[1] = (c >> 8) & 0xFF; rgb[2] = (c >> 16) & 0xFF;
                     fwrite(rgb, 1, 3, f);

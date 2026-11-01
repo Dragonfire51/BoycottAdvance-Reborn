@@ -202,23 +202,16 @@ static void swi_cpu_fast_set(GBA *g) {
     uint32_t src = g->cpu.r[0];
     uint32_t dst = g->cpu.r[1];
     uint32_t ctl = g->cpu.r[2];
-    uint32_t count = ctl & 0x1FFFFF;
+    /* GBATEK (SWI 0Ch CpuFastSet): always 32-bit transfers in 32-byte blocks
+       (repeated LDMIA/STMIA r2-r9); bit 26 is NOT a size selector. The
+       wordcount is rounded up to a multiple of 8 words. */
+    uint32_t count = ((ctl & 0x1FFFFF) + 7) & ~7u;
     bool fixed = ctl & 0x01000000;
-    bool is32 = ctl & 0x04000000;
-    if (is32) {
-        for (uint32_t i = 0; i < count; i++) {
-            uint32_t v = gba_read32(g, src);
-            gba_write32(g, dst, v);
-            if (!fixed) src += 4;
-            dst += 4;
-        }
-    } else {
-        for (uint32_t i = 0; i < count; i++) {
-            uint16_t v = gba_read16(g, src);
-            gba_write16(g, dst, v);
-            if (!fixed) src += 2;
-            dst += 2;
-        }
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t v = gba_read32(g, src);
+        gba_write32(g, dst, v);
+        if (!fixed) src += 4;
+        dst += 4;
     }
     /* GBATEK (CpuFastSet): 1 cycle per 32-bit word */
     gba_add_cycles(g, count);

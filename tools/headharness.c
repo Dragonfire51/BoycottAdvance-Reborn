@@ -41,7 +41,35 @@ int main(int argc, char **argv) {
     if (seqdir) { const char* colon = strchr(seqdir, ':'); if (colon) seqstride = atoi(colon + 1); }
     int startf = getenv("STARTF") ? atoi(getenv("STARTF")) : 0;
     for (int f = 0; f < startf; f++) gba_run_frame(g);
+    /* KEYS="START@950:5": same script as -keys/mgbaharness, applied through
+       gba_update_keypad so both emulators see identical input. */
+    const char* keyscript = getenv("KEYS");
+    static uint16_t kmask[60000];
+    if (keyscript) {
+        char buf[8192]; strncpy(buf, keyscript, sizeof buf - 1); buf[sizeof buf - 1] = 0;
+        char* tok = strtok(buf, ",");
+        while (tok) {
+            char* at = strchr(tok, '@');
+            if (at) {
+                *at = 0;
+                int bit = -1;
+                if (!strcmp(tok,"A")) bit=0; else if(!strcmp(tok,"B")) bit=1;
+                else if(!strcmp(tok,"SELECT")) bit=2; else if(!strcmp(tok,"START")) bit=3;
+                else if(!strcmp(tok,"RIGHT")) bit=4; else if(!strcmp(tok,"LEFT")) bit=5;
+                else if(!strcmp(tok,"UP")) bit=6; else if(!strcmp(tok,"DOWN")) bit=7;
+                else if(!strcmp(tok,"R")) bit=8; else if(!strcmp(tok,"L")) bit=9;
+                char* e; long fr = strtol(at+1, &e, 10); long hd = 8;
+                if (*e == ':') hd = strtol(e+1, &e, 10);
+                if (bit >= 0) for (long k = fr; k < fr+hd && k < 60000; k++) kmask[k] |= (1u<<bit);
+            }
+            tok = strtok(NULL, ",");
+        }
+    }
     for (int f = startf; f < nframes; f++) {
+        if (keyscript) {
+            uint16_t pressed = (uint16_t)~kmask[f] & 0x3FF;
+            gba_update_keypad(g, pressed);
+        }
         gba_run_frame(g);
         if (seqdir && ((f - startf) % seqstride) == 0) {
             char sp[600];
