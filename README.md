@@ -185,7 +185,7 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
-- **v1.4.28** - Android port.
+- **v1.4.30** - Android port.
   A working **Android app** built from the same C99 emulation core. The core
   is untouched; the port adds a portable frontend wrapper (`acore.c`, the
   settings/ROM/state/audio glue shared with the desktop), a JNI bridge, an
@@ -196,6 +196,24 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
   (`.github/workflows/android-apk.yml`) and a JNI parity check
   (`tools/android_jni_test.sh`) proves the Android path drives a
   **bit-identical** frame to the desktop build.
+  Alongside the port, the emulation core picked up several fixes:
+  - **Real-time clock (Seiko S-3511)**: Pokemon Emerald/Ruby/Sapphire no
+    longer show "the internal battery has run dry". The chip was detected
+    but `rtc_reg` returned a masked register id (`0xC4 & 0x0E` = 4) that
+    never matched the `0xC4/0xC6/0xC8` cases, so every GPIO write was
+    silently dropped and no command was ever decoded. With the correct
+    register id the game exchanges its four real commands (`C6` control,
+    `E6` datetime, `C6`, `A6` time) and gets a valid BCD date.
+  - **Audio pacing (SDL build)**: `audio_avail()` read
+    `SDL_GetQueuedAudioSize`, which is always 0 when the device is opened
+    in callback mode, so the throttle loop never waited and the emulator
+    ran flat out. It now reads the APU ring buffer.
+  - **Audio sample clock**: `apu_step` returns the cycles the FIFO DMA
+    charges to `g->cycle` during `gen_sample`, so the sample count matches
+    the hardware rate exactly (deficit 0.0793% -> 0%).
+  - **Save states** include the RTC; the save-type heuristic uses the
+    VBA-M markers (`EEPROM_` / `SRAM_` / `FLASH1M_` / `FLASH512_` /
+    `FLASH`), which covers Fire Emblem's `SRAM_F_V`.
 
 - **v1.4.27** - Linux packages and an Android port study.
   **`make packages`** builds distributable **`.deb`** and **`.rpm`** packages

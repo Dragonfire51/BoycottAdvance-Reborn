@@ -36,6 +36,7 @@ gcc -std=c99 -O2 -shared -fPIC -Wall \
     "$ROOT/android/app/src/main/cpp/acore.c" \
     "$ROOT"/src/gba.c "$ROOT"/src/mem.c "$ROOT"/src/arm.c "$ROOT"/src/ppu.c \
     "$ROOT"/src/apu.c "$ROOT"/src/bios.c "$ROOT"/src/eeprom.c "$ROOT"/src/flash.c \
+    "$ROOT"/src/rtc.c \
     -lm -o "$WORK/libboycottadvance.so"
 
 # The Java side mirrors the app's NativeEmulator (same class, same natives).
@@ -92,6 +93,7 @@ gcc -std=c99 -O2 -Wall \
     "$ROOT/tools/acore_test.c" "$ROOT/android/app/src/main/cpp/acore.c" \
     "$ROOT"/src/gba.c "$ROOT"/src/mem.c "$ROOT"/src/arm.c "$ROOT"/src/ppu.c \
     "$ROOT"/src/apu.c "$ROOT"/src/bios.c "$ROOT"/src/eeprom.c "$ROOT"/src/flash.c \
+    "$ROOT"/src/rtc.c \
     -lm -o "$WORK/acore_test"
 REF_CRC=$("$WORK/acore_test" "$ROM" "$BIOS" "$WORK" 120 120 0 \
           | sed -n 's/.*argb crc=\([0-9a-f]*\).*/\1/p')

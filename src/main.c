@@ -432,7 +432,16 @@ static void show_history(void) {
       "    SELECT/START, multi-touch). APK for arm64-v8a,\n"
       "    armeabi-v7a and x86_64. CI builds it and a JNI\n"
       "    parity check proves a bit-identical frame.\n"
-      "  - Desktop builds unchanged (Linux/Windows).");
+      "  - Real-time clock (Seiko S-3511): Pokemon\n"
+      "    Emerald/Ruby/Sapphire no longer report a dry\n"
+      "    internal battery; the clock answers with a\n"
+      "    valid date.\n"
+      "  - Audio pacing: the SDL build no longer runs\n"
+      "    unthrottled (the ring level is now read from\n"
+      "    the APU, not SDL), and the FIFO's DMA cycles\n"
+      "    are returned to the audio clock (0% sample\n"
+      "    deficit).\n"
+      "  - Save states now include the RTC.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

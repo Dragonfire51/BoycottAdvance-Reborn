@@ -64,6 +64,7 @@ gcc -std=c99 -O2 -Wall \
     "$ROOT/tools/acore_test.c" "$ROOT/android/app/src/main/cpp/acore.c" \
     "$ROOT"/src/gba.c "$ROOT"/src/mem.c "$ROOT"/src/arm.c "$ROOT"/src/ppu.c \
     "$ROOT"/src/apu.c "$ROOT"/src/bios.c "$ROOT"/src/eeprom.c "$ROOT"/src/flash.c \
+    "$ROOT"/src/rtc.c \
     -lm -o "$WORK/acore_test"
 
 Z_CRC=$("$WORK/acore_test" "$EXTRACTED" - "$WORK/out" 120 120 0 \

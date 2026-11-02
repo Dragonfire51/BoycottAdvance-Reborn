@@ -21,7 +21,8 @@ set(CORE_SRC
     ${REPO_ROOT}/src/apu.c
     ${REPO_ROOT}/src/bios.c
     ${REPO_ROOT}/src/eeprom.c
-    ${REPO_ROOT}/src/flash.c)
+    ${REPO_ROOT}/src/flash.c
+    ${REPO_ROOT}/src/rtc.c)
 
 add_library(boycottadvance SHARED
     ${CORE_SRC}
