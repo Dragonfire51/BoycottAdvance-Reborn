@@ -38,6 +38,12 @@ int main(int argc, char** argv) {
     /* mGBA defaults to IDLE_LOOP_REMOVE, which skips idle loops and breaks the
        cycle-accuracy tests; use the faithful "ignore" for comparisons. */
     mCoreConfigSetValue(&core->config, "idleOptimization", "ignore");
+    /* The default opts.volume is 0, which mutes masterVolume and makes the
+       captured PCM all zeros. loadConfig reads core->opts (not the config
+       table), so set the struct field directly. */
+    mCoreConfigMap(&core->config, &core->opts);
+    core->opts.volume = 0x100;
+    core->opts.mute = false;
     core->loadConfig(core, &core->config);
 
     static mColor fb[240 * 160];

@@ -18,7 +18,12 @@ public final class EmulatorThread extends Thread {
     public static final int W = 240;
     public static final int H = 160;
     private static final int SAMPLE_RATE = 44100;
-    private static final int FRAME_SAMPLES = 735;   // 44100 / 60
+    /* The core produces 44100*280896/16777216 = 738.35 samples per frame, not
+       735 (44100/60). Draining a fixed count per frame leaves the surplus in
+       the ring, which fills it and then drops the overflow on every frame
+       (audible crackle), so each frame drains whatever the ring actually
+       holds. This is the buffer capacity in samples, not a per-frame amount. */
+    private static final int AUDIO_BUF_FRAMES = 1024;
 
     private final NativeEmulator emu;
     private final Object frameLock = new Object();
@@ -31,7 +36,7 @@ public final class EmulatorThread extends Thread {
     private volatile int keys = 0;
 
     private AudioTrack audio;
-    private short[] audioBuf = new short[FRAME_SAMPLES * 2];
+    private short[] audioBuf = new short[AUDIO_BUF_FRAMES * 2];
     private final Object audioLock = new Object();
 
     /* FPS reporting for the on-screen counter. */
@@ -81,8 +86,8 @@ public final class EmulatorThread extends Thread {
     private void openAudio() {
         int minBuf = AudioTrack.getMinBufferSize(SAMPLE_RATE,
                 AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT);
-        if (minBuf <= 0) minBuf = FRAME_SAMPLES * 4;
-        int bufBytes = Math.max(minBuf * 2, FRAME_SAMPLES * 4 * 2);
+        if (minBuf <= 0) minBuf = AUDIO_BUF_FRAMES * 4;
+        int bufBytes = Math.max(minBuf * 2, AUDIO_BUF_FRAMES * 4 * 2);
         try {
             audio = new AudioTrack(AudioManager.STREAM_MUSIC, SAMPLE_RATE,
                     AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT,
@@ -120,17 +125,31 @@ public final class EmulatorThread extends Thread {
 
             boolean soundOn = emu.getInt(NativeEmulator.SET_SOUND) != 0;
             if (soundOn && audio != null && !fastForward) {
-                int got = emu.audioMix(audioBuf, FRAME_SAMPLES);
-                if (got > 0) {
+                /* Drain everything the ring holds (chunked to audioBuf), not a
+                   fixed 735: the core yields ~738.35 samples/frame, so a fixed
+                   count overflows the ring and drops samples every frame. */
+                int avail = emu.audioAvailable();
+                while (avail > 0) {
+                    int want = Math.min(avail, AUDIO_BUF_FRAMES);
+                    int got = emu.audioMix(audioBuf, want);
+                    if (got <= 0) break;
                     try {
                         audio.write(audioBuf, 0, got * 2);
                     } catch (Throwable t) {
                         // Device gone; keep emulating silently.
+                        break;
                     }
+                    avail -= got;
                 }
             } else {
                 // Drain so the ring does not overflow while muted/fast-forward.
-                emu.audioMix(audioBuf, FRAME_SAMPLES);
+                int avail = emu.audioAvailable();
+                while (avail > 0) {
+                    int want = Math.min(avail, AUDIO_BUF_FRAMES);
+                    int got = emu.audioMix(audioBuf, want);
+                    if (got <= 0) break;
+                    avail -= got;
+                }
             }
 
             if (fastForward) {
