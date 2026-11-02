@@ -90,6 +90,24 @@ typedef struct {
     uint8_t  device;
 } Flash;
 
+/* Real-time clock (Seiko S-3511) behind the cartridge GPIO port
+   (0x080000C4..C8).  Pins: bit0 = SCK, bit1 = SIO, bit2 = CS. */
+typedef struct {
+    uint8_t  read_write;            /* GPIO control: 1 = readable */
+    uint8_t  write_latch;
+    uint8_t  pin_state;
+    uint8_t  direction;
+    int      bytes_remaining;
+    int      bits_read;
+    uint32_t bits;
+    bool     command_active;
+    bool     sck_edge;
+    bool     sio_output;
+    uint32_t command;
+    uint8_t  control;
+    uint8_t  time[7];
+} Rtc;
+
 /* ---- Interrupt flags --------------------------------------------------- */
 #define IF_VBLANK 0x0001
 #define IF_HBLANK 0x0002
@@ -246,6 +264,8 @@ typedef struct GBA {
     int      save_type;           /* SAVE_* */
     Eeprom   eeprom;              /* serial EEPROM (save_type == SAVE_EEPROM) */
     Flash    flash;               /* parallel flash (SAVE_FLASH64/128) */
+    Rtc      rtc;                 /* real-time clock over GPIO (Pokemon RSE) */
+    bool     rtc_present;         /* ROM carries the RTC driver (SIIRTC_V) */
     bool     save_dirty;          /* battery save needs flushing to disk */
 
     uint8_t  io[0x400];           /* I/O registers window */

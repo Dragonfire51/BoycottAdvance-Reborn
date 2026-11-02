@@ -173,15 +173,23 @@ bool gba_load_rom(GBA *g, const char *path) {
     memcpy(g->rom_title, g->rom + 0xA0, 12);
     g->rom_title[12] = 0;
     /* Save type from the marker strings Nintendo's save drivers leave in
-       the ROM image (same heuristic as the reference implementations). */
+       the ROM image (VBA-M src/core/gba/gbaFlash.cpp: EEPROM_ / SRAM_ /
+       FLASH1M_ / FLASH512_ / FLASH prefixes).  Note SRAM_ (not SRAM_V):
+       Fire Emblem's driver leaves "SRAM_F_V", which a literal "SRAM_V"
+       comparison misses, so the ROM ended up with no backup at all. */
     g->save_type = SAVE_NONE;
     for (uint32_t i = 0; i + 12 <= g->rom_size; i++) {
-        if (memcmp(g->rom + i, "FLASH1M_V", 9) == 0) { g->save_type = SAVE_FLASH128; break; }
-        if (memcmp(g->rom + i, "FLASH512_V", 10) == 0 ||
-            memcmp(g->rom + i, "FLASH_V", 7) == 0) { g->save_type = SAVE_FLASH64; break; }
-        if (memcmp(g->rom + i, "SRAM_V", 6) == 0) { g->save_type = SAVE_SRAM; break; }
-        if (memcmp(g->rom + i, "EEPROM_V", 8) == 0) { g->save_type = SAVE_EEPROM; break; }
+        if (memcmp(g->rom + i, "FLASH1M_", 8) == 0) { g->save_type = SAVE_FLASH128; break; }
+        if (memcmp(g->rom + i, "FLASH512_", 9) == 0 ||
+            memcmp(g->rom + i, "FLASH", 5) == 0) { g->save_type = SAVE_FLASH64; break; }
+        if (memcmp(g->rom + i, "SRAM_", 5) == 0) { g->save_type = SAVE_SRAM; break; }
+        if (memcmp(g->rom + i, "EEPROM_", 7) == 0) { g->save_type = SAVE_EEPROM; break; }
     }
+    /* RTC: el driver de Nintendo deja "SIIRTC_V" en la ROM (Pokemon RSE).
+       Solo esos cartuchos mapean el chip en 0x080000C4..C8. */
+    g->rtc_present = false;
+    for (uint32_t i = 0; i + 8 <= g->rom_size; i++)
+        if (memcmp(g->rom + i, "SIIRTC_V", 8) == 0) { g->rtc_present = true; break; }
     g->save_size = g->save_type == SAVE_FLASH128 ? 0x20000 :
                    g->save_type == SAVE_FLASH64  ? 0x10000 :
                    g->save_type == SAVE_SRAM     ? 0x8000  :
@@ -190,6 +198,7 @@ bool gba_load_rom(GBA *g, const char *path) {
     g->save_dirty = false;
     eeprom_init(g);
     flash_init(g);
+    rtc_init(g);
     gba_load_battery(g, path);
     return true;
 }
@@ -391,7 +400,7 @@ int gba_save_state(GBA *g, const char *path) {
     size_t n = 0;
     /* store header */
     memcpy(buf+n, "BARS", 4); n += 4;
-    buf[n++] = 6;   /* version */
+    buf[n++] = 7;   /* version: 7 = adds Rtc to the state */
     /* CPU */
     memcpy(buf+n, &g->cpu, sizeof(g->cpu)); n += sizeof(g->cpu);
     memcpy(buf+n, &g->cst, sizeof(g->cst)); n += sizeof(g->cst);
@@ -419,6 +428,7 @@ int gba_save_state(GBA *g, const char *path) {
     memcpy(buf+n, &g->frameskip, sizeof(g->frameskip)); n += sizeof(g->frameskip);
     memcpy(buf+n, &g->rom_size, sizeof(g->rom_size)); n += sizeof(g->rom_size);
     memcpy(buf+n, &g->save_type, sizeof(g->save_type)); n += sizeof(g->save_type);
+    memcpy(buf+n, &g->rtc, sizeof(g->rtc)); n += sizeof(g->rtc);
 
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
@@ -438,7 +448,7 @@ int gba_load_state(GBA *g, const char *path) {
     if (memcmp(buf+n, "BARS", 4) != 0) return -1;
     n += 4;
     int ver = buf[n++];
-    if (ver != 6) return -1;
+    if (ver != 7) return -1;
     size_t cpu_sz = sizeof(g->cpu);
     if (n + cpu_sz > got) return -1;
     memcpy(&g->cpu, buf+n, cpu_sz); n += cpu_sz;
@@ -469,5 +479,12 @@ int gba_load_state(GBA *g, const char *path) {
     memcpy(&g->frameskip, buf+n, sizeof(g->frameskip)); n += sizeof(g->frameskip);
     memcpy(&g->rom_size, buf+n, sizeof(g->rom_size)); n += sizeof(g->rom_size);
     memcpy(&g->save_type, buf+n, sizeof(g->save_type)); n += sizeof(g->save_type);
+    memcpy(&g->rtc, buf+n, sizeof(g->rtc)); n += sizeof(g->rtc);
+    /* `io` restaura WAITCNT, pero las tablas de waitstates del bus y el buffer
+       de prefetch son estado DERIVADO que solo se recalcula al escribir el
+       registro. Sin esto, tras cargar un estado la emulacion cobra mal el coste
+       de fetch (con WAITCNT=0x4017, prefetch ON) y el juego diverge en ~500
+       frames. */
+    bus_update_waitstates(g);
     return 0;
 }

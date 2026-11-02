@@ -591,8 +591,15 @@ void apu_step(GBA *g, uint32_t cycles) {
     a->sample_acc += (uint64_t)cycles * SAMPLE_RATE;
     while (a->sample_acc >= CPU_HZ) {
         a->sample_acc -= CPU_HZ;
+        uint32_t c0 = g->cycle;
         int16_t l, r;
         gen_sample(g, &l, &r);
         ring_push(l, r);
+        /* gen_sample() puede disparar el DMA del FIFO (apu_fifo_tick ->
+           dma_fifo_request), que carga ciclos en g->cycle. Esos ciclos caen
+           despues del delta que el bucle de frame ya nos paso y antes de que
+           capture el siguiente segmento, asi que sin devolverlos aqui se
+           perdian del reloj de audio (~0.08%: underrun y chasquidos). */
+        a->sample_acc += (uint64_t)(g->cycle - c0) * SAMPLE_RATE;
     }
 }

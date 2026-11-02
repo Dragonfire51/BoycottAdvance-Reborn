@@ -46,6 +46,11 @@ bool flash_in_use(const GBA *g);
 uint8_t flash_read(GBA *g, uint32_t addr);
 void flash_write(GBA *g, uint32_t addr, uint8_t val);
 
+/* real-time clock behind the cartridge GPIO port (0x080000C4..C8) */
+void     rtc_init(GBA *g);
+void     rtc_write(GBA *g, uint32_t reg, uint16_t value);
+uint16_t rtc_read(GBA *g, uint32_t reg);
+
 /* battery save file (path is the ROM path with a .sav suffix) */
 bool gba_save_battery(GBA *g, const char *rom_path);
 void gba_load_battery(GBA *g, const char *rom_path);

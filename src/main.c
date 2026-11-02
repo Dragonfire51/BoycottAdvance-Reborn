@@ -172,11 +172,15 @@ static void audio_cb(void *ud, Uint8 *stream, int len) {
         for (int i = 0; i < n; i++) { int16_t l = out[i*2]; out[i*2] = out[i*2+1]; out[i*2+1] = l; }
 }
 
-/* Number of samples queued for the audio device. */
+/* Number of samples queued for playback.  The device is opened with a
+   callback (audio_cb), and SDL_GetQueuedAudioSize() only reports anything for
+   SDL_QueueAudio() streams: in callback mode it returns 0 forever, so the
+   pacing below never waited and the emulator ran unthrottled (ring overflow,
+   dropped samples, "rayado").  The ring buffer the callback drains is the real
+   queue, so ask it instead. */
 static int audio_avail(void) {
     if (!g_adev) return 0;
-    int hw = SDL_GetQueuedAudioSize(g_adev);
-    return hw > 0 ? hw / (int)(sizeof(int16_t) * AUDIO_CHANNELS) : 0;
+    return apu_available();
 }
 
 /* --------------------------------------------------------------- key state */

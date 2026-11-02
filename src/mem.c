@@ -611,6 +611,16 @@ void io_trigger_keypad(GBA *g, uint32_t cycles) {
 /* Bus abierto del cartucho: fuera de la ROM se lee (direccion/2) & 0xFFFF (GBATEK). */
 static uint16_t rom_open16(uint32_t addr) { return (uint16_t)((addr >> 1) & 0xFFFF); }
 
+/* RTC GPIO: solo el cartucho con RTC mapea 0x080000C4/C6/C8; en cualquier otro
+   caso son ROM normal (GBATEK "GBA Cartridge GPIO"). */
+static bool rtc_reg(GBA *g, uint32_t addr, uint32_t *reg) {
+    if (!g->rtc_present) return false;
+    uint32_t a = addr & 0x0FFFFFFEu;
+    if (a < 0x080000C4u || a > 0x080000C8u) return false;
+    *reg = a & 0xFFu;                 /* 0xC4 / 0xC6 / 0xC8 */
+    return true;
+}
+
 static uint16_t rom_read16(GBA *g, uint32_t addr) {
     uint32_t off = addr & 0x01FFFFFEu;
     return off + 1 < g->rom_size ? rd16_al(g->rom + off) : rom_open16(addr);
@@ -658,9 +668,12 @@ uint16_t gba_read16(GBA *g, uint32_t addr) {
     case 0x05: return rd16_al(g->pal + (addr & 0x3FE));
     case 0x06: { uint32_t o = addr & 0x1FFFE; if (o >= 0x18000) o -= 0x8000; return rd16_al(g->vram + o); }
     case 0x07: return rd16_al(g->oam + (addr & 0x3FE));
-    case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D:
+    case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D: {
+        uint32_t rg;
+        if (rtc_reg(g, addr, &rg)) return rtc_read(g, rg);
         if (eeprom_addr_in_range(g, addr)) return (uint16_t)(eeprom_read_bit(g) & 1);
         return rom_read16(g, addr & ~1u);
+    }
     case 0x0E: case 0x0F: return (uint16_t)(backup_read8(g, addr) * 0x0101u);
     default: return 0;
     }
@@ -676,6 +689,11 @@ uint8_t gba_read8(GBA *g, uint32_t addr) {
     case 0x06: { uint32_t o = addr & 0x1FFFF; if (o >= 0x18000) o -= 0x8000; return g->vram[o]; }
     case 0x07: return g->oam[addr & 0x3FF];
     case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: case 0x0D: {
+        uint32_t rg;
+        if (rtc_reg(g, addr, &rg)) {
+            uint16_t v = rtc_read(g, rg);
+            return (uint8_t)((addr & 1) ? (v >> 8) : v);
+        }
         if (eeprom_addr_in_range(g, addr))
             return (addr & 1) ? 0 : eeprom_read_bit(g);   /* bit 0 of each halfword */
         uint16_t h = rom_read16(g, addr & ~1u);
@@ -716,6 +734,11 @@ void gba_write16(GBA *g, uint32_t addr, uint16_t v) {
             if (g->eeprom.dirty) { g->save_dirty = true; g->eeprom.dirty = false; }
         }
         return;
+    case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: {
+        uint32_t rg;
+        if (rtc_reg(g, addr, &rg)) { rtc_write(g, rg, v); return; }
+        return;   /* ROM write-protected */
+    }
     case 0x0E: case 0x0F:
         backup_write8(g, addr, (uint8_t)(v >> ((addr & 1) * 8))); return;
     default: return;
@@ -785,6 +808,20 @@ void gba_write8(GBA *g, uint32_t addr, uint8_t v) {
         return;
     }
     case 0x07: return;                       /* OAM: escrituras de 8 bit ignoradas */
+    case 0x08: case 0x09: case 0x0A: case 0x0B: case 0x0C: {
+        /* El GPIO es un bus de 16 bit: la escritura de 8 bit se aplica al
+           halfword completo (merge con el byte crudo ya escrito). */
+        uint32_t rg;
+        if (rtc_reg(g, addr, &rg)) {
+            /* Mezcla con el latch crudo (rtc_read devuelve 0 si el GPIO no es
+               legible, lo que perderia el otro byte). */
+            uint16_t cur = rg == 0xC4 ? g->rtc.write_latch : g->rtc.direction;
+            if (addr & 1) cur = (uint16_t)((cur & 0x00FF) | (v << 8));
+            else          cur = (uint16_t)((cur & 0xFF00) | v);
+            rtc_write(g, rg, cur);
+        }
+        return;
+    }
     case 0x0D: return;
     case 0x0E: case 0x0F: backup_write8(g, addr, v); return;
     default: return;
