@@ -33,6 +33,13 @@ target_include_directories(boycottadvance PRIVATE
     ${REPO_ROOT}/src
     ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Gradle builds the APK with the CMake "Debug" build type, whose default flags
+# are just -g (no optimization). At -O0 the interpreter cannot reach real time
+# on a phone (measured ~1.06x real time at -O0 vs ~3.9x at -O2 on a desktop
+# CPU), so the emulation falls behind: the audio device starves (crackle) and
+# frame pacing stutters. Force the same -O2 the desktop builds use.
+target_compile_options(boycottadvance PRIVATE -O2)
+
 # Android logging + the system libraries the frontend uses.
 find_library(log-lib log)
 find_library(android-lib android)
