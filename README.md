@@ -1,5 +1,11 @@
 # BoycottAdvance Reborn
 
+> **Work in progress (WIP).** This emulator is under active development and is
+> **not finished**. Some commercial titles still show graphics or audio
+> glitches, cycle-accurate timing is still being refined, and features may
+> change or break between builds. Do not expect perfect compatibility yet.
+> Feedback and bug reports are welcome.
+
 A modern, clean-room reconstruction of the **BoycottAdvance 0.2.8** Game Boy
 Advance emulator (originally written in C by Julien Frelat "Gollum", 2003).
 
