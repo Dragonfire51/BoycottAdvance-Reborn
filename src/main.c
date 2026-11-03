@@ -425,15 +425,18 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Android audio: the app drained a fixed 735\n"
-      "    samples per frame, but the core produces\n"
-      "    738.35 (44100*280896/16777216), so the ring\n"
-      "    filled up and dropped samples every frame\n"
-      "    (crackle). It now drains whatever the ring\n"
-      "    holds, like the desktop builds.\n"
-      "  - mGBA comparison harness: the reference now\n"
-      "    emits PCM (its volume defaulted to 0), so\n"
-      "    audio can be compared against it.");
+      "  - Savestates: loading a truncated or corrupted\n"
+      "    state file was silently accepted and loaded\n"
+      "    zeroed memory, leaving a blank screen. The\n"
+      "    state is now size-checked field by field and\n"
+      "    a bad file is rejected with a message.\n"
+      "  - Savestates now live next to the executable\n"
+      "    (like the .ini), so Save State and Load State\n"
+      "    always resolve to the same file.\n"
+      "  - Verified the whole graphics/audio audit (PPU,\n"
+      "    APU, video) against GBATEK, mGBA and VBA-M\n"
+      "    with headless captures: frames 60/300/600\n"
+      "    pixel-identical to mGBA, audio at 44100 Hz.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

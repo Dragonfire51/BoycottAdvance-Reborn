@@ -449,37 +449,39 @@ int gba_load_state(GBA *g, const char *path) {
     n += 4;
     int ver = buf[n++];
     if (ver != 7) return -1;
-    size_t cpu_sz = sizeof(g->cpu);
-    if (n + cpu_sz > got) return -1;
-    memcpy(&g->cpu, buf+n, cpu_sz); n += cpu_sz;
-    size_t cst_sz = sizeof(g->cst);
-    if (n + cst_sz > got) return -1;
-    memcpy(&g->cst, buf+n, cst_sz); n += cst_sz;
-    if (n + sizeof(g->cycle) > got) return -1;
-    memcpy(&g->cycle, buf+n, sizeof(g->cycle)); n += sizeof(g->cycle);
-    memcpy(g->ewram, buf+n, sizeof(g->ewram)); n += sizeof(g->ewram);
-    memcpy(g->iwram, buf+n, sizeof(g->iwram)); n += sizeof(g->iwram);
-    memcpy(g->vram, buf+n, sizeof(g->vram)); n += sizeof(g->vram);
-    memcpy(g->oam, buf+n, sizeof(g->oam)); n += sizeof(g->oam);
-    memcpy(g->pal, buf+n, sizeof(g->pal)); n += sizeof(g->pal);
-    memcpy(g->io, buf+n, sizeof(g->io)); n += sizeof(g->io);
-    memcpy(g->io_raw, buf+n, sizeof(g->io_raw)); n += sizeof(g->io_raw);
-    memcpy(g->save_mem, buf+n, sizeof(g->save_mem)); n += sizeof(g->save_mem);
-    memcpy(&g->eeprom, buf+n, sizeof(g->eeprom)); n += sizeof(g->eeprom);
-    memcpy(&g->ie, buf+n, sizeof(g->ie)); n += sizeof(g->ie);
-    memcpy(&g->if_reg, buf+n, sizeof(g->if_reg)); n += sizeof(g->if_reg);
-    memcpy(&g->ime, buf+n, sizeof(g->ime)); n += sizeof(g->ime);
-    memcpy(&g->sio_cnt, buf+n, sizeof(g->sio_cnt)); n += sizeof(g->sio_cnt);
-    memcpy(&g->sio_data, buf+n, sizeof(g->sio_data)); n += sizeof(g->sio_data);
-    memcpy(&g->sio_deadline, buf+n, sizeof(g->sio_deadline)); n += sizeof(g->sio_deadline);
-    memcpy(&g->ppu, buf+n, sizeof(g->ppu)); n += sizeof(g->ppu);
-    memcpy(&g->timer, buf+n, sizeof(g->timer)); n += sizeof(g->timer);
-    memcpy(&g->dma, buf+n, sizeof(g->dma)); n += sizeof(g->dma);
-    memcpy(&g->apu, buf+n, sizeof(g->apu)); n += sizeof(g->apu);
-    memcpy(&g->frameskip, buf+n, sizeof(g->frameskip)); n += sizeof(g->frameskip);
-    memcpy(&g->rom_size, buf+n, sizeof(g->rom_size)); n += sizeof(g->rom_size);
-    memcpy(&g->save_type, buf+n, sizeof(g->save_type)); n += sizeof(g->save_type);
-    memcpy(&g->rtc, buf+n, sizeof(g->rtc)); n += sizeof(g->rtc);
+    /* Cada campo se comprueba contra `got` antes de copiarlo: un savestate
+       truncado (escritura interrumpida, copia a medias, fichero de otra
+       version) antes se aceptaba como valido y cargaba memoria a ceros ->
+       pantalla en blanco sin ningun aviso.  Ahora se rechaza. */
+#define RD(dst, sz) do { if (n + (sz) > got) return -1; \
+                         memcpy((dst), buf + n, (sz)); n += (sz); } while (0)
+    RD(&g->cpu, sizeof(g->cpu));
+    RD(&g->cst, sizeof(g->cst));
+    RD(&g->cycle, sizeof(g->cycle));
+    RD(g->ewram, sizeof(g->ewram));
+    RD(g->iwram, sizeof(g->iwram));
+    RD(g->vram, sizeof(g->vram));
+    RD(g->oam, sizeof(g->oam));
+    RD(g->pal, sizeof(g->pal));
+    RD(g->io, sizeof(g->io));
+    RD(g->io_raw, sizeof(g->io_raw));
+    RD(g->save_mem, sizeof(g->save_mem));
+    RD(&g->eeprom, sizeof(g->eeprom));
+    RD(&g->ie, sizeof(g->ie));
+    RD(&g->if_reg, sizeof(g->if_reg));
+    RD(&g->ime, sizeof(g->ime));
+    RD(&g->sio_cnt, sizeof(g->sio_cnt));
+    RD(&g->sio_data, sizeof(g->sio_data));
+    RD(&g->sio_deadline, sizeof(g->sio_deadline));
+    RD(&g->ppu, sizeof(g->ppu));
+    RD(&g->timer, sizeof(g->timer));
+    RD(&g->dma, sizeof(g->dma));
+    RD(&g->apu, sizeof(g->apu));
+    RD(&g->frameskip, sizeof(g->frameskip));
+    RD(&g->rom_size, sizeof(g->rom_size));
+    RD(&g->save_type, sizeof(g->save_type));
+    RD(&g->rtc, sizeof(g->rtc));
+#undef RD
     /* `io` restaura WAITCNT, pero las tablas de waitstates del bus y el buffer
        de prefetch son estado DERIVADO que solo se recalcula al escribir el
        registro. Sin esto, tras cargar un estado la emulacion cobra mal el coste

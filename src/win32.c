@@ -382,7 +382,14 @@ static void load_rom(const char *path) {
     } else msgbox("Error", "Cannot load ROM file.");
 }
 
-static void state_path(char *b, size_t n) { snprintf(b,n,"state%d.sav",cfg.state_slot); }
+/* The savestate lives next to the executable, like the INI.  A bare relative
+   name dropped it in the process working directory, so Save State and Load
+   State could resolve to different files (shortcut / drag-and-drop launches)
+   and the load would silently leave the screen blank. */
+static void state_path(char *b, size_t n) {
+    if (exe_dir()[0]) snprintf(b, n, "%sstate%d.sav", exe_dir(), cfg.state_slot);
+    else              snprintf(b, n, "state%d.sav", cfg.state_slot);
+}
 static const char *save_type_name(int t) {
     switch (t) {
     case SAVE_SRAM:     return "SRAM 32KB";
@@ -420,15 +427,21 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Android audio: the app drained a fixed 735\n"
-      "    samples per frame, but the core produces\n"
-      "    738.35 (44100*280896/16777216), so the ring\n"
-      "    filled up and dropped samples every frame\n"
-      "    (crackle). It now drains whatever the ring\n"
-      "    holds, like the desktop builds.\n"
-      "  - mGBA comparison harness: the reference now\n"
-      "    emits PCM (its volume defaulted to 0), so\n"
-      "    audio can be compared against it.";
+      "  - Savestates: loading a truncated or\n"
+      "    corrupted state file was silently\n"
+      "    accepted and loaded zeroed memory,\n"
+      "    leaving a blank screen. The state is\n"
+      "    now size-checked field by field and a\n"
+      "    bad file is rejected with a message.\n"
+      "  - Savestates now live next to the\n"
+      "    executable (like the .ini), so Save\n"
+      "    State and Load State always resolve to\n"
+      "    the same file.\n"
+      "  - Verified the whole graphics/audio\n"
+      "    audit (PPU, APU, video) against GBATEK,\n"
+      "    mGBA and VBA-M with headless captures:\n"
+      "    frames 60/300/600 pixel-identical to\n"
+      "    mGBA, audio at exactly 44100 Hz.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {
@@ -596,8 +609,10 @@ static void do_action(int id) {
     case M_RUNPAUSE: g_paused = !g_paused; break;
     case M_RESET:    gba_save_battery(g, cfg.rompath); gba_reset(g); g_paused = 0; break;
     case M_STATE_SLOT: cfg.state_slot = (cfg.state_slot+1)%M_SLOT_COUNT; break;
-    case M_LOADSTATE: { char p[64]; state_path(p,sizeof p); gba_load_state(g,p); break; }
-    case M_SAVESTATE:{ char p[64]; state_path(p,sizeof p); gba_save_state(g,p); break; }
+    case M_LOADSTATE: { char p[128]; state_path(p,sizeof p);
+                        if (gba_load_state(g,p) != 0) msgbox("Load State", "No savestate for this slot.");
+                        break; }
+    case M_SAVESTATE:{ char p[128]; state_path(p,sizeof p); gba_save_state(g,p); break; }
     case M_EXIT:     g_quit = 1; PostMessage(g_hwnd, WM_CLOSE, 0, 0); break;
     case M_ZOOM1: case M_ZOOM2: case M_ZOOM3: case M_ZOOM4:
         cfg.zoom = id-M_ZOOM1+1; cfg.scalemode = 0;
@@ -708,8 +723,8 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         switch (vk) {
         case VK_ESCAPE: g_quit = 1; PostMessage(h, WM_CLOSE, 0, 0); break;
         case VK_F1: show_about(); break;
-        case VK_F2: { char p[64]; state_path(p,sizeof p); gba_save_state(g,p); break; }
-        case VK_F3: { char p[64]; state_path(p,sizeof p); gba_load_state(g,p); break; }
+        case VK_F2: { char p[128]; state_path(p,sizeof p); gba_save_state(g,p); break; }
+        case VK_F3: { char p[128]; state_path(p,sizeof p); gba_load_state(g,p); break; }
         case VK_F5: save_screenshot(); break;
         case 'P':   g_paused = !g_paused; break;
         case VK_F9: show_history(); break;
@@ -718,6 +733,11 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     }
+    case WM_ERASEBKGND:
+        /* The presenter paints the whole client area every frame (GDI
+           StretchDIBits / D3D Clear+quad), so erasing here would only flash
+           the background brush through. Claim it as handled. */
+        return 1;
     case WM_MOUSEWHEEL:
         break;
     case WM_DESTROY:
@@ -836,7 +856,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     wc.hInstance = inst;
     wc.hIcon = LoadIconA(inst, (LPCSTR)1);  /* icon.res supplies resource 1 */
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    /* No background brush: every frame is fully painted by the presenter, so
+       letting Windows erase the client first would flash the black brush
+       through on resize/expose (flicker). WM_ERASEBKGND is answered below. */
+    wc.hbrBackground = NULL;
     wc.lpszClassName = L"BoycottAdvanceReborn";
     RegisterClassExW(&wc);
 

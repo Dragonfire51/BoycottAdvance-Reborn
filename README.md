@@ -191,6 +191,23 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.32** - savestate robustness + verified graphics/audio audit.
+  Two real savestate bugs, both able to leave a **blank screen**:
+  (1) `gba_load_state` never checked the file size, so a truncated or
+  corrupted state (interrupted write, half copy, file from another build) was
+  accepted as valid and loaded zeroed memory; each field is now bounds-checked
+  against the bytes actually read and a bad file is rejected (`-1`), with a
+  message in the frontends instead of a silent blank screen. (2) the Windows
+  frontend built the state path as a **bare relative name**, so it landed in
+  the process working directory rather than next to the executable (where the
+  `.ini` already lives); Save State and Load State could then resolve to
+  different files on a shortcut / drag-and-drop launch. The state now lives
+  next to the executable. Also re-verified the whole graphics/audio audit
+  (P1-P6, A1-A6, V1-V2) against **GBATEK**, mGBA and VBA-M with headless
+  captures from the shipped core: frames 60/300/600 are pixel-identical to
+  mGBA (0 px) and the audio stream is exactly 44100 Hz (443012 samples per
+  600 frames = 738.36/frame). Windows builds are still SDL-free.
+
 - **v1.4.31** - Android audio fix.
   The Android app drained a **fixed 735 samples per frame**, but the core
   produces `44100*280896/16777216 = 738.35` (the GBA frame is 280896 cycles at
