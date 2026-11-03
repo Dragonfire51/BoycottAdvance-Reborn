@@ -16,7 +16,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define GBA_VERSION  "v1.4.32"
+#define GBA_VERSION  "v1.4.33"
 #define GBA_NAME     "BoycottAdvance Reborn"
 #define GBA_TITLE    GBA_NAME " " GBA_VERSION
 
@@ -340,6 +340,9 @@ void gba_reset(GBA *g);
 void gba_load_bios(GBA *g, const char *path);
 bool gba_load_rom(GBA *g, const char *path);
 void gba_set_savetype(GBA *g, int type);
+/* Re-derive the cartridge description (save type + size) from the ROM image.
+   Called on ROM load and after loading a savestate. */
+void gba_recompute_cart(GBA *g);
 bool gba_save_battery(GBA *g, const char *rom_path);
 void gba_load_battery(GBA *g, const char *rom_path);
 

@@ -62,6 +62,8 @@ bool acore_load_bios(Acore *a, const char *path) {
 }
 
 bool acore_load_rom(Acore *a, const char *path) {
+    /* Flush the battery of the ROM being replaced before its state is gone. */
+    if (a->have_rom && a->rom_path[0]) gba_save_battery(&a->g, a->rom_path);
     if (!gba_load_rom(&a->g, path)) return false;
     snprintf(a->rom_path, sizeof a->rom_path, "%s", path);
     a->have_rom = 1;

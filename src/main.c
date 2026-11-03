@@ -342,6 +342,8 @@ static void rom_activate(int idx) {
 
 /* ------------------------------------------------------------------ actions */
 static void load_rom(const char *path) {
+    /* Flush the battery of the ROM being replaced before its state is gone. */
+    if (g->rom_size > 0 && cfg.rompath[0]) gba_save_battery(g, cfg.rompath);
     if (gba_load_rom(g, path)) {
         snprintf(cfg.rompath, sizeof cfg.rompath, "%s", path);
         const char *sl = strrchr(path,'/'); if (!sl) sl = strrchr(path,'\\');
@@ -387,7 +389,14 @@ static void gui_native_setup(void) {
                                  gba_icon_argb, GBA_ICON_W, GBA_ICON_H, &cb);
 #endif
 }
-static void state_path(char *b, size_t n) { snprintf(b,n,"state%d.sav",cfg.state_slot); }
+/* The savestate belongs to one specific ROM: stored next to the ROM as
+   "<rom>.ss<slot>".  A shared "state<N>.sav" name made Load State pull
+   another game's state (clobbering the backup type and crashing).  The
+   extension differs from the battery ".sav" so the two are never confused. */
+static void state_path(char *b, size_t n) {
+    if (cfg.rompath[0]) snprintf(b, n, "%s.ss%d", cfg.rompath, cfg.state_slot);
+    else                snprintf(b, n, "state%d.sav", cfg.state_slot);
+}
 static const char *save_type_name(int t) {
     switch (t) {
     case SAVE_SRAM:     return "SRAM 32KB";
@@ -425,18 +434,20 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Savestates: loading a truncated or corrupted\n"
-      "    state file was silently accepted and loaded\n"
-      "    zeroed memory, leaving a blank screen. The\n"
-      "    state is now size-checked field by field and\n"
-      "    a bad file is rejected with a message.\n"
-      "  - Savestates now live next to the executable\n"
-      "    (like the .ini), so Save State and Load State\n"
-      "    always resolve to the same file.\n"
-      "  - Verified the whole graphics/audio audit (PPU,\n"
-      "    APU, video) against GBATEK, mGBA and VBA-M\n"
-      "    with headless captures: frames 60/300/600\n"
-      "    pixel-identical to mGBA, audio at 44100 Hz.");
+      "  - Battery saves (.sav) work again. Loading a\n"
+      "    savestate from another game used to\n"
+      "    overwrite the backup type, so the .sav was\n"
+      "    written/read with the wrong size (and could\n"
+      "    crash). A state now carries the game code\n"
+      "    and ROM size and only loads back into the\n"
+      "    game it came from; the backup type is\n"
+      "    re-derived from the ROM.\n"
+      "  - Savestates are per game: \"<rom>.ss<slot>\"\n"
+      "    instead of a shared \"state<N>.sav\".\n"
+      "  - Switching ROMs flushes the previous game's\n"
+      "    battery before its state is replaced.\n"
+      "  - A truncated/corrupted state is rejected\n"
+      "    with a message instead of a blank screen.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",
@@ -470,8 +481,8 @@ static void do_action(int id) {
     case M_RUNPAUSE: g_paused = !g_paused; break;
     case M_RESET: gba_save_battery(g, cfg.rompath); gba_reset(g); g_paused = 0; break;
     case M_STATE_SLOT: cfg.state_slot = (cfg.state_slot+1)%10; break;
-    case M_LOADSTATE: { char p[64]; state_path(p,sizeof p); gba_load_state(g,p); break; }
-    case M_SAVESTATE:{ char p[64]; state_path(p,sizeof p); gba_save_state(g,p); break; }
+    case M_LOADSTATE: { char p[600]; state_path(p,sizeof p); if (gba_load_state(g,p) != 0) dlg_text("Load State","No savestate for this slot."); break; }
+    case M_SAVESTATE:{ char p[600]; state_path(p,sizeof p); gba_save_state(g,p); break; }
     case M_EXIT: { SDL_Event q; q.type=SDL_QUIT; SDL_PushEvent(&q); break; }
     case M_ZOOM1: case M_ZOOM2: case M_ZOOM3: case M_ZOOM4:
         cfg.zoom = id-M_ZOOM1+1; cfg.scalemode = 0;
@@ -811,8 +822,8 @@ int main(int argc, char **argv) {
                 if (dialog_kind) { if (k==SDLK_ESCAPE) dialog_kind=0; continue; }
                 if (k==SDLK_ESCAPE) { if (menu_open>=0) menu_open=-1; else running=0; }
                 else if (k==SDLK_F1) show_about();
-                else if (k==SDLK_F2) { char p[64]; state_path(p,sizeof p); gba_save_state(g,p); }
-                else if (k==SDLK_F3) { char p[64]; state_path(p,sizeof p); gba_load_state(g,p); }
+                else if (k==SDLK_F2) { char p[600]; state_path(p,sizeof p); gba_save_state(g,p); }
+                else if (k==SDLK_F3) { char p[600]; state_path(p,sizeof p); if (gba_load_state(g,p)!=0) dlg_text("Load State","No savestate for this slot."); }
                 else if (k==SDLK_F5) { FILE*f=fopen("shot.ppm","wb"); if(f){fwrite("P6\n240 160\n255\n",1,14,f);
                     for(int y2=0;y2<SCREEN_H;y2++)for(int x2=0;x2<SCREEN_W;x2++){uint16_t c=g->ppu.frame[y2*SCREEN_W+x2];
                     int r5=c&0x1F,g5=(c>>5)&0x1F,b5=(c>>10)&0x1F;

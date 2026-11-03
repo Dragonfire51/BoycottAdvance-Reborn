@@ -152,6 +152,33 @@ void gba_load_bios(GBA *g, const char *path) {
     g->bios_loaded = (got == BIOS_SIZE);
 }
 
+/* Save size implied by the backup type.  Kept in one place so `save_size`
+   can never desync from `save_type` (a desync wrote/read the .sav with the
+   wrong length). */
+static uint32_t save_size_for(int type) {
+    return type == SAVE_FLASH128 ? 0x20000 :
+           type == SAVE_FLASH64  ? 0x10000 :
+           type == SAVE_SRAM     ? 0x8000  :
+           type == SAVE_EEPROM   ? EEPROM_SIZE : 0;
+}
+
+/* Derive the cartridge description (save type + size) from the ROM image.
+   Runs on load and whenever a state is loaded, so the backup type always
+   matches the ROM that is actually loaded.  Pure computation: it does not
+   touch the backup devices (see gba_load_rom for their initialisation), so it
+   is safe to call after restoring a state. */
+void gba_recompute_cart(GBA *g) {
+    g->save_type = SAVE_NONE;
+    for (uint32_t i = 0; i + 12 <= g->rom_size; i++) {
+        if (memcmp(g->rom + i, "FLASH1M_", 8) == 0) { g->save_type = SAVE_FLASH128; break; }
+        if (memcmp(g->rom + i, "FLASH512_", 9) == 0 ||
+            memcmp(g->rom + i, "FLASH", 5) == 0) { g->save_type = SAVE_FLASH64; break; }
+        if (memcmp(g->rom + i, "SRAM_", 5) == 0) { g->save_type = SAVE_SRAM; break; }
+        if (memcmp(g->rom + i, "EEPROM_", 7) == 0) { g->save_type = SAVE_EEPROM; break; }
+    }
+    g->save_size = save_size_for(g->save_type);
+}
+
 bool gba_load_rom(GBA *g, const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return false;
@@ -177,23 +204,12 @@ bool gba_load_rom(GBA *g, const char *path) {
        FLASH1M_ / FLASH512_ / FLASH prefixes).  Note SRAM_ (not SRAM_V):
        Fire Emblem's driver leaves "SRAM_F_V", which a literal "SRAM_V"
        comparison misses, so the ROM ended up with no backup at all. */
-    g->save_type = SAVE_NONE;
-    for (uint32_t i = 0; i + 12 <= g->rom_size; i++) {
-        if (memcmp(g->rom + i, "FLASH1M_", 8) == 0) { g->save_type = SAVE_FLASH128; break; }
-        if (memcmp(g->rom + i, "FLASH512_", 9) == 0 ||
-            memcmp(g->rom + i, "FLASH", 5) == 0) { g->save_type = SAVE_FLASH64; break; }
-        if (memcmp(g->rom + i, "SRAM_", 5) == 0) { g->save_type = SAVE_SRAM; break; }
-        if (memcmp(g->rom + i, "EEPROM_", 7) == 0) { g->save_type = SAVE_EEPROM; break; }
-    }
+    gba_recompute_cart(g);
     /* RTC: el driver de Nintendo deja "SIIRTC_V" en la ROM (Pokemon RSE).
        Solo esos cartuchos mapean el chip en 0x080000C4..C8. */
     g->rtc_present = false;
     for (uint32_t i = 0; i + 8 <= g->rom_size; i++)
         if (memcmp(g->rom + i, "SIIRTC_V", 8) == 0) { g->rtc_present = true; break; }
-    g->save_size = g->save_type == SAVE_FLASH128 ? 0x20000 :
-                   g->save_type == SAVE_FLASH64  ? 0x10000 :
-                   g->save_type == SAVE_SRAM     ? 0x8000  :
-                   g->save_type == SAVE_EEPROM   ? EEPROM_SIZE : 0;
     memset(g->save_mem, 0xFF, sizeof(g->save_mem));
     g->save_dirty = false;
     eeprom_init(g);
@@ -238,10 +254,7 @@ bool gba_save_battery(GBA *g, const char *rom_path) {
 
 void gba_set_savetype(GBA *g, int type) {
     g->save_type = type;
-    g->save_size = type == SAVE_FLASH128 ? 0x20000 :
-                   type == SAVE_FLASH64  ? 0x10000 :
-                   type == SAVE_SRAM     ? 0x8000  :
-                   type == SAVE_EEPROM   ? EEPROM_SIZE : 0;
+    g->save_size = save_size_for(type);
     flash_init(g);
 }
 
@@ -400,7 +413,12 @@ int gba_save_state(GBA *g, const char *path) {
     size_t n = 0;
     /* store header */
     memcpy(buf+n, "BARS", 4); n += 4;
-    buf[n++] = 7;   /* version: 7 = adds Rtc to the state */
+    buf[n++] = 8;   /* version: 8 = per-game identity in the header */
+    /* Identity: game code + ROM size.  A state may only be loaded back into
+       the ROM it was taken from.  Without this a state from another game was
+       applied as-is, which clobbered the backup type and crashed. */
+    memcpy(buf+n, g->rom + 0xAC, 4); n += 4;             /* game code */
+    memcpy(buf+n, &g->rom_size, sizeof(g->rom_size)); n += sizeof(g->rom_size);
     /* CPU */
     memcpy(buf+n, &g->cpu, sizeof(g->cpu)); n += sizeof(g->cpu);
     memcpy(buf+n, &g->cst, sizeof(g->cst)); n += sizeof(g->cst);
@@ -448,7 +466,16 @@ int gba_load_state(GBA *g, const char *path) {
     if (memcmp(buf+n, "BARS", 4) != 0) return -1;
     n += 4;
     int ver = buf[n++];
-    if (ver != 7) return -1;
+    if (ver != 8) return -1;
+    /* Identity: refuse a state that belongs to a different ROM.  Applying a
+       foreign state used to corrupt the backup type/size and crash. */
+    if (n + 4 > got) return -1;
+    if (memcmp(buf + n, g->rom + 0xAC, 4) != 0) return -1;
+    n += 4;
+    uint32_t st_rom_size;
+    if (n + sizeof(st_rom_size) > got) return -1;
+    memcpy(&st_rom_size, buf + n, sizeof(st_rom_size)); n += sizeof(st_rom_size);
+    if (st_rom_size != g->rom_size) return -1;
     /* Cada campo se comprueba contra `got` antes de copiarlo: un savestate
        truncado (escritura interrumpida, copia a medias, fichero de otra
        version) antes se aceptaba como valido y cargaba memoria a ceros ->
@@ -478,10 +505,19 @@ int gba_load_state(GBA *g, const char *path) {
     RD(&g->dma, sizeof(g->dma));
     RD(&g->apu, sizeof(g->apu));
     RD(&g->frameskip, sizeof(g->frameskip));
-    RD(&g->rom_size, sizeof(g->rom_size));
-    RD(&g->save_type, sizeof(g->save_type));
+    /* `rom_size` and `save_type` describe the cartridge, not the emulation
+       state: they come from the loaded ROM and are NOT taken from the file
+       (the state is only ever loaded into the ROM it was saved from).  The
+       bytes are read and discarded to keep the offsets in sync; `save_size`
+       is recomputed from `save_type` so the two can never desync (which is
+       what wrote/read the .sav with the wrong size). */
+    { uint32_t skip32; int skip_i;
+      RD(&skip32, sizeof(skip32));
+      RD(&skip_i, sizeof(skip_i)); }
     RD(&g->rtc, sizeof(g->rtc));
 #undef RD
+    gba_recompute_cart(g);
+    flash_init(g);
     /* `io` restaura WAITCNT, pero las tablas de waitstates del bus y el buffer
        de prefetch son estado DERIVADO que solo se recalcula al escribir el
        registro. Sin esto, tras cargar un estado la emulacion cobra mal el coste

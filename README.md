@@ -191,6 +191,23 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.33** - battery saves (.sav) and per-game savestates.
+  Two user-visible bugs, both rooted in the savestate format. (1) **Loading a
+  savestate from another game overwrote the backup type**: the state stored
+  `save_type` (and `rom_size`) and `gba_load_state` copied them straight in,
+  but never restored `save_size`. Loading a state from a flash game into an
+  SRAM game (or vice versa) left `save_type` and `save_size` inconsistent, so
+  the next `.sav` write/read used the wrong length - the save silently stopped
+  working, and a mismatched state could crash. The cartridge description
+  (`save_type`/`save_size`) is now **re-derived from the loaded ROM** after a
+  state load (`gba_recompute_cart`) and never taken from the file. (2) the
+  state now carries the **game code + ROM size** in its header and is refused
+  unless it belongs to the ROM it is loaded into. Additionally the savestates
+  are now **per game**: stored next to the ROM as `<rom>.ss<slot>` instead of a
+  single shared `state<N>.sav` for every title, so Load State can never pull
+  another game's state. Switching ROMs flushes the previous game's battery
+  before its state is replaced. State format bumped to v8.
+
 - **v1.4.32** - savestate robustness + verified graphics/audio audit.
   Two real savestate bugs, both able to leave a **blank screen**:
   (1) `gba_load_state` never checked the file size, so a truncated or
