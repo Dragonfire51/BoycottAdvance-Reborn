@@ -132,6 +132,52 @@ los desplazo +4 bytes y rompio todas las capas con ventana.)
   V2 (`fit_rect` 3:2 con letterbox + filtros POINT explicitos) ya en `video.c`.
   No se reescribio ninguno de estos: solo el fix del affine-set.
 
+## RELEASE v1.4.33 (publicado 2026-11-03)
+
+- **Queja del usuario**: "cada `.sav` debe corresponder a cada juego y cada
+  savestate tambien; son por separado y NO intercambiables". Dos bugs reales,
+  ambos con raiz en el formato del savestate.
+- **Bug 1 (`.sav` deja de guardar / desincronia de tamano)**: `gba_save_state`
+  guardaba `save_type` **y** `rom_size`, pero `gba_load_state` restauraba solo
+  `save_type` (nunca `save_size`). Cargar un state de un juego flash (Emerald,
+  `SAVE_FLASH128`, 128 KB) sobre uno SRAM (Fire Emblem, 32 KB) dejaba
+  `save_type=3` con `save_size=32768`: el siguiente `gba_save_battery` escribia
+  el tamano equivocado y el `.sav` dejaba de funcionar (y el state ajeno podia
+  crashear). **Arreglo**: `save_type`/`save_size` describen el **cartucho**, no
+  el estado, asi que ya **no** se toman del fichero; tras cargar se recalculan
+  del ROM con `gba_recompute_cart(g)` (nuevo, `src/gba.c`) + `flash_init`.
+  `save_size_for(type)` unifica el mapeo tipo->tamano (antes duplicado en 3
+  sitios) para que `save_type` y `save_size` no puedan desincronizarse.
+- **Bug 2 (savestates intercambiables entre juegos)**: el state **no** llevaba
+  identidad, asi que `gba_load_state` aceptaba el de otro juego (`rv=0`).
+  **Arreglo**: formato **v8** con cabecera `BARS` + version + **game code**
+  (`rom[0xAC..0xAF]`) + `rom_size`; se rechaza (`-1`) si no coincide con el ROM
+  cargado. Ademas el nombre del state pasa de `state<N>.sav` (compartido por
+  TODOS los juegos) a `<rom>.ss<slot>` (`src/win32.c`, `src/main.c`; Android ya
+  usaba `<rom>.ss<slot>` en `acore.c`). La extension `.ssN` no colisiona con el
+  `.sav` de bateria.
+- **Extra**: al cambiar de ROM los frontends ahora **vuelcan la bateria del
+  juego anterior** (`load_rom` en win32.c/main.c, `acore_load_rom` en Android)
+  antes de perder su estado; antes ese `.sav` se perdia.
+- **Verificacion** (harnesses en `/tmp`, no versionados): `gamecycle` (A=Emerald,
+  B=FireEmblem: B rechaza el state de A `rv=-1`, carga el suyo `rv=0`, y su
+  `save_type/save_size` quedan intactos 1/32768), `linktest` (save_type 1->3
+  cruzado corregido), `flashtest3` (ciclo flash erase+program+banco persiste),
+  `crashtest`. Suite `gba_test_suite.py`: **76 PASSED / 48 FAILED / 9 UNKNOWN**
+  (baseline). 3 targets limpios (`make`, `make -f Makefile.win32` x86_64 + i686,
+  sin SDL2, subsistema GUI=2).
+- **Publicacion**: tag `v1.4.33` = commit `8b96d3d` (main); tag rodante `Latest`
+  movido al mismo commit. El workflow `build-binaries` ahora tiene un **job
+  `android`** que compila el APK (`./gradlew assembleDebug`) y lo publica como
+  asset `boycottadvance-reborn-android.apk` junto a los binarios de escritorio
+  (peticion del usuario: "publicar el ultimo Build de Android a LATEST junto con
+  los otros binarios"). Release `v1.4.33` con 8 assets; `Latest` renombrado a
+  "Latest (v1.4.33)" y assets reemplazados (`gh release upload --clobber`).
+  Marcadas `prerelease=true` las 3 anteriores: `v1.4.32`, `v1.4.31`, `v1.4.30`.
+- **Nota**: la divergencia de framebuffer contra mGBA en la intro (f60/f300)
+  sigue siendo el desfase de arranque HLE vs BIOS ya documentado; el fix de
+  esta version es de persistencia, no de render.
+
 ## RELEASE v1.4.20 (publicado 2026-10-28)
 
 - **Causa raiz de los glitches de la intro de Pokemon Esmeralda** (faltaba el
