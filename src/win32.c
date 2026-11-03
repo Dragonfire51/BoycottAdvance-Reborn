@@ -420,23 +420,15 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Android port: a working app built from the\n"
-      "    same C99 core. OpenGL ES 2.0 video, AudioTrack\n"
-      "    sound, its own ROM/BIOS file browser and\n"
-      "    on-screen GBA controls (D-pad, A/B, L/R,\n"
-      "    SELECT/START, multi-touch). APK for arm64-v8a,\n"
-      "    armeabi-v7a and x86_64. CI builds it and a JNI\n"
-      "    parity check proves a bit-identical frame.\n"
-      "  - Real-time clock (Seiko S-3511): Pokemon\n"
-      "    Emerald/Ruby/Sapphire no longer report a dry\n"
-      "    internal battery; the clock answers with a\n"
-      "    valid date.\n"
-      "  - Audio pacing: the SDL build no longer runs\n"
-      "    unthrottled (the ring level is now read from\n"
-      "    the APU, not SDL), and the FIFO's DMA cycles\n"
-      "    are returned to the audio clock (0% sample\n"
-      "    deficit).\n"
-      "  - Save states now include the RTC.";
+      "  - Android audio: the app drained a fixed 735\n"
+      "    samples per frame, but the core produces\n"
+      "    738.35 (44100*280896/16777216), so the ring\n"
+      "    filled up and dropped samples every frame\n"
+      "    (crackle). It now drains whatever the ring\n"
+      "    holds, like the desktop builds.\n"
+      "  - mGBA comparison harness: the reference now\n"
+      "    emits PCM (its volume defaulted to 0), so\n"
+      "    audio can be compared against it.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

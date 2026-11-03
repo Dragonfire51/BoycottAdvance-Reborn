@@ -11,8 +11,8 @@ android {
         applicationId "com.boycottadvance.reborn"
         minSdk 21
         targetSdk 34
-        versionCode 3
-        versionName "1.4.30"
+        versionCode 4
+        versionName "1.4.31"
         externalNativeBuild {
             cmake {
                 cppFlags "-std=c99"

@@ -185,6 +185,18 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.31** - Android audio fix.
+  The Android app drained a **fixed 735 samples per frame**, but the core
+  produces `44100*280896/16777216 = 738.35` (the GBA frame is 280896 cycles at
+  16.777216 MHz, not 1/60 s). The surplus (~3.35/frame) filled the APU ring
+  buffer, and from then on `ring_push` **dropped the overflow every frame** -
+  measured 7414 dropped samples over 6000 frames (~74/s), the crackle heard in
+  the APK. Each frame now drains **whatever the ring actually holds** (chunked
+  to the 1024-sample buffer), like the desktop frontends; measured 3 drops and
+  an empty ring. The `tools/mgbaharness.c` comparison harness also now emits
+  PCM (mGBA's `opts.volume` defaults to 0 and `loadConfig` reads `core->opts`),
+  so core audio can be diffed against mGBA.
+
 - **v1.4.30** - Android port.
   A working **Android app** built from the same C99 emulation core. The core
   is untouched; the port adds a portable frontend wrapper (`acore.c`, the
