@@ -359,7 +359,7 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         new android.app.AlertDialog.Builder(this)
             .setTitle("BoycottAdvance Reborn")
             .setMessage("Emulador GBA (C).\n\n" +
-                        "Version 1.4.33\n" +
+                        "Version 1.4.34\n" +
                         "Nucleo C99 compartido con los builds de escritorio.\n\n" +
                         "Controles: D-pad, A/B, L/R, SELECT/START en pantalla.\n\n" +
                         "Carga de ROMs: usa \"Carpeta\" para dar acceso a la carpeta\n" +

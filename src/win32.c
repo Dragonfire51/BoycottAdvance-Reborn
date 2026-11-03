@@ -431,22 +431,15 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Battery saves (.sav) work again. Loading a\n"
-      "    savestate from another game used to\n"
-      "    overwrite the backup type, so the .sav was\n"
-      "    then written and read with the wrong size\n"
-      "    (and could crash). A state now carries the\n"
-      "    game code and ROM size and is only loaded\n"
-      "    back into the game it came from; the backup\n"
-      "    type is always re-derived from the ROM.\n"
-      "  - Savestates are per game: stored next to the\n"
-      "    ROM as \"<rom>.ss<slot>\" instead of one\n"
-      "    shared \"state<N>.sav\" for every title.\n"
-      "  - Switching ROMs flushes the previous game's\n"
-      "    battery before its state is replaced.\n"
-      "  - Loading a truncated/corrupted state is\n"
-      "    rejected with a message instead of a blank\n"
-      "    screen.";
+      "  - Android: the APK is now built with -O2.\n"
+      "    Gradle used the CMake \"Debug\" flags (just\n"
+      "    -g, no optimization), so the interpreter\n"
+      "    ran at about real-time on a desktop CPU and\n"
+      "    far slower on a phone. That made the game\n"
+      "    fall behind: the audio device starved\n"
+      "    (crackle) and the frame pacing stuttered\n"
+      "    (flicker). The native core now matches the\n"
+      "    -O2 desktop builds.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

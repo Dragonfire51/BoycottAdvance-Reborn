@@ -434,20 +434,15 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Battery saves (.sav) work again. Loading a\n"
-      "    savestate from another game used to\n"
-      "    overwrite the backup type, so the .sav was\n"
-      "    written/read with the wrong size (and could\n"
-      "    crash). A state now carries the game code\n"
-      "    and ROM size and only loads back into the\n"
-      "    game it came from; the backup type is\n"
-      "    re-derived from the ROM.\n"
-      "  - Savestates are per game: \"<rom>.ss<slot>\"\n"
-      "    instead of a shared \"state<N>.sav\".\n"
-      "  - Switching ROMs flushes the previous game's\n"
-      "    battery before its state is replaced.\n"
-      "  - A truncated/corrupted state is rejected\n"
-      "    with a message instead of a blank screen.");
+      "  - Android: the APK is now built with -O2.\n"
+      "    Gradle used the CMake \"Debug\" flags (just\n"
+      "    -g, no optimization), so the interpreter\n"
+      "    ran at about real-time on a desktop CPU and\n"
+      "    far slower on a phone. That made the game\n"
+      "    fall behind: the audio device starved\n"
+      "    (crackle) and the frame pacing stuttered\n"
+      "    (flicker). The native core now matches the\n"
+      "    -O2 desktop builds.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

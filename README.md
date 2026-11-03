@@ -191,6 +191,18 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.34** - Android APK built with -O2.
+  The Android port is built by Gradle with the CMake "Debug" build type, whose
+  default flags are just `-g` with no optimization. The emulator core is an
+  interpreter, so at `-O0` it barely reached real time on a fast desktop CPU
+  (measured with the same core: 1200 frames of Digimon Racing take 18.9 s at
+  `-O0`, i.e. 1.06x real time, versus 5.2 s at `-O2`, 3.85x). On a phone, which
+  is slower, `-O0` falls well below 60 fps: the emulation runs behind, the
+  `AudioTrack` starves (crackle/"rayado") and the frame pacing stutters
+  (flicker). The desktop builds were never affected because `Makefile` and
+  `Makefile.win32` already use `-O2`; only the APK shipped unoptimized. The
+  native target now forces `-O2` (`android/app/src/main/cpp/CMakeLists.txt`).
+
 - **v1.4.33** - battery saves (.sav) and per-game savestates.
   Two user-visible bugs, both rooted in the savestate format. (1) **Loading a
   savestate from another game overwrote the backup type**: the state stored
