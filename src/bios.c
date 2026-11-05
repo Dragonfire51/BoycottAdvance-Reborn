@@ -294,6 +294,24 @@ static void swi_obj_affine_set(GBA *g) {
     }
 }
 
+/* SWI 0x0D (GetBiosChecksum).  GBATEK "SWI 0Dh": the checksum is the sum of
+   the BIOS ROM read in 32-bit units.  A retail AGB BIOS gives 0xBAAE187F and
+   the NDS-in-GBA-mode image 0xBAAE1880 (the only byte that differs is [3F0Ch]).
+   When no BIOS dump is loaded the HLE runs without one, so report the AGB
+   value the hardware would return. */
+static void swi_get_bios_checksum(GBA *g) {
+    uint32_t sum;
+    if (g->bios_loaded) {
+        sum = 0;
+        for (uint32_t i = 0; i < BIOS_SIZE; i += 4)
+            sum += (uint32_t)g->bios[i] | ((uint32_t)g->bios[i + 1] << 8) |
+                   ((uint32_t)g->bios[i + 2] << 16) | ((uint32_t)g->bios[i + 3] << 24);
+    } else {
+        sum = 0xBAAE187Fu;
+    }
+    g->cpu.r[0] = sum;
+}
+
 /* Read the 3-byte little-endian decompressed length after a header byte. */
 static uint32_t swi_read_len(GBA *g, uint32_t *src) {
     uint32_t len = gba_read8(g, *src) | (gba_read8(g, *src + 1) << 8) |
@@ -483,6 +501,7 @@ void gba_swi(GBA *g, uint32_t comment) {
     case 0x08: swi_sqrt(g); break;
     case 0x0B: swi_cpu_set(g); break;
     case 0x0C: swi_cpu_fast_set(g); break;
+    case 0x0D: swi_get_bios_checksum(g); break;
     case 0x0E: swi_affine_set(g); break;
     case 0x0F: swi_obj_affine_set(g); break;
     case 0x10: swi_bitunpack(g); break;

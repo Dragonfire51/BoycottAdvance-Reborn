@@ -470,19 +470,16 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Windows: new Options > Sound Engine\n"
-      "    submenu to choose the audio output:\n"
-      "    SDL, OpenAL or DirectSound. All three\n"
-      "    are loaded from their DLL at run time,\n"
-      "    so the executable keeps its native\n"
-      "    import table (no link-time SDL2 or\n"
-      "    OpenAL); a missing DLL only disables\n"
-      "    that engine. If the chosen one is not\n"
-      "    available, audio falls back to the\n"
-      "    built-in waveOut path. DirectSound is\n"
-      "    the default (present on every Windows,\n"
-      "    no extra files). The choice is stored\n"
-      "    in boycottadvance-reborn.ini.";
+      "  - BIOS: implemented SWI 0Dh\n"
+      "    (GetBiosChecksum), the BIOS call\n"
+      "    that returns the checksum of the\n"
+      "    BIOS ROM. It was missing, so\n"
+      "    titles that identify the console\n"
+      "    this way read a wrong value. The\n"
+      "    Retro Regen GBA Test Suite's\n"
+      "    SYSTEM ID check now reports\n"
+      "    MODEL: GBA FAMILY (AGB BIOS)\n"
+      "    instead of MODEL: UNKNOWN BIOS.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

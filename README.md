@@ -29,7 +29,7 @@ The original 0.2.8 build has two well-known problems on modern systems:
   condition codes, banked registers, SVC/IRQ/ABT/UND/FIQ modes.
 - Correct GBA interrupt model (`IE`/`IF`/`IME`), HBlank/VBlank/VCount IRQs.
 - BIOS SWI emulation: `Halt`, `IntrWait`, `VBlankIntrWait`, `Div`, `Sqrt`,
-  `CpuSet`, `CpuFastSet`, `RegisterRamReset`, `SoftReset`.
+  `CpuSet`, `CpuFastSet`, `RegisterRamReset`, `SoftReset`, `GetBiosChecksum`.
 - PPU: text modes 0-2, bitmap modes 3-5, affine backgrounds, OBJ sprites
   (4bpp/8bpp, 1D/2D mapping, flips, palettes), window/blend registers.
 - APU: 4 PSG channels (square, wave, noise) + DMA Direct Sound FIFOs.

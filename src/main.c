@@ -434,15 +434,14 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Android: the APK is now built with -O2.\n"
-      "    Gradle used the CMake \"Debug\" flags (just\n"
-      "    -g, no optimization), so the interpreter\n"
-      "    ran at about real-time on a desktop CPU and\n"
-      "    far slower on a phone. That made the game\n"
-      "    fall behind: the audio device starved\n"
-      "    (crackle) and the frame pacing stuttered\n"
-      "    (flicker). The native core now matches the\n"
-      "    -O2 desktop builds.");
+      "  - BIOS: implemented SWI 0Dh (GetBiosChecksum),\n"
+      "    the BIOS call that returns the checksum of\n"
+      "    the BIOS ROM. It was missing, so titles that\n"
+      "    identify the console this way read a wrong\n"
+      "    value. The Retro Regen GBA Test Suite's\n"
+      "    SYSTEM ID check now reports\n"
+      "    MODEL: GBA FAMILY (AGB BIOS) instead of\n"
+      "    MODEL: UNKNOWN BIOS.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",
