@@ -150,6 +150,13 @@ static void build_menu(void) {
     item(opt, "Enable DSound B", M_DSOUNDB);
     item(opt, "Enable GBC Sound", M_GBCSOUND);
     item(opt, "Reverse Sound Stereo", M_REVSTEREO);
+    /* The original BoycottAdvance let the user pick the sound engine. The
+     * three engines are loaded at run time (see audio_out.c), so the native
+     * import table stays SDL/OpenAL-free. */
+    HMENU se = add_popup(opt, "Sound Engine");
+    item(se, "SDL", M_SE_SDL);
+    item(se, "OpenAL", M_SE_OPENAL);
+    item(se, "DirectSound", M_SE_DSOUND);
     sep(opt);
     item(opt, "Select BIOS File...", M_SELBIOS);
     item(opt, "BIOS Enable", M_BIOSEN);

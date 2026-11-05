@@ -22,6 +22,7 @@
 #include "gui.h"
 #include "export.h"
 #include "uiactions.h"
+#include "audio_out.h"
 #include <windows.h>
 #include <mmsystem.h>
 #include <commdlg.h>
@@ -54,6 +55,7 @@ typedef struct {
     int  dsound_a, dsound_b, gbc_sound, reverse_stereo;
     int  biosenable, biosfastboot, skipintros, autorun, flashid, state_slot;
     int  video_backend;
+    int  sound_engine;            /* AUDIO_ENGINE_* selected in Options */
     int  keymap[KP_COUNT];        /* VK code per keypad button */
     int  joymap[KP_COUNT];        /* joystick: button or JOY_POV_* */
     char lastdir[512], rompath[512];
@@ -97,28 +99,34 @@ static Audio g_audio;
  * rather than muting (or letting it overflow) we decimate to the newest
  * fragment, so the sound keeps playing - fast and compressed, like other
  * fast-forward implementations - which is what players expect during long
- * intros. */
-static void audio_fill(int16_t *dst) {
+ * intros.  Shared by the waveOut fallback and every audio_out engine. */
+static void audio_render(int16_t *dst, int frames) {
     if (cfg.sound_enable && g) {
         if (cfg.autothrottle) {
-            apu_mix(g, dst, AUDIO_SAMPLES);
+            apu_mix(g, dst, frames);
         } else {
-            int n = apu_drain_latest(dst, AUDIO_SAMPLES);
-            if (n < AUDIO_SAMPLES)
-                memset(dst + n * 2, 0, (size_t)(AUDIO_SAMPLES - n) * 2 * sizeof(int16_t));
+            int n = apu_drain_latest(dst, frames);
+            if (n < frames)
+                memset(dst + n * 2, 0, (size_t)(frames - n) * 2 * sizeof(int16_t));
         }
         if (cfg.reverse_stereo)
-            for (int i = 0; i < AUDIO_SAMPLES; i++) {
+            for (int i = 0; i < frames; i++) {
                 int16_t l = dst[i*2];
                 dst[i*2] = dst[i*2+1];
                 dst[i*2+1] = l;
             }
     } else {
         /* Sound disabled: drop whatever the APU produced and output silence. */
-        while (apu_drain(dst, AUDIO_SAMPLES) > 0) { /* discard */ }
-        memset(dst, 0, (size_t)AUDIO_SAMPLES * 2 * sizeof(int16_t));
+        while (apu_drain(dst, frames) > 0) { /* discard */ }
+        memset(dst, 0, (size_t)frames * 2 * sizeof(int16_t));
     }
 }
+static void audio_fill(int16_t *dst) { audio_render(dst, AUDIO_SAMPLES); }
+/* Callback shape expected by audio_out (interleaved stereo s16). */
+static void audio_ao_fill(int16_t *dst, int frames, void *ud) { (void)ud; audio_render(dst, frames); }
+
+/* True while any engine (waveOut fallback or audio_out) is playing. */
+static int g_audio_active;
 
 /* waveOut notifies completion by signalling an auto-reset event. Mixing and
  * re-queueing happen here, off the callback: MSDN forbids calling any waveOut
@@ -143,7 +151,7 @@ static void CALLBACK wave_proc(HWAVEOUT hwo, UINT uMsg, DWORD_PTR inst,
     SetEvent(((Audio *)inst)->done);
 }
 
-static int audio_open(void) {
+static int wave_open(void) {
     WAVEFORMATEX wf;
     memset(&wf, 0, sizeof wf);
     wf.wFormatTag = WAVE_FORMAT_PCM;
@@ -173,7 +181,7 @@ static int audio_open(void) {
     if (g_audio.thread) SetThreadPriority(g_audio.thread, THREAD_PRIORITY_TIME_CRITICAL);
     return 0;
 }
-static void audio_close(void) {
+static void wave_close(void) {
     if (!g_audio.hwo) return;
     /* Stop the refill thread before resetting, or it can re-queue a buffer
        while waveOutReset is draining and waveOutClose then blocks. */
@@ -194,6 +202,35 @@ static void audio_close(void) {
     waveOutClose(g_audio.hwo);
     g_audio.hwo = NULL;
     if (g_audio.done) { CloseHandle(g_audio.done); g_audio.done = NULL; }
+}
+
+/* Open the sound engine selected in Options -> Sound Engine.  The three
+ * engines are loaded from their DLLs at run time; if the chosen one is
+ * unavailable (DLL missing, no device) we fall back to the built-in waveOut
+ * path so the emulator always has sound. */
+static int  g_ao_fallback;      /* engine chosen by the user was unavailable */
+static int  audio_open(void) {
+    g_ao_fallback = 0;
+    if (audio_out_open(cfg.sound_engine, AUDIO_FREQ, AUDIO_SAMPLES,
+                       audio_ao_fill, NULL) == 0) {
+        g_audio_active = 1;
+        return 0;
+    }
+    g_ao_fallback = 1;
+    if (wave_open() == 0) { g_audio_active = 1; return 0; }
+    g_audio_active = 0;
+    return -1;
+}
+static void audio_close(void) {
+    if (g_ao_fallback) wave_close();
+    else               audio_out_close();
+    g_audio_active = 0;
+}
+/* Reopen the device after the engine changes; keeps the emulation running. */
+static void audio_reopen(void) {
+    if (!cfg.sound_enable) return;
+    audio_close();
+    audio_open();
 }
 
 /* ------------------------------------------------------------------ keypad */
@@ -302,6 +339,8 @@ static void cfg_load(const char *path) {
     cfg.state_slot   = ini_geti(path, "StateSlot", 0);
     if (cfg.state_slot < 0 || cfg.state_slot >= M_SLOT_COUNT) cfg.state_slot = 0;
     cfg.video_backend= ini_geti(path, "VideoBackend", VID_GDI);
+    cfg.sound_engine = ini_geti(path, "SoundEngine", AUDIO_ENGINE_DSOUND);
+    if (cfg.sound_engine < 0 || cfg.sound_engine >= AUDIO_ENGINE_COUNT) cfg.sound_engine = AUDIO_ENGINE_DSOUND;
     cfg.smooth       = ini_geti(path, "SmoothEmulation", 0);
     cfg.scalemode    = ini_geti(path, "ScaleMode", 0);
     cfg.reverse_stereo= ini_geti(path, "ReverseStereo", 0);
@@ -329,12 +368,12 @@ static int cfg_save(const char *path) {
       "FrameSkip %d\nAutoFrameSkip %d\nSoundEnable %d\nGameboySoundEnable %d\n"
       "DirectSoundAEnable %d\nDirectSoundBEnable %d\nBIOSEnable %d\nBIOSFastBoot %d\n"
       "SkipIntros %d\nAutoRun %d\nFlashROMId %d\nStateSlot %d\nVideoBackend %d\n"
-      "SmoothEmulation %d\nScaleMode %d\nReverseStereo %d\nRomPath %s\n",
+      "SoundEngine %d\nSmoothEmulation %d\nScaleMode %d\nReverseStereo %d\nRomPath %s\n",
       cfg.zoom, cfg.scanline, cfg.autothrottle, cfg.showfps, cfg.showfps_pct,
       cfg.frameskip, cfg.autoframeskip, cfg.sound_enable, cfg.gbc_sound,
       cfg.dsound_a, cfg.dsound_b, cfg.biosenable, cfg.biosfastboot,
       cfg.skipintros, cfg.autorun, cfg.flashid, cfg.state_slot,
-      cfg.video_backend, cfg.smooth, cfg.scalemode, cfg.reverse_stereo,
+      cfg.video_backend, cfg.sound_engine, cfg.smooth, cfg.scalemode, cfg.reverse_stereo,
       cfg.lastdir) < 0) ok = 0;
     for (int i = 0; i < KP_COUNT; i++)
         if (fprintf(f, "Key_%s %d\n", KP_NAME[i], cfg.keymap[i]) < 0) ok = 0;
@@ -431,15 +470,19 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Android: the APK is now built with -O2.\n"
-      "    Gradle used the CMake \"Debug\" flags (just\n"
-      "    -g, no optimization), so the interpreter\n"
-      "    ran at about real-time on a desktop CPU and\n"
-      "    far slower on a phone. That made the game\n"
-      "    fall behind: the audio device starved\n"
-      "    (crackle) and the frame pacing stuttered\n"
-      "    (flicker). The native core now matches the\n"
-      "    -O2 desktop builds.";
+      "  - Windows: new Options > Sound Engine\n"
+      "    submenu to choose the audio output:\n"
+      "    SDL, OpenAL or DirectSound. All three\n"
+      "    are loaded from their DLL at run time,\n"
+      "    so the executable keeps its native\n"
+      "    import table (no link-time SDL2 or\n"
+      "    OpenAL); a missing DLL only disables\n"
+      "    that engine. If the chosen one is not\n"
+      "    available, audio falls back to the\n"
+      "    built-in waveOut path. DirectSound is\n"
+      "    the default (present on every Windows,\n"
+      "    no extra files). The choice is stored\n"
+      "    in boycottadvance-reborn.ini.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {
@@ -627,11 +670,18 @@ static void do_action(int id) {
     case M_THROTTLE: cfg.autothrottle = !cfg.autothrottle; break;
     case M_SHOWFPS:  cfg.showfps = !cfg.showfps; break;
     case M_SHOWFPSPCT: cfg.showfps_pct = !cfg.showfps_pct; break;
-    case M_SOUND:    cfg.sound_enable = !cfg.sound_enable; break;
+    case M_SOUND:
+        cfg.sound_enable = !cfg.sound_enable;
+        if (cfg.sound_enable) audio_open(); else audio_close();
+        break;
     case M_DSOUNDA:  cfg.dsound_a = !cfg.dsound_a; break;
     case M_DSOUNDB:  cfg.dsound_b = !cfg.dsound_b; break;
     case M_GBCSOUND: cfg.gbc_sound = !cfg.gbc_sound; break;
     case M_REVSTEREO: cfg.reverse_stereo = !cfg.reverse_stereo; break;
+    case M_SE_SDL: case M_SE_OPENAL: case M_SE_DSOUND:
+        cfg.sound_engine = id - M_SE_SDL;
+        if (cfg.sound_enable) audio_reopen();
+        break;
     case M_SELBIOS:  gui_native_open_bios(); break;
     case M_BIOSEN:
         cfg.biosenable = !cfg.biosenable; g->bios_enabled = cfg.biosenable;
@@ -680,6 +730,7 @@ static int item_checked(int id) {
     case M_REVSTEREO: return cfg.reverse_stereo; case M_BIOSEN: return cfg.biosenable;
     case M_BIOSBOOT: return cfg.biosfastboot; case M_SKIPINTROS: return cfg.skipintros;
     default:
+        if (id>=M_SE_SDL && id<=M_SE_DSOUND) return cfg.sound_engine==id-M_SE_SDL;
         if (id>=M_SLOT0 && id<=M_SLOT_LAST) return cfg.state_slot==id-M_SLOT0;
         if (id>=M_ZOOM1 && id<=M_ZOOM4) return cfg.zoom==id-M_ZOOM1+1;
         if (id>=M_SKIP0 && id<=M_SKIP5) return cfg.frameskip==id-M_SKIP0;
@@ -923,7 +974,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
            last sample) - both are audible as crackle.  A time-based sleep
            alone is too coarse (Sleep(1) granularity) and drifts. */
         if (!g_paused && g->rom_size > 0) {
-            if (cfg.autothrottle && cfg.sound_enable && g_audio.hwo) {
+            if (cfg.autothrottle && cfg.sound_enable && g_audio_active) {
                 uint32_t t0 = GetTickCount();
                 while (apu_available() > 2048 && GetTickCount() - t0 < 50) Sleep(1);
             }
@@ -974,7 +1025,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
         double frame_ms = (double)(t1.QuadPart - t_frame.QuadPart) * 1000.0 / (double)freq.QuadPart;
         last_frame_ms = frame_ms;
         if (cfg.autothrottle && !g_paused && g->rom_size > 0 && frame_ms < GBA_FRAME_MS
-            && !(cfg.sound_enable && g_audio.hwo)) {
+            && !(cfg.sound_enable && g_audio_active)) {
             /* No audio device to pace against: fall back to a wall-clock sleep. */
             Sleep((DWORD)(GBA_FRAME_MS - frame_ms));
             QueryPerformanceCounter(&t1);

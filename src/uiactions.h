@@ -16,6 +16,8 @@ enum {
     M_HISTORY, M_CMDLINE, M_ABOUT,
     /* Frame Buffer backend items (contiguous) */
     M_VB_AUTO, M_VB_SOFT, M_VB_GL, M_VB_VK, M_VB_GDI, M_VB_D3D,
+    /* Sound Engine backend items (contiguous): SDL / OpenAL / DirectSound */
+    M_SE_SDL, M_SE_OPENAL, M_SE_DSOUND,
     /* Controls remap items (contiguous, one per keypad button) */
     M_KEY0
 };

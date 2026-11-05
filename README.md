@@ -36,8 +36,8 @@ The original 0.2.8 build has two well-known problems on modern systems:
 - Memory map: BIOS, EWRAM, IWRAM, I/O, palette, VRAM, OAM, ROM (+ open bus).
 - Timers, DMA (all 4 channels), keypad with IRQ.
 - Save states, cheats, BIOS fast-boot, screenshots.
-- Selectable frame-buffer backends (see below) and audio (SDL2 on
-  Linux/macOS, native WinMM on Windows).
+- Selectable frame-buffer backends (see below) and selectable sound
+  engines (SDL / OpenAL / DirectSound on Windows, SDL2 on Linux/macOS).
 
 ## Frame buffer backends
 
@@ -55,10 +55,26 @@ software and presented through one backend, chosen from
 | Direct3D 9 | Windows | native textured blit via `d3d9` |
 
 On Windows the build links **no SDL at all**: video goes through GDI or
-Direct3D 9, audio through WinMM (`waveOut`) and input through
-`GetAsyncKeyState` plus the WinMM joystick API. The chosen backend is
+Direct3D 9, audio through the selected sound engine (see below) and input
+through `GetAsyncKeyState` plus the WinMM joystick API. The chosen backend is
 stored in `boycottadvance-reborn.ini` (`VideoBackend`); on Linux/macOS it falls
 back to SDL Software when the selected backend cannot initialise.
+
+## Sound engines
+
+On Windows the audio output can be chosen from **Options > Sound Engine**.
+All three engines are loaded from their DLL at run time, so the executable
+keeps its native import table and a missing DLL only disables that engine:
+
+| Engine | Notes |
+|---|---|
+| SDL | needs `SDL2.dll` next to the executable (or on the `PATH`) |
+| OpenAL | needs `OpenAL32.dll` (OpenAL Soft or Creative) |
+| DirectSound | native on every Windows since 98, no extra files (default) |
+
+If the selected engine (or its DLL) is unavailable, the emulator falls back
+to the built-in WinMM (`waveOut`) path so sound always works. The choice is
+stored in `boycottadvance-reborn.ini` (`SoundEngine`).
 
 
 ## GUI
@@ -81,6 +97,7 @@ debugger is intentionally omitted). Settings are stored in
 - **Options** — Frameskip (0..5), Auto Frame Skip, Smooth Emulation,
   Auto Speed Throttle, Show FPS, Show FPS in percent, Sound Enable,
   Enable DSound A/B, Enable GBC Sound, Reverse Sound Stereo,
+  Sound Engine (SDL / OpenAL / DirectSound),
   Select BIOS File, BIOS Enable, Skip BIOS Boot, Skip Intro Hacks,
   Controllers Configuration
 - **Help** — History..., Command Line Options..., About...

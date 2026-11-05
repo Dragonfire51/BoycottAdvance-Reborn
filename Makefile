@@ -17,7 +17,7 @@ ifneq ($(OS),Windows_NT)
 else
   RC ?= windres
   ICON_OBJ = src/icon.res
-  SRC += src/win32.c
+  SRC += src/win32.c src/audio_out.c
   LDLIBS += -lwinmm -ld3d9 -lgdi32 -luser32 -lcomdlg32
 endif
 OBJ = $(SRC:.c=.o) $(ICON_OBJ)
