@@ -501,11 +501,16 @@ void dma_run(GBA *g, int ch) {
     gba_add_cycles(g, dma_cyc);
     if (d->irq_enable) g->if_reg |= (uint16_t)(IF_DMA0 << ch);
 
-    if (d->repeat && d->timing != 0) {
+    /* DMA3 timing 3 = video capture (GBATEK "Video Capture Mode"): the enable
+       flag is cleared automatically when the transfer completes at VCOUNT=161. */
+    bool capture_done = (ch == 3 && d->timing == 3 && g->ppu.vcount == 161);
+
+    if (d->repeat && d->timing != 0 && !capture_done) {
         if (d->dst_ctl == 3 && !fifo)
             d->dst = d->dst_latch & (ch == 3 ? 0x0FFFFFFFu : 0x07FFFFFFu);
     } else {
         d->enabled = false;
+        if (capture_done) d->cnt_h_raw &= (uint16_t)~0x8000;
     }
 }
 
@@ -514,6 +519,15 @@ void dma_trigger(GBA *g, int timing) {
         DmaChan *d = &g->dma[ch];
         if (d->enabled && d->timing == timing) dma_run(g, ch);
     }
+}
+
+/* DMA3 video capture (GBATEK "Video Capture Mode"): started when VCOUNT=2,
+   repeated on every scanline until VCOUNT=161, when dma_run clears the enable
+   flag.  Triggered on its own instead of through dma_trigger(3) so the sound
+   FIFOs (DMA1/2, which also use Start Timing=3) are not run by it. */
+void dma_capture_start(GBA *g) {
+    DmaChan *d = &g->dma[3];
+    if (d->enabled && d->timing == 3) dma_run(g, 3);
 }
 
 /* El FIFO A/B pide datos (<= 16 bytes en cola): dispara el DMA1/DMA2 cuyo destino sea el FIFO. */

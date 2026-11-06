@@ -434,14 +434,13 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - BIOS: implemented SWI 0Dh (GetBiosChecksum),\n"
-      "    the BIOS call that returns the checksum of\n"
-      "    the BIOS ROM. It was missing, so titles that\n"
-      "    identify the console this way read a wrong\n"
-      "    value. The Retro Regen GBA Test Suite's\n"
-      "    SYSTEM ID check now reports\n"
-      "    MODEL: GBA FAMILY (AGB BIOS) instead of\n"
-      "    MODEL: UNKNOWN BIOS.");
+      "  - DMA: implemented DMA3 video capture\n"
+      "    (Start Timing=3). GBATEK: it transfers\n"
+      "    CNT_L units per scanline, from VCOUNT=2\n"
+      "    to 161, and the enable flag clears\n"
+      "    itself at the end. It was not handled\n"
+      "    at all, so titles using it to stream a\n"
+      "    bitmap into VRAM got an empty picture.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

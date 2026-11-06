@@ -28,6 +28,7 @@ void sio_update(GBA *g, uint32_t cycles);   /* SIO normal-mode transfer completi
 void dma_run(GBA *g, int ch);
 void dma_trigger(GBA *g, int timing);
 void dma_fifo_request(GBA *g, int fifo);   /* timing 3: sound FIFO A (0) / B (1) */
+void dma_capture_start(GBA *g);            /* timing 3: DMA3 video capture, per scanline */
 
 /* BIOS helpers */
 void gba_swi(GBA *g, uint32_t comment);

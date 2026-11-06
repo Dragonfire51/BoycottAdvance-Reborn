@@ -208,6 +208,23 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.37** - DMA3 video capture (Start Timing=3).
+  GBATEK ("Video Capture Mode"): with Start Timing=3, DMA3 transfers `CNT_L`
+  units **per scanline**, starting at VCOUNT=2 and stopping at VCOUNT=161,
+  where the enable flag clears itself. The core did not handle this mode at
+  all (only DMA1/DMA2 were used, as the sound FIFOs, which also use Start
+  Timing=3), so any title that streams a bitmap into VRAM this way got an
+  empty picture. Implemented in `src/mem.c` (`dma_run` clears the enable at
+  VCOUNT=161; new `dma_capture_start`) and `src/gba.c` (per-scanline trigger).
+  No regression: Digimon Racing, Pokemon Emerald and Fire Emblem are
+  pixel-identical at frames 60/300/600 before and after the change.
+
+- **v1.4.36** - BIOS SWI 0Dh (GetBiosChecksum).
+  Implemented the BIOS call that returns the checksum of the BIOS ROM. It was
+  missing, so titles that identify the console this way read a wrong value.
+  The Retro Regen GBA Test Suite's SYSTEM ID check now reports
+  `MODEL: GBA FAMILY (AGB BIOS)` instead of `MODEL: UNKNOWN BIOS`.
+
 - **v1.4.34** - Android APK built with -O2.
   The Android port is built by Gradle with the CMake "Debug" build type, whose
   default flags are just `-g` with no optimization. The emulator core is an

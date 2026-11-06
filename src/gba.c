@@ -347,6 +347,9 @@ static void run_frame_core(GBA *g) {
         g->ppu.dispstat |= 0x0002;
         g->ppu.hblank = true;
         if (line < 160) dma_trigger(g, 2);          /* HBlank-scheduled DMA */
+        /* GBATEK "Video Capture Mode": DMA3 timing 3 transfers once per
+           scanline from VCOUNT=2 through VCOUNT=161. */
+        if (line >= 2 && line <= 161) dma_capture_start(g);
         uint32_t hb_end = base + (uint32_t)(line + 1) * line_cycles;
         uint32_t seg1 = g->cycle;
         /* GBATEK does not pin down the exact margin; mGBA

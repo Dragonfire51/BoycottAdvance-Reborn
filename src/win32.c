@@ -470,16 +470,16 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - BIOS: implemented SWI 0Dh\n"
-      "    (GetBiosChecksum), the BIOS call\n"
-      "    that returns the checksum of the\n"
-      "    BIOS ROM. It was missing, so\n"
-      "    titles that identify the console\n"
-      "    this way read a wrong value. The\n"
-      "    Retro Regen GBA Test Suite's\n"
-      "    SYSTEM ID check now reports\n"
-      "    MODEL: GBA FAMILY (AGB BIOS)\n"
-      "    instead of MODEL: UNKNOWN BIOS.";
+      "  - DMA: implemented DMA3 video\n"
+      "    capture (Start Timing=3).\n"
+      "    GBATEK: it transfers CNT_L\n"
+      "    units per scanline, from\n"
+      "    VCOUNT=2 to 161, and the\n"
+      "    enable flag clears itself at\n"
+      "    the end. It was not handled\n"
+      "    at all, so titles using it to\n"
+      "    stream a bitmap into VRAM got\n"
+      "    an empty picture.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {
