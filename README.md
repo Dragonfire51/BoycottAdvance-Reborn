@@ -208,6 +208,22 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.39** - Audio: fixed the constant crackle introduced in v1.4.38.
+  The declick fade (added in v1.4.38 to silence the pause pop) triggered on
+  *any* short gap in the sample buffer, not just a real pause. With the
+  producer and the consumer running at slightly different rates the ring dips
+  below one segment routinely, so the fade ran continuously and modulated the
+  amplitude of the output: a constant buzz while playing. It now only fades
+  once the buffer has stayed empty for a whole ring (`EMPTY_PAUSE` =
+  `RING_FRAMES`, ~186 ms), which is a real pause (P, a menu) and never an
+  ordinary underrun; short gaps keep the plain sample-and-hold and do not
+  crackle. Measured with the same core and the app's producer/consumer loop:
+  under starvation the envelope dips drop back from 463/min to the baseline
+  210/min (the v1.4.37 figure), while the pause still fades to exact silence
+  (a held DC of -1152 becomes 0, resume step 3). The DirectSound refill
+  hardening from v1.4.38 (event-driven refill, high priority, lost-buffer
+  recovery) is unchanged.
+
 - **v1.4.38** - Audio: fixed the click when pausing and resuming.
   The mixer (`apu_mix`, `src/apu.c`) repeated the last sample while the ring
   buffer was empty (a pause, or an underrun), so the output sat at a constant

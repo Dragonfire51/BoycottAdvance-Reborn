@@ -73,15 +73,23 @@ static inline uint8_t read_wave(const Apu *a, int bank, int idx) {
     }
 }
 
-/* Declick.  Si el ring se agota (pausa, underrun) la salida no se queda en un
+/* Declick.  Si el ring se queda vacio (pausa) la salida no debe quedarse en un
  * nivel DC (repetir la ultima muestra) porque el escalon al reanudar hace
- * "clic"; en su lugar se funde a silencio en DECLICK_LEN muestras y, cuando
- * vuelven los datos, se funde de nuevo hacia arriba.  En reproduccion normal el
- * ring no se vacia, la ganancia se queda en 256 (unidad) y la senal no cambia.
- * VBA-M hace lo mismo emitiendo silencio cuando su buffer esta vacio
- * (audio_sdl.cpp, `SDL_memset(stream, 0, length)`). */
-#define DECLICK_LEN 256             /* ~5.8 ms a 44.1 kHz */
-static int declick = DECLICK_LEN;   /* ganancia Q8, 256 = unidad */
+ * "clic"; en su lugar se funde a silencio y, cuando vuelven los datos, se funde
+ * de nuevo hacia arriba.  VBA-M emite silencio cuando su buffer esta vacio
+ * (audio_sdl.cpp, `SDL_memset(stream, 0, length)`).
+ *
+ * El fundido SOLO se activa tras `EMPTY_PAUSE` muestras seguidas sin datos, es
+ * decir una pausa real (menus, P) y no un underrun momentaneo.  Fundirse en
+ * cada hueco corto modulaba la amplitud y sonaba a crujido constante (medido:
+ * los "dips" de envolvente subian de 210 a 463 por minuto en hambruna); con el
+ * umbral, los huecos cortos mantienen el sample-and-hold de siempre y no
+ * crujen.  En reproduccion normal el ring no se vacia, la ganancia se queda en
+ * 256 (unidad) y la senal no cambia. */
+#define DECLICK_LEN  256            /* ~5.8 ms a 44.1 kHz */
+#define EMPTY_PAUSE  (RING_FRAMES)  /* ~186 ms sin datos = pausa, no underrun */
+static int      declick = DECLICK_LEN;   /* ganancia Q8, 256 = unidad */
+static unsigned empty_run = 0;           /* muestras seguidas sin datos */
 
 void apu_mix(GBA *g, int16_t *stream, int nframes) {
     (void)g;
@@ -92,9 +100,11 @@ void apu_mix(GBA *g, int16_t *stream, int nframes) {
             last_l = ring[(rd & (RING_FRAMES - 1)) * 2];
             last_r = ring[(rd & (RING_FRAMES - 1)) * 2 + 1];
             rd++;
+            empty_run = 0;
             if (declick < DECLICK_LEN) declick++;           /* vuelven datos: sube */
-        } else if (declick > 0) {
-            declick--;                                      /* sin datos: baja a 0 */
+        } else {
+            if (empty_run < EMPTY_PAUSE) empty_run++;
+            else if (declick > 0) declick--;                /* pausa: baja a 0 */
         }
         stream[i * 2]     = (int16_t)((int32_t)last_l * declick >> 8);
         stream[i * 2 + 1] = (int16_t)((int32_t)last_r * declick >> 8);
@@ -147,7 +157,7 @@ int apu_drain_latest(int16_t *stream, int maxframes) {
     return n;
 }
 
-void apu_open(void) { declick = 0; }   /* arranca desde silencio y sube */
+void apu_open(void) { declick = 0; empty_run = 0; }   /* arranca desde silencio y sube */
 void apu_close(void) { }
 
 void apu_reset(GBA *g) {

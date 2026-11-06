@@ -470,21 +470,18 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Audio: the click heard when\n"
-      "    pausing/resuming is gone. The\n"
-      "    mixer repeated the last sample\n"
-      "    while the buffer was empty (a\n"
-      "    constant DC level), so resuming\n"
-      "    stepped back to sound with a\n"
-      "    pop. It now fades to silence and\n"
-      "    back, like VBA-M.\n"
-      "  - DirectSound engine: the refill\n"
-      "    thread waits on its events\n"
-      "    instead of polling, runs at high\n"
-      "    priority and recovers a lost\n"
-      "    buffer, so it no longer crackles\n"
-      "    under load or after a device\n"
-      "    reset.";
+      "  - Audio: fixed the constant\n"
+      "    crackle introduced in v1.4.38.\n"
+      "    The declick fade triggered on\n"
+      "    any short gap in the sample\n"
+      "    buffer, not just a real pause,\n"
+      "    so it modulated the amplitude\n"
+      "    and buzzed while playing. It\n"
+      "    now only fades after the\n"
+      "    buffer stays empty for a whole\n"
+      "    ring (~186 ms), i.e. a pause\n"
+      "    or a menu, and leaves ordinary\n"
+      "    playback untouched.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

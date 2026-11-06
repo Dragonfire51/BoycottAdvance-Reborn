@@ -434,17 +434,14 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Audio: fixed the click when pausing and\n"
-      "    resuming. The mixer repeated the last\n"
-      "    sample while the buffer was empty (a\n"
-      "    constant DC level), so resuming stepped\n"
-      "    back to sound with a pop. It now fades\n"
-      "    to silence and back, like VBA-M.\n"
-      "  - DirectSound engine: the refill thread\n"
-      "    waits on its events instead of polling,\n"
-      "    runs at high priority and recovers a\n"
-      "    lost buffer, so it no longer crackles\n"
-      "    under load or after a device reset.");
+      "  - Audio: fixed the constant crackle introduced\n"
+      "    in v1.4.38. The declick fade triggered on any\n"
+      "    short gap in the sample buffer, not just a\n"
+      "    real pause, so it modulated the amplitude and\n"
+      "    buzzed while playing. It now only fades after\n"
+      "    the buffer stays empty for a whole ring\n"
+      "    (~186 ms), i.e. a pause or a menu, and leaves\n"
+      "    ordinary playback untouched.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",
