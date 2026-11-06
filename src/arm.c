@@ -892,19 +892,22 @@ void arm_execute(GBA *g, uint32_t max_cycles) {
                 if (until < budget_left) { g->cycle = g->sio_deadline; sio_update(g, 0); continue; }
             }
         }
-        /* SWI 04h/05h (IntrWait/VBlankIntrWait): only the awaited IRQ releases
-           the halt.  Unrelated IRQs are ignored by the BIOS wait loop, so the
-           game handler must not run while we are waiting (GBATEK SWI 04h/05h). */
-        if (g->cst.halt && g->cst.wait_mask) {
+        /* SWI 04h/05h (IntrWait/VBlankIntrWait), HLE.  The mask is a *software*
+           loop in the BIOS, not a hardware filter: the BIOS HALTs, any enabled
+           IRQ wakes it and runs its handler, and the loop re-HALTs until the
+           awaited flag is pending.  With no BIOS loop we reproduce that here:
+           an unrelated enabled IRQ (e.g. a VCount handler during a
+           VBlankIntrWait) must still preempt; the wait simply stays armed
+           (wait_mask) until the awaited source arrives.  Suppressing those IRQs
+           stalled per-scanline handlers until VBlank (mGBA runs the real loop). */
+        if (g->cst.wait_mask) {
             if (g->if_reg & g->cst.wait_mask) {
-                uint16_t done = g->cst.wait_mask;
-                g->cst.wait_mask = 0;
+                g->cst.wait_mask = 0;           /* awaited source: wait is over */
                 g->cst.halt = false;
-                /* Leave the awaited flag set: the game's own IRQ/VBlank
-                   handler (running after the SWI returns) clears it. */
-                (void)done;
-            } else {
-                g->cycle = start + max_cycles;      /* duerme hasta la IRQ esperada */
+            } else if (g->if_reg & g->ie & 0x3FFF) {
+                g->cst.halt = false;            /* unrelated IRQ preempts; wait stays armed */
+            } else if (g->cst.halt) {
+                g->cycle = start + max_cycles;  /* nothing pending: sleep the segment */
                 break;
             }
         }
