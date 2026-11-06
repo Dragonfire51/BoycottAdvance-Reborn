@@ -208,6 +208,24 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.38** - Audio: fixed the click when pausing and resuming.
+  The mixer (`apu_mix`, `src/apu.c`) repeated the last sample while the ring
+  buffer was empty (a pause, or an underrun), so the output sat at a constant
+  DC level; resuming then stepped back to sound with a pop. It now fades to
+  silence over ~5.8 ms when the buffer runs dry and fades back up when data
+  returns, like VBA-M (`audio_sdl.cpp` emits silence when its buffer is
+  empty). The fade is neutral during normal playback (the ring never empties,
+  so the gain stays at unity). Measured with the same core: the paused region
+  goes from a held DC of -1536 to exact silence, and the resume step (3504) is
+  below the waveform's own maximum step (4608). The DirectSound engine
+  (`src/audio_out.c`) also no longer crackles under load or after a device
+  reset: its refill thread waits on its segment events with
+  `WaitForMultipleObjects` instead of polling every 5 ms, runs at
+  `THREAD_PRIORITY_TIME_CRITICAL` (as the waveOut thread already did) and
+  recovers a lost buffer with `Restore` on `DSERR_BUFFERLOST`. No change to
+  the core loop (`apu_mix` is only called by the audio consumer, never by
+  `apu_step`), so video output is untouched.
+
 - **v1.4.37** - DMA3 video capture (Start Timing=3).
   GBATEK ("Video Capture Mode"): with Start Timing=3, DMA3 transfers `CNT_L`
   units **per scanline**, starting at VCOUNT=2 and stopping at VCOUNT=161,

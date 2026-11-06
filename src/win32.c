@@ -470,16 +470,21 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - DMA: implemented DMA3 video\n"
-      "    capture (Start Timing=3).\n"
-      "    GBATEK: it transfers CNT_L\n"
-      "    units per scanline, from\n"
-      "    VCOUNT=2 to 161, and the\n"
-      "    enable flag clears itself at\n"
-      "    the end. It was not handled\n"
-      "    at all, so titles using it to\n"
-      "    stream a bitmap into VRAM got\n"
-      "    an empty picture.";
+      "  - Audio: the click heard when\n"
+      "    pausing/resuming is gone. The\n"
+      "    mixer repeated the last sample\n"
+      "    while the buffer was empty (a\n"
+      "    constant DC level), so resuming\n"
+      "    stepped back to sound with a\n"
+      "    pop. It now fades to silence and\n"
+      "    back, like VBA-M.\n"
+      "  - DirectSound engine: the refill\n"
+      "    thread waits on its events\n"
+      "    instead of polling, runs at high\n"
+      "    priority and recovers a lost\n"
+      "    buffer, so it no longer crackles\n"
+      "    under load or after a device\n"
+      "    reset.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

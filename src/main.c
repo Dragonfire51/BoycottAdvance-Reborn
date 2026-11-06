@@ -434,13 +434,17 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - DMA: implemented DMA3 video capture\n"
-      "    (Start Timing=3). GBATEK: it transfers\n"
-      "    CNT_L units per scanline, from VCOUNT=2\n"
-      "    to 161, and the enable flag clears\n"
-      "    itself at the end. It was not handled\n"
-      "    at all, so titles using it to stream a\n"
-      "    bitmap into VRAM got an empty picture.");
+      "  - Audio: fixed the click when pausing and\n"
+      "    resuming. The mixer repeated the last\n"
+      "    sample while the buffer was empty (a\n"
+      "    constant DC level), so resuming stepped\n"
+      "    back to sound with a pop. It now fades\n"
+      "    to silence and back, like VBA-M.\n"
+      "  - DirectSound engine: the refill thread\n"
+      "    waits on its events instead of polling,\n"
+      "    runs at high priority and recovers a\n"
+      "    lost buffer, so it no longer crackles\n"
+      "    under load or after a device reset.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

@@ -73,6 +73,16 @@ static inline uint8_t read_wave(const Apu *a, int bank, int idx) {
     }
 }
 
+/* Declick.  Si el ring se agota (pausa, underrun) la salida no se queda en un
+ * nivel DC (repetir la ultima muestra) porque el escalon al reanudar hace
+ * "clic"; en su lugar se funde a silencio en DECLICK_LEN muestras y, cuando
+ * vuelven los datos, se funde de nuevo hacia arriba.  En reproduccion normal el
+ * ring no se vacia, la ganancia se queda en 256 (unidad) y la senal no cambia.
+ * VBA-M hace lo mismo emitiendo silencio cuando su buffer esta vacio
+ * (audio_sdl.cpp, `SDL_memset(stream, 0, length)`). */
+#define DECLICK_LEN 256             /* ~5.8 ms a 44.1 kHz */
+static int declick = DECLICK_LEN;   /* ganancia Q8, 256 = unidad */
+
 void apu_mix(GBA *g, int16_t *stream, int nframes) {
     (void)g;
     unsigned rd = atomic_load_explicit(&ring_r, memory_order_relaxed);
@@ -82,9 +92,12 @@ void apu_mix(GBA *g, int16_t *stream, int nframes) {
             last_l = ring[(rd & (RING_FRAMES - 1)) * 2];
             last_r = ring[(rd & (RING_FRAMES - 1)) * 2 + 1];
             rd++;
-        }                                                   /* vacio: se repite la ultima muestra */
-        stream[i * 2]     = last_l;
-        stream[i * 2 + 1] = last_r;
+            if (declick < DECLICK_LEN) declick++;           /* vuelven datos: sube */
+        } else if (declick > 0) {
+            declick--;                                      /* sin datos: baja a 0 */
+        }
+        stream[i * 2]     = (int16_t)((int32_t)last_l * declick >> 8);
+        stream[i * 2 + 1] = (int16_t)((int32_t)last_r * declick >> 8);
     }
     atomic_store_explicit(&ring_r, rd, memory_order_release);
 }
@@ -134,7 +147,7 @@ int apu_drain_latest(int16_t *stream, int maxframes) {
     return n;
 }
 
-void apu_open(void) { }
+void apu_open(void) { declick = 0; }   /* arranca desde silencio y sube */
 void apu_close(void) { }
 
 void apu_reset(GBA *g) {

@@ -175,6 +175,7 @@ static int al_open(void) {
 
     al.stop = CreateEventW(NULL, FALSE, FALSE, NULL);
     al.thread = CreateThread(NULL, 0, al_thread, NULL, 0, NULL);
+    if (al.thread) SetThreadPriority(al.thread, THREAD_PRIORITY_TIME_CRITICAL);
     return 0;
 }
 static void al_close(void) {
@@ -220,8 +221,16 @@ static struct {
 static void ds_fill_seg(int seg) {
     DWORD off = (DWORD)seg * ds.segbytes;
     void *p1, *p2; DWORD l1, l2;
-    if (FAILED(IDirectSoundBuffer8_Lock(ds.buf, off, ds.segbytes, &p1, &l1, &p2, &l2, 0)))
-        return;
+    HRESULT hr = IDirectSoundBuffer8_Lock(ds.buf, off, ds.segbytes, &p1, &l1, &p2, &l2, 0);
+    if (hr == DSERR_BUFFERLOST) {
+        /* The device was reset (mode change, sleep/resume): DirectSound frees
+         * the buffer's memory and Lock fails until Restore re-acquires it.
+         * Without this the segment is never refilled again and the stream
+         * degrades into clicks.  Standard DirectSound recovery. */
+        IDirectSoundBuffer8_Restore(ds.buf);
+        hr = IDirectSoundBuffer8_Lock(ds.buf, off, ds.segbytes, &p1, &l1, &p2, &l2, 0);
+    }
+    if (FAILED(hr)) return;
     g_fill(ds.pcm, g_frames, g_ud);
     memcpy(p1, ds.pcm, l1);
     if (p2) memcpy(p2, (uint8_t *)ds.pcm + l1, l2);
@@ -230,13 +239,19 @@ static void ds_fill_seg(int seg) {
 
 static DWORD WINAPI ds_thread(LPVOID p) {
     (void)p;
+    /* Wait on the four segment events (plus the stop event) instead of polling:
+     * a 5 ms poll can fire late under load, the buffer runs dry and the output
+     * clicks.  Index 0 is the stop event, so a returned index i>=1 means
+     * segment i-1 was reached and the one that just finished (i-2) is refilled. */
+    HANDLE h[1 + AO_SEGS];
+    h[0] = ds.stop;
+    for (int i = 0; i < AO_SEGS; i++) h[i + 1] = ds.ev[i];
     for (;;) {
-        if (WaitForSingleObject(ds.stop, 5) == WAIT_OBJECT_0) break;
-        for (int i = 0; i < AO_SEGS; i++) {
-            if (WaitForSingleObject(ds.ev[i], 0) == WAIT_OBJECT_0) {
-                int finished = (i + AO_SEGS - 1) % AO_SEGS;   /* segment just played */
-                ds_fill_seg(finished);
-            }
+        DWORD r = WaitForMultipleObjects(1 + AO_SEGS, h, FALSE, INFINITE);
+        if (r == WAIT_OBJECT_0) break;
+        if (r > WAIT_OBJECT_0 && r < WAIT_OBJECT_0 + 1 + AO_SEGS) {
+            int finished = (int)(r - WAIT_OBJECT_0 - 1 + AO_SEGS - 1) % AO_SEGS;
+            ds_fill_seg(finished);
         }
     }
     return 0;
@@ -281,6 +296,10 @@ static int ds_open(void) {
 
     ds.stop = CreateEventW(NULL, FALSE, FALSE, NULL);
     ds.thread = CreateThread(NULL, 0, ds_thread, NULL, 0, NULL);
+    /* Same as the waveOut refill thread: without a raised priority the segment
+     * refill can miss its notification while the CPU is busy, the buffer runs
+     * dry and the output repeats the last sample (a click). */
+    if (ds.thread) SetThreadPriority(ds.thread, THREAD_PRIORITY_TIME_CRITICAL);
     return 0;
 fail:
     ds_close();
