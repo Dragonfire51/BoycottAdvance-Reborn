@@ -470,18 +470,19 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Audio: fixed the constant\n"
-      "    crackle introduced in v1.4.38.\n"
-      "    The declick fade triggered on\n"
-      "    any short gap in the sample\n"
-      "    buffer, not just a real pause,\n"
-      "    so it modulated the amplitude\n"
-      "    and buzzed while playing. It\n"
-      "    now only fades after the\n"
-      "    buffer stays empty for a whole\n"
-      "    ring (~186 ms), i.e. a pause\n"
-      "    or a menu, and leaves ordinary\n"
-      "    playback untouched.";
+      "  - Core: fixed per-scanline\n"
+      "    effects (HDMA/VCount) being\n"
+      "    applied one frame late. The\n"
+      "    BIOS wait HLE treated the\n"
+      "    awaited-IRQ mask as a filter,\n"
+      "    so a VCount handler was not\n"
+      "    served until VBlank and its\n"
+      "    scroll writes landed in the\n"
+      "    VBlank line. It now wakes on\n"
+      "    any enabled IRQ and re-arms\n"
+      "    the wait, like the real BIOS\n"
+      "    loop; per-scanline writes now\n"
+      "    match mGBA.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

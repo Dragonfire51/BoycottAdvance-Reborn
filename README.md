@@ -208,6 +208,24 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.40** - Core: fixed per-scanline effects (HDMA/VCount) being applied
+  one frame late. The HLE of the BIOS wait routines (SWI `IntrWait`/
+  `VBlankIntrWait`, `src/arm.c`) treated the awaited-interrupt mask as a
+  hardware filter: while a `VBlankIntrWait` was outstanding only the VBlank
+  flag released the CPU, so a VCount-match handler was not served until
+  VBlank. Games that rewrite BG scroll from a VCount interrupt then had all
+  their writes land in the VBlank line instead of the match scanlines. The
+  mask is a *software* loop in the real BIOS: it HALTs, any enabled interrupt
+  wakes it and runs its handler, and the loop re-HALTs until the awaited flag
+  is pending. The HLE now reproduces that: it wakes on any enabled interrupt
+  and keeps the wait armed until the awaited source arrives. Verified against
+  mGBA with the same inputs (Digimon Racing, real BIOS): the per-scanline
+  `BG0HOFS` writes now land on the same scanlines and hold the same values as
+  mGBA, and the framebuffer difference at the effect frames dropped from
+  ~20% of pixels to 0.00% (residual 1.4% at two frames from an unrelated
+  sprite). The CPU cycle count and all other titles are unchanged; the
+  regression suite stays at its baseline.
+
 - **v1.4.39** - Audio: fixed the constant crackle introduced in v1.4.38.
   The declick fade (added in v1.4.38 to silence the pause pop) triggered on
   *any* short gap in the sample buffer, not just a real pause. With the

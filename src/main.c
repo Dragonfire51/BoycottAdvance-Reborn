@@ -434,14 +434,14 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Audio: fixed the constant crackle introduced\n"
-      "    in v1.4.38. The declick fade triggered on any\n"
-      "    short gap in the sample buffer, not just a\n"
-      "    real pause, so it modulated the amplitude and\n"
-      "    buzzed while playing. It now only fades after\n"
-      "    the buffer stays empty for a whole ring\n"
-      "    (~186 ms), i.e. a pause or a menu, and leaves\n"
-      "    ordinary playback untouched.");
+      "  - Core: fixed per-scanline effects (HDMA/VCount)\n"
+      "    being applied one frame late. The BIOS wait\n"
+      "    HLE treated the awaited-IRQ mask as a filter,\n"
+      "    so a VCount handler was not served until\n"
+      "    VBlank and its scroll writes landed in the\n"
+      "    VBlank line. It now wakes on any enabled IRQ\n"
+      "    and re-arms the wait, like the real BIOS loop;\n"
+      "    per-scanline writes now match mGBA.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",
