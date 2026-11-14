@@ -470,16 +470,16 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Fixed the distorted (harsh,\n"
-      "    \"scratchy\") audio. The reset\n"
-      "    left SOUNDBIAS at 0, so the\n"
-      "    ADC limiter clipped the whole\n"
-      "    negative half of the signal\n"
-      "    (unipolar output) and the\n"
-      "    sound came out hard. SOUNDBIAS\n"
-      "    is now 0x0200 as on hardware,\n"
-      "    so the wave is bipolar and\n"
-      "    matches mGBA.";
+      "  - Fixed games that ran far too\n"
+      "    fast (Medabots AX and others).\n"
+      "    The HLE IntrWait/VBlankIntrWait\n"
+      "    released the CPU on any unrelated\n"
+      "    interrupt, so a game's frame loop\n"
+      "    resumed without waiting for the\n"
+      "    flag it asked for and ran many\n"
+      "    times per frame. The wait now\n"
+      "    stays asleep until its own flag\n"
+      "    arrives, as the real BIOS does.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

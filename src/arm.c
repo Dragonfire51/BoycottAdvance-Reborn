@@ -904,10 +904,17 @@ void arm_execute(GBA *g, uint32_t max_cycles) {
             if (g->if_reg & g->cst.wait_mask) {
                 g->cst.wait_mask = 0;           /* awaited source: wait is over */
                 g->cst.halt = false;
-            } else if (g->if_reg & g->ie & 0x3FFF) {
-                g->cst.halt = false;            /* unrelated IRQ preempts; wait stays armed */
-            } else if (g->cst.halt) {
-                g->cycle = start + max_cycles;  /* nothing pending: sleep the segment */
+            } else if ((g->if_reg & g->ie & 0x3FFF) && g->ime &&
+                       !(g->cpu.cpsr & CPSR_I)) {
+                g->cst.halt = false;            /* deliverable unrelated IRQ preempts; wait stays armed */
+            } else {
+                /* The awaited flag is not set and no IRQ can be served right
+                   now: the BIOS wait loop HALTs, it does NOT return to the
+                   caller.  Sleeping on `wait_mask` (not on `halt`) is what
+                   keeps the SWI atomic: without it the game resumed at the
+                   instruction after the SWI on every unrelated IRQ and ran its
+                   whole frame loop at CPU speed. */
+                g->cycle = start + max_cycles;
                 break;
             }
         }

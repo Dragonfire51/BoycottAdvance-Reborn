@@ -434,13 +434,15 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Fixed the distorted (harsh, \"scratchy\")\n"
-      "    audio. The reset left SOUNDBIAS at 0, so\n"
-      "    the ADC limiter clipped the whole negative\n"
-      "    half of the signal (unipolar output) and\n"
-      "    the sound came out hard. SOUNDBIAS is now\n"
-      "    0x0200 as on hardware, so the wave is\n"
-      "    bipolar and matches mGBA.");
+      "  - Fixed games that ran far too fast\n"
+      "    (Medabots AX and others). The HLE\n"
+      "    IntrWait/VBlankIntrWait released the\n"
+      "    CPU on any unrelated interrupt, so a\n"
+      "    game's frame loop resumed without\n"
+      "    waiting for the flag it asked for and\n"
+      "    ran many times per frame. The wait\n"
+      "    now stays asleep until its own flag\n"
+      "    arrives, as the real BIOS loop does.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

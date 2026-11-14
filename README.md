@@ -208,6 +208,24 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.44** - Core: fixed games that ran **far too fast** (Medabots AX -
+  Rokusho, and others). The HLE of the BIOS wait routines (SWI `IntrWait`/
+  `VBlankIntrWait`, `src/arm.c`) released the CPU on *any* unrelated enabled
+  interrupt, so when the game's own interrupt handler ran during the wait the
+  HLE returned from the SWI without the awaited flag being pending. The game's
+  frame loop then executed at full CPU speed and advanced many in-game frames
+  per emulated frame. Measured on Medabots AX (real BIOS, same ROM, comparing
+  the DISPCNT transition into the gameplay): with the bug the transition to
+  `3040` happened at frame **878** vs mGBA's **1250** (~20x too fast); with the
+  fix it lands at frame **1240**. On the fastboot path it now matches the
+  documented baseline again (f973 vs mGBA f979). The wait now stays asleep on
+  `wait_mask` until its own flag arrives, as the real BIOS loop does, and only
+  a deliverable unrelated IRQ (enabled, `IME`, CPSR I clear) preempts it.
+  Verified: Medabots AX real-BIOS f1240 vs mGBA f1250, Emerald/RetroRegen
+  0.00% frame-identical, Digimon Racing (the v1.4.40 regression target) 0.00%
+  with and without the documented key script, Fire Emblem closer to mGBA than
+  before; `gba_test_suite.py` unchanged at 76 PASSED / 48 FAILED / 9 UNKNOWN.
+
 - **v1.4.43** - Fixed the distorted (harsh, "scratchy") audio on every
   platform, including Android. `gba_reset()` zeroed the whole APU state but
   never called `apu_reset()`, the only place that sets `SOUNDBIAS` to its
