@@ -434,12 +434,13 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Android: fixed the APK not installing over\n"
-      "    a previous version. Each release was signed\n"
-      "    with a different key, so Android rejected\n"
-      "    the update and the phone kept the old build\n"
-      "    (fixes seemed to do nothing). The APK is\n"
-      "    now signed with one stable key.");
+      "  - Fixed the distorted (harsh, \"scratchy\")\n"
+      "    audio. The reset left SOUNDBIAS at 0, so\n"
+      "    the ADC limiter clipped the whole negative\n"
+      "    half of the signal (unipolar output) and\n"
+      "    the sound came out hard. SOUNDBIAS is now\n"
+      "    0x0200 as on hardware, so the wave is\n"
+      "    bipolar and matches mGBA.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

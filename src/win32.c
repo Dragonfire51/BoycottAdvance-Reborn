@@ -470,15 +470,16 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Android: fixed the APK not\n"
-      "    installing over a previous\n"
-      "    version. Each release was\n"
-      "    signed with a different key,\n"
-      "    so Android rejected the\n"
-      "    update and the phone kept the\n"
-      "    old build (fixes seemed to do\n"
-      "    nothing). The APK is now\n"
-      "    signed with one stable key.";
+      "  - Fixed the distorted (harsh,\n"
+      "    \"scratchy\") audio. The reset\n"
+      "    left SOUNDBIAS at 0, so the\n"
+      "    ADC limiter clipped the whole\n"
+      "    negative half of the signal\n"
+      "    (unipolar output) and the\n"
+      "    sound came out hard. SOUNDBIAS\n"
+      "    is now 0x0200 as on hardware,\n"
+      "    so the wave is bipolar and\n"
+      "    matches mGBA.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

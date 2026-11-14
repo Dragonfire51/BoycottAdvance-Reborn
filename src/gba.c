@@ -48,7 +48,7 @@ void gba_reset(GBA *g) {
     memset(g->io_raw, 0, sizeof(g->io_raw));
     memset(&g->timer, 0, sizeof(g->timer));
     memset(&g->dma, 0, sizeof(g->dma));
-    memset(&g->apu, 0, sizeof(g->apu));
+    apu_reset(g);
     memset(&g->ppu, 0, sizeof(g->ppu));
     /* GBATEK / mGBA GBAIOInit: the affine parameters reset to the identity
        matrix (PA = PD = 256). Bitmap modes 3-5 use BG2's matrix, so a game

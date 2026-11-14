@@ -208,6 +208,20 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.43** - Fixed the distorted (harsh, "scratchy") audio on every
+  platform, including Android. `gba_reset()` zeroed the whole APU state but
+  never called `apu_reset()`, the only place that sets `SOUNDBIAS` to its
+  power-on value (0x0200, GBATEK "4000088h - SOUNDBIAS"). With `SOUNDBIAS = 0`
+  the output stage's ADC limiter (`sample += bias; clamp to [0, 0x3FF];
+  sample -= bias`, the `_applyBias` model from mGBA) clamped every negative
+  half-cycle to zero, so the signal came out **unipolar**: min was always 0 and
+  ~36% of the waveform was gone. That is what made the sound hard and scratchy.
+  With the bias restored the output is bipolar again. Measured with the
+  headless harness on the same core the executables use (Pokemon Emerald, 601
+  frames): min 0 -> -7920, negative fraction 0.000 -> 0.361, RMS 966 -> 1316,
+  against mGBA's -8448 / 0.350 / 1329 (RMS ratio 0.990). A new regression test
+  (`tools/test_bias.c`) pins the reset value and the explicit SOUNDBIAS write.
+
 - **v1.4.42** - Android: fixed every APK after the first one being
   uninstallable. The CI built with `assembleDebug` and a runner's default
   debug keystore is regenerated on each run, so each release was signed with a
