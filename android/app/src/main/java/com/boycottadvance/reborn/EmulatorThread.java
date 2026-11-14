@@ -24,6 +24,12 @@ public final class EmulatorThread extends Thread {
        (audible crackle), so each frame drains whatever the ring actually
        holds. This is the buffer capacity in samples, not a per-frame amount. */
     private static final int AUDIO_BUF_FRAMES = 1024;
+    /* The GBA runs at 59.7275 Hz = 16.7427 ms per frame. The audio device is
+       the normal clock, but it is only present when sound is on and AudioTrack
+       initialized; without it the loop would free-run at whatever the CPU can
+       do (the game plays far too fast). This fixed-step budget is the hard
+       ceiling in both cases. */
+    private static final long FRAME_NS = 16742700L;
 
     private final NativeEmulator emu;
     private final Object frameLock = new Object();
@@ -109,10 +115,12 @@ public final class EmulatorThread extends Thread {
         openAudio();
 
         long lastFpsT = System.nanoTime();
+        long frameStart = lastFpsT;
         while (running) {
             if (paused || !emu.romLoaded()) {
                 try { Thread.sleep(20); } catch (InterruptedException e) { }
                 lastFpsT = System.nanoTime();
+                frameStart = lastFpsT;
                 framesRun = 0;
                 continue;
             }
@@ -124,10 +132,13 @@ public final class EmulatorThread extends Thread {
             }
 
             boolean soundOn = emu.getInt(NativeEmulator.SET_SOUND) != 0;
-            if (soundOn && audio != null && !fastForward) {
+            boolean audioPacing = soundOn && audio != null && !fastForward;
+            if (audioPacing) {
                 /* Drain everything the ring holds (chunked to audioBuf), not a
                    fixed 735: the core yields ~738.35 samples/frame, so a fixed
-                   count overflows the ring and drops samples every frame. */
+                   count overflows the ring and drops samples every frame.
+                   audio.write() blocks when the device buffer is full, so the
+                   audio device is the clock here. */
                 int avail = emu.audioAvailable();
                 while (avail > 0) {
                     int want = Math.min(avail, AUDIO_BUF_FRAMES);
@@ -152,9 +163,32 @@ public final class EmulatorThread extends Thread {
                 }
             }
 
+            /* Frame pacing. The GBA runs at 59.7275 Hz (FRAME_NS per frame).
+               The audio device normally paces the loop (audio.write() blocks
+               when its buffer is full), but with sound off - or if AudioTrack
+               failed to open - nothing would slow the loop down and the game
+               would run as fast as the CPU allows. Enforce a wall-clock frame
+               budget unconditionally as the hard ceiling: when the audio device
+               is already the correct clock this costs nothing (it blocks for
+               the full frame), and when it is missing it is what keeps the
+               game at real speed. Sleep the bulk, then spin the last
+               sub-millisecond for accuracy. Fast-forward skips it on purpose. */
             if (fastForward) {
                 try { Thread.sleep(1); } catch (InterruptedException e) { }
+            } else {
+                long target = frameStart + FRAME_NS;
+                long remaining = target - System.nanoTime();
+                while (remaining > 200000L && running) {
+                    try { Thread.sleep(remaining / 1_000_000L); }
+                    catch (InterruptedException e) { break; }
+                    remaining = target - System.nanoTime();
+                }
+                while (remaining > 0 && running) {
+                    Thread.yield();
+                    remaining = target - System.nanoTime();
+                }
             }
+            frameStart = System.nanoTime();
 
             framesRun++;
             long now = System.nanoTime();

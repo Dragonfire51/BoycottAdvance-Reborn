@@ -1355,3 +1355,69 @@ al gameplay en f1250 sin input.
 
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
+
+## RELEASE v1.4.40 (publicado 2026-11-06)
+
+- **Tag** `v1.4.40` = commit `64eeeab` (main); tag rodante `Latest` movido al
+  mismo commit. Contenido: fix del HLE de SWI 04h/05h (ver el fix de mas abajo).
+- **Causa raiz**: el HLE de `IntrWait`/`VBlankIntrWait` (`src/arm.c`, sleep
+  selectivo de `arm_execute`) trataba `wait_mask` como **filtro hardware**: con
+  un VBlankIntrWait pendiente solo el flag de VBlank liberaba la CPU, asi que un
+  handler de VCount-match no se servia hasta VBlank. En el BIOS real el mask es
+  un **bucle software** (HALT -> cualquier IRQ habilitada despierta y corre su
+  handler -> re-HALT hasta el flag esperado). Al suprimir la IRQ de VCount, las
+  escrituras de `BG0HOFS` del handler caian todas en la linea 160 en vez de
+  77/93/109/125. **Arreglo**: despertar con cualquier `IE&IF`, mantener
+  `wait_mask` armado hasta la fuente esperada; dormir el segmento solo si no hay
+  nada pendiente y la CPU estaba halted.
+- **Verificado** (Digimon Racing, BIOS real, mismos inputs con `KEYS`):
+  escrituras BG0HOFS identicas a mGBA (vcount+PC+valor); framebuffer f2100
+  20.01%->0.00%, f2250 17.99%->0.00%, f2198 26.39%->1.41%, f2200 16.56%->1.41%;
+  gba-tests 76 PASSED (0 regresiones); 3 targets limpios sin SDL2.
+- **CI**: el run `build-binaries` (42319898833) se quedo atascado en el paso
+  "Install mingw and zip" del job `windows (win32)` (>20 min, el `apt-get`
+  colgado ya conocido). Los jobs linux/macos/win64/android si completaron.
+  Aplicada la leccion: cancelar y **publicar a mano** con los binarios locales.
+- **Publicacion manual**: `gh release create v1.4.40` con los 8 assets
+  (linux/macos/win32.zip/win64.zip/src.tar.gz/android.apk/.deb/.rpm); el win32,
+  el src.tar.gz y el zip se construyeron en local (`make -f Makefile.win32
+  ARCH=i686`, `git archive`), el resto descargado de los artefactos de CI.
+  Release rodante `Latest` (id 413237927) renombrado a "Latest (v1.4.40)":
+  borrados los 8 assets viejos y subidos los 8 nuevos. `v1.4.39`/`v1.4.38`/
+  `v1.4.37` marcados `prerelease=true` (regla del usuario: 3 anteriores).
+- Verificado: `win32.zip` descargado de `Latest` contiene
+  `boycottadvance-reborn.exe` con `BoycottAdvance Reborn v1.4.40`.
+
+## RELEASE v1.4.41 (publicado 2026-11-14)
+
+- **Android: FPS demasiado rapido (Medabots AX Rokusho y en general)**.
+  **Causa raiz**: el bucle de `EmulatorThread` solo se paced por el dispositivo
+  de audio (`AudioTrack.write()` bloquea cuando su buffer esta lleno). Con el
+  **sonido apagado** (o si `AudioTrack` no abre: `minBuf<=0`, `STATE_INITIALIZED`
+  falla), el bucle de drain no escribia a audio y **nada** limitaba la
+  velocidad: `emu.runFrame()` corria a velocidad de CPU (varias veces tiempo
+  real). El bucle de escritorio (`main.c`/`win32.c`) **si** tiene el fallback
+  `SDL_Delay(16.7427 - el)` cuando no hay audio; el de Android no lo tenia.
+  **Arreglo** (`android/.../EmulatorThread.java`): presupuesto de reloj de
+  pared por frame `FRAME_NS = 16742700` (59.7275 Hz) aplicado **siempre** que
+  no sea fast-forward. Cuando el audio ya marca el ritmo el sleep no consume
+  nada extra (el write ya bloqueo el frame completo); cuando no hay audio es lo
+  que fija la velocidad real. Sleep del grueso + spin del ultimo sub-ms.
+- **Android: HUD superior plegable** (`MainActivity.java`). La barra
+  (ROM/menu/estado) se mete en una columna vertical con un `Button`-flecha
+  tactil debajo: **▼** con la barra visible (pulsa para ocultarla) y **▲** con
+  la barra oculta (pulsa para mostrarla). Se persiste en `prefs("hud_visible")`.
+- **Android: contador de FPS** en la barra de estado (respetando `SET_SHOWFPS`),
+  refrescado con un `Handler` cada segundo (antes `fps()` nunca se mostraba).
+- Version Android: `versionCode 8`, `versionName "1.4.41"`; bump del core a
+  `v1.4.41` (`src/gba.h`) + README + History (win32.c/main.c/MainActivity).
+- **Verificado en local**: APK compila (`./gradlew --no-daemon assembleDebug`,
+  JDK 21 + SDK 34 + NDK 26.1.10909125 + cmake 3.22.1), `aapt dump badging` =
+  versionCode 8 / versionName 1.4.41. Los 3 targets de escritorio compilan sin
+  warnings; win32 PE subsistema GUI con solo DLLs nativas (sin SDL2).
+  **No verificable en ejecucion**: no hay dispositivo Android ni display en
+  este entorno; el fix de pacing es una garantia de reloj, no una observacion
+  directa del framerate.
+- **Nota entorno**: el JDK no esta preinstalado; `openjdk-21-jdk-headless`
+  (no hay 17 en apt). `sdk.dir=/workspace/android-sdk` ya en
+  `android/local.properties`.

@@ -39,6 +39,8 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
     private TouchControlsView controls;
     private TextView status;
     private Button fastFwdBtn;
+    private LinearLayout bar;
+    private Button hudToggle;
 
     private SharedPreferences prefs;
 
@@ -76,8 +78,13 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         root.addView(controls, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        /* Top bar: ROM / menu / status. */
-        LinearLayout bar = new LinearLayout(this);
+        /* Top bar: ROM / menu / status. It lives inside a vertical column so a
+           small arrow button can collapse it (toggling to a down arrow to bring
+           it back), leaving the whole screen to the game. */
+        LinearLayout topCol = new LinearLayout(this);
+        topCol.setOrientation(LinearLayout.VERTICAL);
+
+        bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
         bar.setBackgroundColor(0x99000000);
@@ -105,10 +112,28 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         bar.addView(fastFwdBtn, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         bar.addView(status, lp);
+
+        /* Arrow that hides/shows the HUD bar. The arrow points at where the
+           HUD sits: down (v) while the bar is visible (press to hide it), up
+           (^) while it is hidden (press to bring it back). */
+        hudToggle = new Button(this);
+        hudToggle.setText("\u25BC");   // down arrow = HUD visible, press to hide
+        hudToggle.setTextSize(12f);
+        int apad = (int) (getResources().getDisplayMetrics().density * 2);
+        hudToggle.setPadding(apad, apad, apad, apad);
+        hudToggle.setBackgroundColor(0x99000000);
+        hudToggle.setOnClickListener(v -> toggleHud());
+
+        topCol.addView(bar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        topCol.addView(hudToggle, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         FrameLayout.LayoutParams barLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         barLp.gravity = Gravity.TOP;
-        root.addView(bar, barLp);
+        root.addView(topCol, barLp);
+
+        setHudVisible(prefs.getBoolean("hud_visible", true));
 
         setContentView(root);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -220,7 +245,11 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         String t = parts.length > 0 ? parts[0] : "";
         String c = parts.length > 1 ? parts[1] : "";
         String s = parts.length > 2 ? parts[2] : "";
-        status.setText(t + "  [" + c + "]  " + s);
+        String base = t + "  [" + c + "]  " + s;
+        if (emu.getInt(NativeEmulator.SET_SHOWFPS) != 0 && thread != null) {
+            base += String.format("  %.0f fps", thread.fps());
+        }
+        status.setText(base);
     }
 
     @Override
@@ -359,8 +388,14 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         new android.app.AlertDialog.Builder(this)
             .setTitle("BoycottAdvance Reborn")
             .setMessage("Emulador GBA (C).\n\n" +
-                        "Version 1.4.34\n" +
+                        "Version 1.4.41\n" +
                         "Nucleo C99 compartido con los builds de escritorio.\n\n" +
+                        "Novedades:\n" +
+                        "- Corregida la velocidad excesiva con el sonido\n" +
+                        "  apagado (o si el audio falla): ahora el juego\n" +
+                        "  va siempre a velocidad real.\n" +
+                        "- La flecha oculta o muestra la barra superior\n" +
+                        "  (abajo = visible, arriba = oculta).\n\n" +
                         "Controles: D-pad, A/B, L/R, SELECT/START en pantalla.\n\n" +
                         "Carga de ROMs: usa \"Carpeta\" para dar acceso a la carpeta\n" +
                         "donde tengas los .gba (o .zip), o \"Archivo\" para elegir\n" +
@@ -375,6 +410,23 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         fastFwdBtn.setText(ff ? "|>" : ">>");
     }
 
+    /**
+     * Collapse/expand the top HUD bar. The arrow shows the HUD's current
+     * state: down (v) while the bar is visible, up (^) while it is hidden,
+     * so the button always points at where the bar is. The choice persists
+     * across sessions.
+     */
+    private void setHudVisible(boolean visible) {
+        if (bar != null) bar.setVisibility(visible ? View.VISIBLE : View.GONE);
+        if (hudToggle != null) hudToggle.setText(visible ? "\u25BC" : "\u25B2");
+    }
+
+    private void toggleHud() {
+        boolean visible = bar != null && bar.getVisibility() == View.VISIBLE;
+        setHudVisible(!visible);
+        prefs.edit().putBoolean("hud_visible", !visible).apply();
+    }
+
     /* ---- touch controls ---- */
     @Override
     public void onKeysChanged(int mask) {
@@ -382,9 +434,18 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
     }
 
     /* ---- lifecycle ---- */
+    private final android.os.Handler ui = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable statusTick = new Runnable() {
+        @Override public void run() {
+            if (emu != null && emu.romLoaded()) updateStatus();
+            ui.postDelayed(this, 1000);
+        }
+    };
+
     @Override
     protected void onPause() {
         super.onPause();
+        ui.removeCallbacks(statusTick);
         if (glView != null) glView.onPause();
         if (thread != null) thread.setPaused(true);
         if (emu != null) emu.saveBattery();
@@ -395,6 +456,8 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         super.onResume();
         if (glView != null) glView.onResume();
         if (thread != null) thread.setPaused(false);
+        ui.removeCallbacks(statusTick);
+        ui.postDelayed(statusTick, 1000);
     }
 
     @Override

@@ -208,6 +208,16 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.41** - Android: fixed the game running far too fast with the sound
+  off (or when the audio device fails to open). The emulation loop was paced
+  only by the audio device: with nothing draining the samples it free-ran at
+  full CPU speed. It now enforces a wall-clock budget of 16.7427 ms per frame
+  (59.7275 Hz) whenever the audio device is not the clock, so the game always
+  plays at real speed. Also on Android: the top HUD bar (ROM / menu / status)
+  can now be collapsed with a small on-screen arrow button, which toggles
+  between a down arrow (bar visible) and an up arrow (bar hidden); the choice
+  is remembered across sessions.
+
 - **v1.4.40** - Core: fixed per-scanline effects (HDMA/VCount) being applied
   one frame late. The HLE of the BIOS wait routines (SWI `IntrWait`/
   `VBlankIntrWait`, `src/arm.c`) treated the awaited-interrupt mask as a

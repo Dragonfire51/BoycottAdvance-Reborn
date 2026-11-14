@@ -470,19 +470,18 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Core: fixed per-scanline\n"
-      "    effects (HDMA/VCount) being\n"
-      "    applied one frame late. The\n"
-      "    BIOS wait HLE treated the\n"
-      "    awaited-IRQ mask as a filter,\n"
-      "    so a VCount handler was not\n"
-      "    served until VBlank and its\n"
-      "    scroll writes landed in the\n"
-      "    VBlank line. It now wakes on\n"
-      "    any enabled IRQ and re-arms\n"
-      "    the wait, like the real BIOS\n"
-      "    loop; per-scanline writes now\n"
-      "    match mGBA.";
+      "  - Android: the game no longer\n"
+      "    runs too fast with the sound\n"
+      "    off (or when the audio device\n"
+      "    fails). The loop now keeps a\n"
+      "    16.74 ms (59.7 Hz) budget per\n"
+      "    frame whenever the audio device\n"
+      "    is not the clock.\n"
+      "  - Android: the top HUD bar can\n"
+      "    be collapsed with an on-screen\n"
+      "    arrow button (down = visible,\n"
+      "    up = hidden); it is remembered\n"
+      "    across sessions.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

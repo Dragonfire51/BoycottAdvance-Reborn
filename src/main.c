@@ -434,14 +434,15 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Core: fixed per-scanline effects (HDMA/VCount)\n"
-      "    being applied one frame late. The BIOS wait\n"
-      "    HLE treated the awaited-IRQ mask as a filter,\n"
-      "    so a VCount handler was not served until\n"
-      "    VBlank and its scroll writes landed in the\n"
-      "    VBlank line. It now wakes on any enabled IRQ\n"
-      "    and re-arms the wait, like the real BIOS loop;\n"
-      "    per-scanline writes now match mGBA.");
+      "  - Android: the game no longer runs too fast\n"
+      "    with the sound off (or when the audio\n"
+      "    device fails). The loop now keeps a\n"
+      "    16.74 ms (59.7 Hz) budget per frame when\n"
+      "    the audio device is not the clock.\n"
+      "  - Android: the top HUD bar can be collapsed\n"
+      "    with an on-screen arrow button (down =\n"
+      "    visible, up = hidden); it is remembered\n"
+      "    across sessions.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",
