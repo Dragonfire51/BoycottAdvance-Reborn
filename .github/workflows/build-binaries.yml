@@ -103,6 +103,31 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           packages: 'platform-tools platforms;android-34 build-tools;34.0.0 ndk;26.1.10909125 cmake;3.22.1'
+      # Android refuses to install an update signed with a different key, so the
+      # APK must always use the SAME key.  A CI runner's default debug keystore
+      # is regenerated every run, which made each release uninstallable over the
+      # previous one: the phone silently kept the old build, so fixes never took
+      # effect.  Provide the stable key via secrets (base64), or fall back to
+      # the keystore committed in the repository.
+      - name: Set up stable signing key
+        working-directory: android
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS:      ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS:    ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS:     ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            mkdir -p keystore
+            printf '%s' "$KEYSTORE_B64" | base64 -d > keystore/release.keystore
+            printf 'storeFile=keystore/release.keystore\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+              "$KS_PASS" "${KEY_ALIAS:-boycottadvance}" "${KEY_PASS:-$KS_PASS}" > keystore.properties
+            echo "Signing with the stable release key from secrets."
+          elif [ -f keystore/release.keystore ]; then
+            echo "Signing with the keystore committed in the repository."
+          else
+            echo "::warning::No stable signing key; this APK uses a throwaway key and will NOT install over a previous version."
+          fi
       - name: Build release APK
         working-directory: android
         run: ./gradlew --no-daemon assembleDebug

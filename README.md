@@ -208,6 +208,17 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.42** - Android: fixed every APK after the first one being
+  uninstallable. The CI built with `assembleDebug` and a runner's default
+  debug keystore is regenerated on each run, so each release was signed with a
+  *different* key. Android refuses to install an update whose signature does
+  not match the installed app, so the phone silently kept running the old
+  build: fixes shipped in a new APK (like the v1.4.41 frame pacing) never
+  took effect, and the game stayed too fast with the audio crackling. The APK
+  is now always signed with the same stable key (`android/keystore/`, or the
+  `ANDROID_KEYSTORE_*` secrets in CI), and the version is bumped
+  (`versionCode 9`, `versionName 1.4.42`) so the update is applied.
+
 - **v1.4.41** - Android: fixed the game running far too fast with the sound
   off (or when the audio device fails to open). The emulation loop was paced
   only by the audio device: with nothing draining the samples it free-ran at

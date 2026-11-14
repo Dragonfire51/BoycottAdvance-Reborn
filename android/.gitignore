@@ -4,3 +4,8 @@ local.properties
 *.iml
 .idea/
 .cxx/
+
+# Stray signing files (the app's own release keystore under keystore/ IS
+# committed on purpose, so CI always signs with the same key).
+*.jks
+*.p12

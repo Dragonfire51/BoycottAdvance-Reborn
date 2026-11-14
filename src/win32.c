@@ -470,18 +470,15 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Android: the game no longer\n"
-      "    runs too fast with the sound\n"
-      "    off (or when the audio device\n"
-      "    fails). The loop now keeps a\n"
-      "    16.74 ms (59.7 Hz) budget per\n"
-      "    frame whenever the audio device\n"
-      "    is not the clock.\n"
-      "  - Android: the top HUD bar can\n"
-      "    be collapsed with an on-screen\n"
-      "    arrow button (down = visible,\n"
-      "    up = hidden); it is remembered\n"
-      "    across sessions.";
+      "  - Android: fixed the APK not\n"
+      "    installing over a previous\n"
+      "    version. Each release was\n"
+      "    signed with a different key,\n"
+      "    so Android rejected the\n"
+      "    update and the phone kept the\n"
+      "    old build (fixes seemed to do\n"
+      "    nothing). The APK is now\n"
+      "    signed with one stable key.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

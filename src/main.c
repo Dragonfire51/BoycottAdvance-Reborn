@@ -434,15 +434,12 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Android: the game no longer runs too fast\n"
-      "    with the sound off (or when the audio\n"
-      "    device fails). The loop now keeps a\n"
-      "    16.74 ms (59.7 Hz) budget per frame when\n"
-      "    the audio device is not the clock.\n"
-      "  - Android: the top HUD bar can be collapsed\n"
-      "    with an on-screen arrow button (down =\n"
-      "    visible, up = hidden); it is remembered\n"
-      "    across sessions.");
+      "  - Android: fixed the APK not installing over\n"
+      "    a previous version. Each release was signed\n"
+      "    with a different key, so Android rejected\n"
+      "    the update and the phone kept the old build\n"
+      "    (fixes seemed to do nothing). The APK is\n"
+      "    now signed with one stable key.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

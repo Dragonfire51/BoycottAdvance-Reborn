@@ -2,17 +2,42 @@ plugins {
     id 'com.android.application'
 }
 
+/* A fixed signing key.  Android refuses to install an update signed with a
+   different certificate, so a per-build key (the default debug keystore, which
+   each CI runner regenerates) made every new APK uninstallable over the
+   previous one: the phone silently kept running the old build, so fixes never
+   took effect.  The same key is used here and in CI (env vars override the
+   committed properties for secrets). */
+def keystoreProps = new Properties()
+def keystoreFile = rootProject.file('keystore.properties')
+if (keystoreFile.exists()) keystoreProps.load(new FileInputStream(keystoreFile))
+def ksPath = System.getenv('ANDROID_KEYSTORE_PATH') ?: keystoreProps['storeFile']
+def ksStorePass = System.getenv('ANDROID_KEYSTORE_PASSWORD') ?: keystoreProps['storePassword']
+def ksKeyAlias = System.getenv('ANDROID_KEY_ALIAS') ?: keystoreProps['keyAlias']
+def ksKeyPass = System.getenv('ANDROID_KEY_PASSWORD') ?: keystoreProps['keyPassword']
+
 android {
     namespace 'com.boycottadvance.reborn'
     compileSdk 34
     ndkVersion '26.1.10909125'
 
+    signingConfigs {
+        stable {
+            if (ksPath) {
+                storeFile rootProject.file(ksPath)
+                storePassword ksStorePass
+                keyAlias ksKeyAlias
+                keyPassword ksKeyPass
+            }
+        }
+    }
+
     defaultConfig {
         applicationId "com.boycottadvance.reborn"
         minSdk 21
         targetSdk 34
-        versionCode 8
-        versionName "1.4.41"
+        versionCode 9
+        versionName "1.4.42"
         externalNativeBuild {
             cmake {
                 cppFlags "-std=c99"
@@ -34,6 +59,13 @@ android {
     buildTypes {
         release {
             minifyEnabled false
+            if (ksPath) signingConfig signingConfigs.stable
+        }
+        /* The CI publishes the debug APK, so sign it with the same fixed key:
+           otherwise every build would get a new key and updates would fail to
+           install over the previous version. */
+        debug {
+            if (ksPath) signingConfig signingConfigs.stable
         }
     }
 
