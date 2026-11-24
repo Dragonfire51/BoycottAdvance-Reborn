@@ -683,7 +683,6 @@ static void do_action(int id) {
     case M_AUTORUN:  cfg.autorun = !cfg.autorun; break;
     case M_RUNPAUSE: g_paused = !g_paused; break;
     case M_RESET:    gba_save_battery(g, cfg.rompath); gba_reset(g); g_paused = 0; break;
-    case M_STATE_SLOT: cfg.state_slot = (cfg.state_slot+1)%M_SLOT_COUNT; break;
     case M_LOADSTATE: { char p[600]; state_path(p,sizeof p);
                         if (gba_load_state(g,p) != 0) msgbox("Load State", "No savestate for this slot.");
                         break; }
@@ -754,8 +753,7 @@ static void do_action(int id) {
             int s = id - M_SAVESLOT0;
             cfg.state_slot = s;
             state_save_slot(s);
-        } else if (id >= M_SLOT0 && id <= M_SLOT_LAST) cfg.state_slot = id - M_SLOT0;
-        else if (id >= M_KEY0 && id <= M_KEY0_END) capture_key(id - M_KEY0);
+        } else if (id >= M_KEY0 && id <= M_KEY0_END) capture_key(id - M_KEY0);
         else if (id >= M_JOY0 && id <= M_JOY0_END) capture_joy(id - M_JOY0);
         break;
     }
@@ -773,7 +771,6 @@ static int item_checked(int id) {
     case M_BIOSBOOT: return cfg.biosfastboot; case M_SKIPINTROS: return cfg.skipintros;
     default:
         if (id>=M_SE_SDL && id<=M_SE_DSOUND) return cfg.sound_engine==id-M_SE_SDL;
-        if (id>=M_SLOT0 && id<=M_SLOT_LAST) return cfg.state_slot==id-M_SLOT0;
         if (id>=M_ZOOM1 && id<=M_ZOOM4) return cfg.zoom==id-M_ZOOM1+1;
         if (id>=M_SKIP0 && id<=M_SKIP5) return cfg.frameskip==id-M_SKIP0;
         if (id>=M_VB_AUTO && id<=M_VB_D3D) {

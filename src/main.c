@@ -202,10 +202,6 @@ typedef struct { const char *label; int id; } MenuItem;
 static MenuItem m_file[] = {
     {"Load ROM...",M_LOADROM},{"ROM Information...",M_ROMINFO},{"Auto Run",M_AUTORUN},{"",0},
     {"Run/Pause Emulation",M_RUNPAUSE},{"Reset Emulation",M_RESET},{"",0},
-    {"State Slot",0},{"Slot 0",M_SLOT0+0},{"Slot 1",M_SLOT0+1},
-    {"Slot 2",M_SLOT0+2},{"Slot 3",M_SLOT0+3},{"Slot 4",M_SLOT0+4},
-    {"Slot 5",M_SLOT0+5},{"Slot 6",M_SLOT0+6},{"Slot 7",M_SLOT0+7},
-    {"Slot 8",M_SLOT0+8},{"Slot 9",M_SLOT0+9},
     {"Load State From Slot",0},{"F1  Slot 0",M_LOADSLOT0+0},{"F2  Slot 1",M_LOADSLOT0+1},
     {"F3  Slot 2",M_LOADSLOT0+2},{"F4  Slot 3",M_LOADSLOT0+3},{"F5  Slot 4",M_LOADSLOT0+4},
     {"F6  Slot 5",M_LOADSLOT0+5},{"F7  Slot 6",M_LOADSLOT0+6},{"F8  Slot 7",M_LOADSLOT0+7},
@@ -486,7 +482,6 @@ static void do_action(int id) {
     case M_AUTORUN: cfg.autorun = !cfg.autorun; break;
     case M_RUNPAUSE: g_paused = !g_paused; break;
     case M_RESET: gba_save_battery(g, cfg.rompath); gba_reset(g); g_paused = 0; break;
-    case M_STATE_SLOT: cfg.state_slot = (cfg.state_slot+1)%10; break;
     case M_LOADSTATE: { char p[600]; state_path(p,sizeof p); if (gba_load_state(g,p) != 0) dlg_text("Load State","No savestate for this slot."); break; }
     case M_SAVESTATE:{ char p[600]; state_path(p,sizeof p); gba_save_state(g,p); break; }
     case M_EXIT: { SDL_Event q; q.type=SDL_QUIT; SDL_PushEvent(&q); break; }
@@ -557,8 +552,7 @@ static void do_action(int id) {
             cfg.state_slot = s;
             state_path_slot(p, sizeof p, s);
             gba_save_state(g, p);
-        } else if (id >= M_SLOT0 && id <= M_SLOT_LAST) cfg.state_slot = id - M_SLOT0;
-        else if (id >= M_KEY0 && id <= M_KEY0_END) begin_key_capture(id - M_KEY0);
+        } else if (id >= M_KEY0 && id <= M_KEY0_END) begin_key_capture(id - M_KEY0);
         break;
     }
     if (gui_active) gui_native_sync();
@@ -592,7 +586,6 @@ static int item_checked(int id) {
     case M_REVSTEREO: return cfg.reverse_stereo; case M_BIOSEN: return cfg.biosenable;
     case M_BIOSBOOT: return cfg.biosfastboot; case M_SKIPINTROS: return cfg.skipintros;
     default:
-        if (id>=M_SLOT0 && id<=M_SLOT_LAST) return cfg.state_slot==id-M_SLOT0;
         if (id>=M_ZOOM1 && id<=M_ZOOM4) return cfg.zoom==id-M_ZOOM1+1;
         if (id>=M_SKIP0 && id<=M_SKIP5) return cfg.frameskip==id-M_SKIP0;
         if (id>=M_VB_AUTO && id<=M_VB_D3D) {
