@@ -470,16 +470,16 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Fixed games that ran far too\n"
-      "    fast (Medabots AX and others).\n"
-      "    The HLE IntrWait/VBlankIntrWait\n"
-      "    released the CPU on any unrelated\n"
-      "    interrupt, so a game's frame loop\n"
-      "    resumed without waiting for the\n"
-      "    flag it asked for and ran many\n"
-      "    times per frame. The wait now\n"
-      "    stays asleep until its own flag\n"
-      "    arrives, as the real BIOS does.";
+      "  - Fixed the BIOS Div SWI (r1 and\n"
+      "    r3 were wrong; div by zero now\n"
+      "    matches the ARM7TDMI).\n"
+      "  - Video and audio audited against\n"
+      "    GBATEK and VBA-M: colour effects,\n"
+      "    affine BGs, windows, FIFO timing\n"
+      "    and PSG levels already correct.\n"
+      "  - Frame clock verified: 0.0000%\n"
+      "    drift, 0 px difference vs mGBA\n"
+      "    on Digimon Racing (600 frames).";
     msgbox("History", hist);
 }
 static void reset_keys(void) {

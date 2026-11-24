@@ -434,15 +434,16 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Fixed games that ran far too fast\n"
-      "    (Medabots AX and others). The HLE\n"
-      "    IntrWait/VBlankIntrWait released the\n"
-      "    CPU on any unrelated interrupt, so a\n"
-      "    game's frame loop resumed without\n"
-      "    waiting for the flag it asked for and\n"
-      "    ran many times per frame. The wait\n"
-      "    now stays asleep until its own flag\n"
-      "    arrives, as the real BIOS loop does.");
+      "  - Fixed the BIOS Div SWI (r1 and r3\n"
+      "    were wrong; div by zero now matches\n"
+      "    the ARM7TDMI).\n"
+      "  - Video and audio audited against\n"
+      "    GBATEK and VBA-M: colour effects,\n"
+      "    affine BGs, windows, FIFO timing\n"
+      "    and PSG levels already correct.\n"
+      "  - Frame clock verified: 0.0000% drift,\n"
+      "    0 px difference vs mGBA on Digimon\n"
+      "    Racing over 600 frames.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",

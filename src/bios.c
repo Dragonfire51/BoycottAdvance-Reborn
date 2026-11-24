@@ -147,17 +147,26 @@ void swi_div32(GBA *g) {
     int32_t a = (int32_t)g->cpu.r[0];
     int32_t b = (int32_t)g->cpu.r[1];
     uint32_t cycles = 4 + 13 + 7;   /* fallback: one loop */
-    if (b == 0) { g->cpu.r[0] = (uint32_t)a; g->cpu.r[1] = (uint32_t)a; g->cpu.r[3] = 0; }
+    if (b == 0) {
+        /* GBATEK "Div": divisor 0 -> r0 = +-1 (signo del dividendo), r1 = dividendo,
+           r3 = 1. mGBA (_Div) y VBA-M (gba.cpp SWI 0x06) hacen lo mismo. */
+        g->cpu.r[0] = (a < 0) ? (uint32_t)-1 : 1u;
+        g->cpu.r[1] = (uint32_t)a;
+        g->cpu.r[3] = 1;
+    }
     else if (b == -1 && a == INT32_MIN) {
         /* GBATEK: 0x80000000 / -1 yields 0x80000000 with remainder 0
-           on ARM7TDMI; the C division would be undefined behaviour. */
+           on ARM7TDMI; the C division would be undefined behaviour.
+           r3 = ABS(quotient) desborda igual, y el BIOS devuelve INT32_MIN. */
         g->cpu.r[0] = (uint32_t)INT32_MIN;
         g->cpu.r[1] = 0;
-        g->cpu.r[3] = 0;
+        g->cpu.r[3] = (uint32_t)INT32_MIN;
     } else {
-        g->cpu.r[0] = (uint32_t)(a / b);
-        g->cpu.r[3] = (uint32_t)(a % b);
+        /* GBATEK "Div": r0 = quotient, r1 = remainder, r3 = ABS(quotient). */
+        int32_t quot = a / b;
+        g->cpu.r[0] = (uint32_t)quot;
         g->cpu.r[1] = (uint32_t)(a % b);
+        g->cpu.r[3] = (uint32_t)(quot < 0 ? -quot : quot);
         int loops = (b != 0) ? __builtin_clz((uint32_t)(b < 0 ? -b : b)) -
                               __builtin_clz((uint32_t)(a < 0 ? -a : a)) : 1;
         if (loops < 1) loops = 1;

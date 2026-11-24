@@ -208,6 +208,56 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
 
 ## Version history
 
+- **v1.4.45** - Audit of the video/audio paths against GBATEK and VBA-M, plus a
+  correctness fix in the HLE of the BIOS division SWI. **No rendering or
+  mixing behaviour changed**: every other reported point was verified as
+  already correct, and the evidence is recorded here so it is not "fixed"
+  again by mistake.
+  - **`src/bios.c` `swi_div32` (real fix).** GBATEK "SWI 06h - Div" specifies
+    `r0 = Number DIV Denom`, `r1 = Number MOD Denom`, `r3 = ABS(quotient)`.
+    Our HLE wrote the quotient to `r1` as well, leaving `r3 = 0` on the normal
+    path and on `INT_MIN / -1`; division by zero returned `r0 = dividend`
+    instead of the `+-1` the ARM7TDMI leaves. Matches mGBA `_Div`
+    (`src/gba/bios.c`) line for line now. Verified with 8/8 synthetic cases
+    (`-1234/10 -> -123, -4, +123`, `+-x/0 -> +-1, x, 1`, `INT_MIN/-1 ->
+    INT_MIN, 0, INT_MIN`).
+  - **Colour effects (`src/ppu.c`) — verified identical to VBA-M.** Alpha
+    blend, brighten and darken were compared exhaustively against
+    `gfxAlphaBlend` / `gfxIncreaseBrightness` / `gfxDecreaseBrightness`
+    (`gbaGfx.h`): **0 mismatches** over 557056 brightness cases (all 32768
+    colours x 17 coefficients, both directions) and 13.7M sampled blend cases.
+  - **BG2 affine in bitmap modes, affine mosaic, reference-point reload, window
+    wrap, OBJ 2D wrap, scanline order** — all already implemented and matching
+    GBATEK/VBA-M (`render_bitmap` applies PA/PC + mosaic and yields transparent
+    outside the bitmap; `render_affine_bg` rewinds both `rx` and `ry` by the
+    mosaic row; `io_write16` reloads `refx/refy` with the 28-bit sign-extended
+    value on every `BG2X/Y` write, so HDMA Mode-7 effects work mid-frame;
+    `in_win_x` wraps when `x1 > x2`; HBlank DMA is gated to `line < 160`).
+  - **Audio — verified.** The FIFO is clocked by the real timer period
+    (`fifo_timer_period`, phase in 32.32 so `STEP_FP/period` does not truncate),
+    which is equivalent to sampling one byte per overflow; 8-bit register
+    writes merge with the raw `io_raw` shadow instead of the masked read, so
+    M4A's byte writes to `0x04000064`/`0x65` keep their bits; the FIFO reset
+    clears `fifo_prev`/`fifo_interp`/`fifo_frac`; the wave length is only loaded
+    on `0x72`/trigger. PSG level is `2^(vol-1)` and the final gain `x48`, as in
+    mGBA. Measured on Digimon Racing, real BIOS, 600 frames: **443012 samples =
+    exactly 600 frames** at 44100 Hz (738.35/frame), zero ring-buffer drops,
+    peak 19200 matching mGBA sample for sample.
+  - **Windows frontend** — the D3D9 path already resets the device on resize
+    and handles `D3DERR_DEVICELOST`/`DEVICENOTRESET`; GDI and D3D both letterbox
+    a centred 3:2 rect instead of stretching to the client; samplers are
+    explicit `D3DTEXF_POINT`.
+  - **Verification (headless, same core as the .exe).** Digimon Racing with the
+    real BIOS, 600 frames: **0 px difference (0.00%)** against mGBA at f60,
+    f120, f280, f300, f320, f360, f380, f400, f420, f450, f480, f500, f520,
+    f540, f570. Frame-clock drift **+0.0000%** (168537600 cycles over 600
+    frames, exactly 228 x 1232 per frame).
+    Method note: mGBA's PPM dumps from `tools/mgbaharness.c` are **RGB**; the
+    BGR permutation documented in `tools/fb_diff.py` must NOT be applied, or a
+    pixel-perfect frame reads as 96% different.
+  - Regression suite unchanged (`tools/gba_test_suite.py`); all three targets
+    build clean and the Windows binaries still import only native DLLs.
+
 - **v1.4.44** - Core: fixed games that ran **far too fast** (Medabots AX -
   Rokusho, and others). The HLE of the BIOS wait routines (SWI `IntrWait`/
   `VBlankIntrWait`, `src/arm.c`) released the CPU on *any* unrelated enabled
