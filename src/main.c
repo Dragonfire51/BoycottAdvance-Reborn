@@ -206,6 +206,14 @@ static MenuItem m_file[] = {
     {"Slot 2",M_SLOT0+2},{"Slot 3",M_SLOT0+3},{"Slot 4",M_SLOT0+4},
     {"Slot 5",M_SLOT0+5},{"Slot 6",M_SLOT0+6},{"Slot 7",M_SLOT0+7},
     {"Slot 8",M_SLOT0+8},{"Slot 9",M_SLOT0+9},
+    {"Load State From Slot",0},{"F1  Slot 0",M_LOADSLOT0+0},{"F2  Slot 1",M_LOADSLOT0+1},
+    {"F3  Slot 2",M_LOADSLOT0+2},{"F4  Slot 3",M_LOADSLOT0+3},{"F5  Slot 4",M_LOADSLOT0+4},
+    {"F6  Slot 5",M_LOADSLOT0+5},{"F7  Slot 6",M_LOADSLOT0+6},{"F8  Slot 7",M_LOADSLOT0+7},
+    {"F9  Slot 8",M_LOADSLOT0+8},{"Slot 9",M_LOADSLOT0+9},
+    {"Save State To Slot",0},{"Shift+F1  Slot 0",M_SAVESLOT0+0},{"Shift+F2  Slot 1",M_SAVESLOT0+1},
+    {"Shift+F3  Slot 2",M_SAVESLOT0+2},{"Shift+F4  Slot 3",M_SAVESLOT0+3},{"Shift+F5  Slot 4",M_SAVESLOT0+4},
+    {"Shift+F6  Slot 5",M_SAVESLOT0+5},{"Shift+F7  Slot 6",M_SAVESLOT0+6},{"Shift+F8  Slot 7",M_SAVESLOT0+7},
+    {"Shift+F9  Slot 8",M_SAVESLOT0+8},{"Slot 9",M_SAVESLOT0+9},
     {"Load State",M_LOADSTATE},{"Save State",M_SAVESTATE},
     {"",0},{"Exit",M_EXIT},{NULL,0}};
 static MenuItem m_window[] = {
@@ -393,9 +401,12 @@ static void gui_native_setup(void) {
    "<rom>.ss<slot>".  A shared "state<N>.sav" name made Load State pull
    another game's state (clobbering the backup type and crashing).  The
    extension differs from the battery ".sav" so the two are never confused. */
+static void state_path_slot(char *b, size_t n, int slot) {
+    if (cfg.rompath[0]) snprintf(b, n, "%s.ss%d", cfg.rompath, slot);
+    else                snprintf(b, n, "state%d.sav", slot);
+}
 static void state_path(char *b, size_t n) {
-    if (cfg.rompath[0]) snprintf(b, n, "%s.ss%d", cfg.rompath, cfg.state_slot);
-    else                snprintf(b, n, "state%d.sav", cfg.state_slot);
+    state_path_slot(b, n, cfg.state_slot);
 }
 static const char *save_type_name(int t) {
     switch (t) {
@@ -434,16 +445,15 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Fixed the BIOS Div SWI (r1 and r3\n"
-      "    were wrong; div by zero now matches\n"
-      "    the ARM7TDMI).\n"
-      "  - Video and audio audited against\n"
-      "    GBATEK and VBA-M: colour effects,\n"
-      "    affine BGs, windows, FIFO timing\n"
-      "    and PSG levels already correct.\n"
-      "  - Frame clock verified: 0.0000% drift,\n"
-      "    0 px difference vs mGBA on Digimon\n"
-      "    Racing over 600 frames.");
+      "  - Save-states by slot: 10 slots, each\n"
+      "    in its own <rom>.ssN file.\n"
+      "  - F1..F9 load slot 0..8, Shift+F1..F9\n"
+      "    save into it; slot 9 is menu-only.\n"
+      "  - File > Load State From Slot and\n"
+      "    Save State To Slot list every slot\n"
+      "    with the date and time it was saved.\n"
+      "  - F10 screenshot, F11 fullscreen,\n"
+      "    F12 About (previously F5/F1).");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",
@@ -535,7 +545,19 @@ static void do_action(int id) {
         cfg.video_backend = map[id - M_VB_AUTO];
         break; }
     default:
-        if (id >= M_SLOT0 && id <= M_SLOT_LAST) cfg.state_slot = id - M_SLOT0;
+        if (id >= M_LOADSLOT0 && id <= M_LOADSLOT_LAST) {
+            int s = id - M_LOADSLOT0;
+            char p[600];
+            cfg.state_slot = s;
+            state_path_slot(p, sizeof p, s);
+            if (gba_load_state(g, p) != 0) dlg_text("Load State", "No savestate for this slot.");
+        } else if (id >= M_SAVESLOT0 && id <= M_SAVESLOT_LAST) {
+            int s = id - M_SAVESLOT0;
+            char p[600];
+            cfg.state_slot = s;
+            state_path_slot(p, sizeof p, s);
+            gba_save_state(g, p);
+        } else if (id >= M_SLOT0 && id <= M_SLOT_LAST) cfg.state_slot = id - M_SLOT0;
         else if (id >= M_KEY0 && id <= M_KEY0_END) begin_key_capture(id - M_KEY0);
         break;
     }
@@ -817,16 +839,22 @@ int main(int argc, char **argv) {
                 }
                 if (dialog_kind) { if (k==SDLK_ESCAPE) dialog_kind=0; continue; }
                 if (k==SDLK_ESCAPE) { if (menu_open>=0) menu_open=-1; else running=0; }
-                else if (k==SDLK_F1) show_about();
-                else if (k==SDLK_F2) { char p[600]; state_path(p,sizeof p); gba_save_state(g,p); }
-                else if (k==SDLK_F3) { char p[600]; state_path(p,sizeof p); if (gba_load_state(g,p)!=0) dlg_text("Load State","No savestate for this slot."); }
-                else if (k==SDLK_F5) { FILE*f=fopen("shot.ppm","wb"); if(f){fwrite("P6\n240 160\n255\n",1,14,f);
+                else if (k>=SDLK_F1 && k<=SDLK_F9) {
+                    int slot = k - SDLK_F1;
+                    char p[600];
+                    cfg.state_slot = slot;
+                    state_path_slot(p,sizeof p,slot);
+                    if (ev.key.keysym.mod & KMOD_SHIFT) gba_save_state(g,p);
+                    else if (gba_load_state(g,p)!=0) dlg_text("Load State","No savestate for this slot.");
+                    cfg_save("boycottadvance-reborn.ini");
+                }
+                else if (k==SDLK_F10) { FILE*f=fopen("shot.ppm","wb"); if(f){fwrite("P6\n240 160\n255\n",1,14,f);
                     for(int y2=0;y2<SCREEN_H;y2++)for(int x2=0;x2<SCREEN_W;x2++){uint16_t c=g->ppu.frame[y2*SCREEN_W+x2];
                     int r5=c&0x1F,g5=(c>>5)&0x1F,b5=(c>>10)&0x1F;
                     fputc((r5<<3)|(r5>>2),f);fputc((g5<<3)|(g5>>2),f);fputc((b5<<3)|(b5>>2),f);} fclose(f);} }
                 else if (k==SDLK_p) g_paused = !g_paused;
                 else if (k==SDLK_F11) toggle_fullscreen(win);
-                else if (k==SDLK_F9) show_history();
+                else if (k==SDLK_F12) show_about();
             }
         }
 

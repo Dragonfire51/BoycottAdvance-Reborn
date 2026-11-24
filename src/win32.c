@@ -428,10 +428,47 @@ static void load_rom(const char *path) {
    made Load State pull another game's state, which clobbered the backup type
    and crashed.  The extension differs from the battery ".sav" so the two are
    never confused. */
+static void state_path_slot(char *b, size_t n, int slot) {
+    if (cfg.rompath[0])   snprintf(b, n, "%s.ss%d", cfg.rompath, slot);
+    else if (exe_dir()[0]) snprintf(b, n, "%sstate%d.sav", exe_dir(), slot);
+    else                  snprintf(b, n, "state%d.sav", slot);
+}
 static void state_path(char *b, size_t n) {
-    if (cfg.rompath[0])   snprintf(b, n, "%s.ss%d", cfg.rompath, cfg.state_slot);
-    else if (exe_dir()[0]) snprintf(b, n, "%sstate%d.sav", exe_dir(), cfg.state_slot);
-    else                  snprintf(b, n, "state%d.sav", cfg.state_slot);
+    state_path_slot(b, n, cfg.state_slot);
+}
+
+/* Menu label for a slot: shortcut, plus the date and time the file was last
+ * written so the user can tell the slots apart without loading them. */
+static const char *slot_text(int slot) {
+    static char buf[96];
+    char key[12] = "";
+    char path[600];
+    if (slot < 9) snprintf(key, sizeof key, "  (F%d)", slot + 1);
+    state_path_slot(path, sizeof path, slot);
+    WIN32_FILE_ATTRIBUTE_DATA fa;
+    if (GetFileAttributesExA(path, GetFileExInfoStandard, &fa)) {
+        FILETIME ft = fa.ftLastWriteTime, lt;
+        SYSTEMTIME st;
+        if (FileTimeToLocalFileTime(&ft, &lt) && FileTimeToSystemTime(&lt, &st)) {
+            snprintf(buf, sizeof buf, "Slot %d%s   %04d-%02d-%02d %02d:%02d",
+                     slot, key, st.wYear, st.wMonth, st.wDay,
+                     st.wHour, st.wMinute);
+            return buf;
+        }
+    }
+    snprintf(buf, sizeof buf, "Slot %d%s   empty", slot, key);
+    return buf;
+}
+
+static void state_save_slot(int slot) {
+    char p[600];
+    state_path_slot(p, sizeof p, slot);
+    gba_save_state(g, p);
+}
+static void state_load_slot(int slot) {
+    char p[600];
+    state_path_slot(p, sizeof p, slot);
+    if (gba_load_state(g, p) != 0) msgbox("Load State", "No savestate for this slot.");
 }
 static const char *save_type_name(int t) {
     switch (t) {
@@ -470,16 +507,16 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Fixed the BIOS Div SWI (r1 and\n"
-      "    r3 were wrong; div by zero now\n"
-      "    matches the ARM7TDMI).\n"
-      "  - Video and audio audited against\n"
-      "    GBATEK and VBA-M: colour effects,\n"
-      "    affine BGs, windows, FIFO timing\n"
-      "    and PSG levels already correct.\n"
-      "  - Frame clock verified: 0.0000%\n"
-      "    drift, 0 px difference vs mGBA\n"
-      "    on Digimon Racing (600 frames).";
+      "  - Save-states by slot: 10 slots,\n"
+      "    each in its own <rom>.ssN file.\n"
+      "  - F1..F9 load slot 0..8,\n"
+      "    Shift+F1..F9 save into it;\n"
+      "    slot 9 is menu-only.\n"
+      "  - File > Load State From Slot and\n"
+      "    Save State To Slot list every slot\n"
+      "    with the date and time it was saved.\n"
+      "  - F10 screenshot, F11 fullscreen,\n"
+      "    F12 About (previously F5/F1).";
     msgbox("History", hist);
 }
 static void reset_keys(void) {
@@ -709,7 +746,15 @@ static void do_action(int id) {
         cfg.video_backend = map[id - M_VB_AUTO];
         break; }
     default:
-        if (id >= M_SLOT0 && id <= M_SLOT_LAST) cfg.state_slot = id - M_SLOT0;
+        if (id >= M_LOADSLOT0 && id <= M_LOADSLOT_LAST) {
+            int s = id - M_LOADSLOT0;
+            cfg.state_slot = s;
+            state_load_slot(s);
+        } else if (id >= M_SAVESLOT0 && id <= M_SAVESLOT_LAST) {
+            int s = id - M_SAVESLOT0;
+            cfg.state_slot = s;
+            state_save_slot(s);
+        } else if (id >= M_SLOT0 && id <= M_SLOT_LAST) cfg.state_slot = id - M_SLOT0;
         else if (id >= M_KEY0 && id <= M_KEY0_END) capture_key(id - M_KEY0);
         else if (id >= M_JOY0 && id <= M_JOY0_END) capture_joy(id - M_JOY0);
         break;
@@ -766,16 +811,23 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_KEYDOWN: {
         int vk = (int)wp;
         if (key_capture >= 0) { on_key_assign(vk); return 0; }
+        /* F1-F9 load a save-state slot, Shift+F1-F9 save into it.  These take
+           priority over the old single-key actions (About / screenshot /
+           history), which move to Alt and F12 respectively. */
+        if (vk >= VK_F1 && vk <= VK_F9) {
+            int slot = vk - VK_F1;
+            int shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            cfg.state_slot = slot;
+            if (shift) state_save_slot(slot);
+            else       state_load_slot(slot);
+            save_cfg();
+            return 0;
+        }
         switch (vk) {
         case VK_ESCAPE: g_quit = 1; PostMessage(h, WM_CLOSE, 0, 0); break;
-        case VK_F1: show_about(); break;
-        case VK_F2: { char p[600]; state_path(p,sizeof p); gba_save_state(g,p); break; }
-        case VK_F3: { char p[600]; state_path(p,sizeof p);
-                      if (gba_load_state(g,p) != 0) msgbox("Load State", "No savestate for this slot.");
-                      break; }
-        case VK_F5: save_screenshot(); break;
+        case VK_F10: save_screenshot(); break;
+        case VK_F12: show_about(); break;
         case 'P':   g_paused = !g_paused; break;
-        case VK_F9: show_history(); break;
         case VK_F11: toggle_fullscreen(); break;
         default: break;
         }
@@ -930,7 +982,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     GuiCallbacks cb = { gui_cb_action, gui_cb_checked, gui_cb_loadrom,
                         gui_cb_setbios, gui_cb_pause, gui_cb_resume,
                         gui_cb_keyname, gui_cb_joyname,
-                        gui_cb_keyget, gui_cb_keyset, gui_cb_joyget, gui_cb_joyset };
+                        gui_cb_keyget, gui_cb_keyset, gui_cb_joyget, gui_cb_joyset,
+                        slot_text };
     gui_native_init((void *)g_hwnd, gba_icon_argb, GBA_ICON_W, GBA_ICON_H, &cb);
 
     ShowWindow(g_hwnd, SW_SHOW);

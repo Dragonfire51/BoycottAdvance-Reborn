@@ -91,7 +91,8 @@ debugger is intentionally omitted). Settings are stored in
 `boycottadvance-reborn.ini`.
 
 - **File** — Load ROM..., ROM Information..., Auto Run, Run/Pause
-  Emulation, Reset Emulation, Choose State Slot, Load State, Save State, Exit
+  Emulation, Reset Emulation, Load State From Slot, Save State To Slot,
+  Load State, Save State, Exit
 - **Window** — Zoom x1..x4, Select FLASHROM ID, Scanline (TV Mode),
   Stretch Fit To Screen, Fullscreen
 - **Options** — Frameskip (0..5), Auto Frame Skip, Smooth Emulation,
@@ -108,8 +109,9 @@ outside the executable's folder) with the mouse or the Up/Down/Enter keys,
 and remembers the last folder you loaded a ROM from.
 
 Keyboard: `A`=A, `S`=B, `F`=L, `D`=R, `Enter`=Start, `Backspace`=Select,
-arrows = D-Pad, `F1`=About, `F2`/`F3`=save/load state, `F5`=screenshot,
-`F9`=History, `F11`=fullscreen, `Esc`=quit.
+arrows = D-Pad, `F1`..`F9`=load state slot 0..8, `Shift`+`F1`..`F9`=save into
+that slot, `F10`=screenshot, `F11`=fullscreen, `F12`=About, `P`=pause,
+`Esc`=quit.
 
 ## Building
 
@@ -203,10 +205,46 @@ per button). Defaults:
 | L / R | `F` / `D` |
 | Start / Select | `Enter` / `Backspace` |
 
-Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
-`P` pause, `F1` about, `F9` history, `F11` fullscreen, `Esc` quit.
+Emulator shortcuts: `F1`..`F9` load save-state slots 0..8, `Shift`+`F1`..`F9`
+save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
+`P` pause, `Esc` quit.
 
 ## Version history
+
+- **v1.4.46** - Save-states by slot in both frontends. **UI only, the core is
+  untouched** (`src/gba.c`, `src/mem.c`, `src/arm.c`, `src/ppu.c`, `src/apu.c`
+  and `src/bios.c` are byte-identical to v1.4.45).
+  - **Ten slots, one file each.** The state path is now `<rom>.ss<N>` for slot
+    `N` in 0..9. Previously `F2`/`F3` and the *Load/Save State* items always
+    used whichever slot `File > Choose State Slot` had selected, so a save and
+    a load could not target two different points without going through the
+    menu first.
+  - **Shortcuts.** `F1`..`F9` load slots 0..8 and `Shift`+`F1`..`F9` save into
+    them. Nine keys cannot address ten slots, so slot 9 stays menu-only. The
+    displaced actions moved rather than disappeared: `F10` screenshot (was
+    `F5`), `F12` About (was `F1`); History and fullscreen keep their menu
+    entries and `F11`.
+  - **Submenus with the save date.** *File > Load State From Slot* and *File >
+    Save State To Slot* list all ten slots; each label carries its shortcut and,
+    when the file exists, the date and time it was written (`GetFileAttributesExA`
+    + `FileTimeToLocalFileTime`), or `empty`. The labels are rebuilt on
+    `WM_INITMENUPOPUP`, so opening the menu shows the current times without
+    any per-frame cost.
+  - **Same behaviour on the SDL frontend** (`src/main.c`): same paths, same
+    submenus, same keys, same slot ids. Also removed a dead `F5` branch there
+    (`F5` was already taken by a duplicate `F11` handler, so History was
+    unreachable from the keyboard).
+  - **Verified on the real `.exe` under Wine, not just by reading code:**
+    `Shift+F2` wrote `digimon.gba.ss1` and `Shift+F3` wrote `digimon.gba.ss2`
+    (614496 bytes each, different contents), `F2` did not overwrite anything,
+    `StateSlot` was persisted to the INI, and pressing `F1` after letting the
+    game run restored the exact saved frame: **74 pixels** differ from the
+    pre-save screenshot versus **54561** before loading. Note the Wine test
+    environment has no Windows fonts, so menu *text* renders as blocks there;
+    the item actions themselves work.
+  - Builds: Linux, win64 and win32 clean; both Windows binaries still import
+    only native DLLs (COMDLG32, d3d9, GDI32, KERNEL32, msvcrt, SHELL32, USER32,
+    WINMM — no SDL2). Regression suite unchanged.
 
 - **v1.4.45** - Audit of the video/audio paths against GBATEK and VBA-M, plus a
   correctness fix in the HLE of the BIOS division SWI. **No rendering or
@@ -255,8 +293,16 @@ Emulator shortcuts: `F2` save state, `F3` load state, `F5` screenshot,
     Method note: mGBA's PPM dumps from `tools/mgbaharness.c` are **RGB**; the
     BGR permutation documented in `tools/fb_diff.py` must NOT be applied, or a
     pixel-perfect frame reads as 96% different.
-  - Regression suite unchanged (`tools/gba_test_suite.py`); all three targets
-    build clean and the Windows binaries still import only native DLLs.
+  - **Regression suite unchanged, proved per test.** `tools/gba_test_suite.py`
+    against alyosha-tas/gba-tests (133 ROMs) gives **76 PASSED / 48 FAILED /
+    9 UNKNOWN / 133** both before and after this release, and diffing the full
+    failure list *including the failure codes* shows **zero differences**: the
+    same 48 failures with the same codes, so no test was traded for another.
+    (`SUITE_ROOT=/tmp/at-tests`, `HH=/tmp/hh`.) Note that jsmolka/gba-tests,
+    the other suite this repo's notes mention, only contains 13 ROMs.
+  - All three targets build clean and both Windows binaries still import only
+    native DLLs (COMDLG32, d3d9, GDI32, KERNEL32, msvcrt, SHELL32, USER32,
+    WINMM — no SDL2).
 
 - **v1.4.44** - Core: fixed games that ran **far too fast** (Medabots AX -
   Rokusho, and others). The HLE of the BIOS wait routines (SWI `IntrWait`/

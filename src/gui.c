@@ -105,12 +105,22 @@ static void build_menu(void) {
     item(file, "&Run/Pause Emulation", M_RUNPAUSE);
     item(file, "&Reset Emulation", M_RESET);
     sep(file);
-    /* The original listed the ten save-state slots directly. */
-    HMENU slots = add_popup(file, "Choose &State Slot");
+    /* F1-F9 load a slot, Shift+F1-F9 save into it.  Both submenus list the
+       ten slots; the label carries the shortcut and, for slots already
+       written, the date and time the state was saved. */
+    HMENU loadm = add_popup(file, "&Load State From Slot");
+    HMENU savem = add_popup(file, "Sa&ve State To Slot");
     for (int i = 0; i < M_SLOT_COUNT; i++) {
-        char label[16];
-        snprintf(label, sizeof label, "Slot %d", i);
-        item(slots, label, M_SLOT0 + i);
+        const char *lbl = (g_cb.slot_text) ? g_cb.slot_text(i) : NULL;
+        char fallback[32];
+        if (!lbl) {
+            /* F1-F9 cover slots 0-8; the tenth slot is menu-only. */
+            if (i < 9) snprintf(fallback, sizeof fallback, "Slot %d  (F%d)", i, i + 1);
+            else       snprintf(fallback, sizeof fallback, "Slot %d", i);
+            lbl = fallback;
+        }
+        item(loadm, lbl, M_LOADSLOT0 + i);
+        item(savem, lbl, M_SAVESLOT0 + i);
     }
     item(file, "&Load State", M_LOADSTATE);
     item(file, "&Save State", M_SAVESTATE);
@@ -213,6 +223,16 @@ static void sync_menu(HMENU m) {
         if (id != (UINT)-1 && id != 0) {
             UINT st = (g_cb.checked && g_cb.checked((int)id)) ? MF_CHECKED : MF_UNCHECKED;
             CheckMenuItem(m, id, MF_BYCOMMAND | st);
+            /* Slot items carry a save date, so their text changes over time. */
+            int slot = -1;
+            if (id >= (UINT)M_LOADSLOT0 && id <= (UINT)M_LOADSLOT_LAST)
+                slot = (int)id - M_LOADSLOT0;
+            else if (id >= (UINT)M_SAVESLOT0 && id <= (UINT)M_SAVESLOT_LAST)
+                slot = (int)id - M_SAVESLOT0;
+            if (slot >= 0 && g_cb.slot_text) {
+                const char *lbl = g_cb.slot_text(slot);
+                if (lbl) ModifyMenuA(m, id, MF_BYCOMMAND | MF_STRING, id, lbl);
+            }
         }
         HMENU sub = GetSubMenu(m, i);
         if (sub) sync_menu(sub);

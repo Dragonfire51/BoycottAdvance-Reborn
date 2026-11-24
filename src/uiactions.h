@@ -40,4 +40,12 @@ enum { M_SLOT0 = M_INPUTCFG + 1 };
 #define M_SLOT_COUNT 10
 #define M_SLOT_LAST  (M_SLOT0 + M_SLOT_COUNT - 1)
 
+/* "Load State From Slot" / "Save State To Slot": ten contiguous items each.
+ * They act directly on the slot instead of first making it current, so the
+ * F1-F9 / Shift+F1-F9 shortcuts and the menu share one code path. */
+enum { M_LOADSLOT0 = M_SLOT_LAST + 1 };
+#define M_LOADSLOT_LAST (M_LOADSLOT0 + M_SLOT_COUNT - 1)
+enum { M_SAVESLOT0 = M_LOADSLOT_LAST + 1 };
+#define M_SAVESLOT_LAST (M_SAVESLOT0 + M_SLOT_COUNT - 1)
+
 #endif
