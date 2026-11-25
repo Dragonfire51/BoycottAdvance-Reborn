@@ -1377,7 +1377,12 @@ Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 - **Test**: `tools/fb_text_test.c` (compara buffers de pixeles; el comando de
   compilacion esta en su cabecera). Suite `run_gba_tests.py` sigue en PASS.
 
-## RELEASE v1.4.50 (publicado 2026-11-25)
+## RELEASE v1.4.50 (publicado y RETIRADO 2026-11-25/26)
+
+> Retirada: su build traia el bug del OSD de abajo (glifos aleatorios con texto
+> no ASCII). Se borro el tag y el release, y su contenido va publicado en
+> **v1.4.51**. Se conserva esta seccion por las mediciones y los commits.
+
 
 - **Tag** `v1.4.50`; tag rodante `Latest` movido al mismo commit. Contenido:
   **Digimon Racing ya dibuja la pista** (tiles afines de 256 colores + angulo
