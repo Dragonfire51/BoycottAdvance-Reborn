@@ -212,6 +212,28 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
+- **v1.4.50** - Digimon Racing renders its track, and the halt/IntrWait SWIs
+  run the real BIOS loop.
+  - Affine backgrounds honour the 256-colour tile flag (`BGxCNT` bit 7): 64-byte
+    tiles with one byte per pixel instead of 32-byte tiles with a nibble per
+    pixel, so the track floor and terrain no longer used the wrong tile.
+  - `aff_angle()` (`src/bios.c`) indexed the sine table with the low byte of the
+    1.15 angle and `SWI 0Eh`/`0Fh` read it as `(int8_t)read8 << 8`; now the
+    angle is a halfword and the index is `(angle >> 8) & 0xFF` with the sine
+    negated (`cos(x+90) = -sin(x)`). The affine band of the track was rotated.
+  - `SWI 02h..05h` (Halt/Stop/IntrWait/VBlankIntrWait) are BIOS loops that sleep
+    in `HALTCNT`, re-check `IF` and sleep again. With a BIOS dump loaded they now
+    enter vector `0x08` instead of being emulated by HLE, so the game clock
+    matches hardware: the Digimon Racing race timer reads 01:36 like mGBA (it
+    read 01:40 before) while frames 2200-2350 stay pixel-identical.
+  - The HLE `IntrWait` no longer parks the CPU, so a VCount/HBlank handler runs
+    during a `VBlankIntrWait` (Digimon Racing arms its per-scanline DMA there and
+    lost the affine band otherwise).
+  - Frame pacing: `frame_wait()` sleeps the frame budget and spins the last
+    millisecond, because `SDL_Delay`/`Sleep` have 1 ms granularity and returned
+    early (frames ran ~4 % fast). The window title now shows the game code.
+  - `tools/run_gba_tests.py`: gba-tests verdicts (9 pass, 0 fail), SHA-256
+    goldens of our own frames and an optional mGBA pixel-diff report.
 - **v1.4.49** - Fast-forward with TAB held, and output volume.
   - Holding `TAB` runs the emulation unthrottled until the key is released
     (the existing *Auto Speed Throttle* toggle still works as a sticky

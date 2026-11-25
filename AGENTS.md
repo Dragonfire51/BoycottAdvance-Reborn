@@ -1356,6 +1356,52 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
+## RELEASE v1.4.50 (publicado 2026-11-25)
+
+- **Tag** `v1.4.50`; tag rodante `Latest` movido al mismo commit. Contenido:
+  **Digimon Racing ya dibuja la pista** (tiles afines de 256 colores + angulo
+  1.15 en los SWI 0Eh/0Fh), **reloj de juego correcto** (SWI 02h-05h al vector
+  real del BIOS), **HLE de IntrWait** sin aparcar la CPU, **ritmo de frame** con
+  espera activa y la **suite de tests** `tools/run_gba_tests.py`.
+- **Render (commit `add1aa1`)**: `render_affine_bg` ignoraba el bit 7 de
+  `BGxCNT` (tiles de 256 colores: 64 B, un byte por pixel, vs 32 B con nibble
+  segun la paridad de X). En `src/bios.c`, `aff_angle()` indexaba la tabla de
+  senos con `angle & 0xFF` y `swi_affine_set`/`swi_obj_affine_set` leian el
+  angulo como `(int8_t)read8 << 8`: ahora el angulo es halfword y el indice
+  `(angle >> 8) & 0xFF` con el seno negado (`cos(x+90) = -sin(x)`).
+- **Timing (commits `d8e8e3c` y `959127a`)**: el bloque que dormia la CPU
+  mientras `wait_mask` estaba armado impedia que un handler de VCount/HBlank
+  corriera durante un `VBlankIntrWait` (Digimon Racing rearma ahi su DMA por
+  scanline). Ahora la espera HLE solo usa `halt`. Ademas, con dump del BIOS
+  cargado los SWI 02h-05h **entran en el vector 0x08** (`arm_enter_exception`,
+  exportada en `src/arm.h`) porque son bucles del BIOS que duermen en HALTCNT,
+  re-comprueban IF y vuelven a dormir: al despertar por una IRQ ajena el BIOS
+  **no** reanuda el codigo tras el SWI. Sin dump se mantiene el HLE.
+  Medido: cronometro de carrera de Digimon Racing en f=4600 pasa de 01:40 a
+  **01:36, igual que mGBA**, y los frames 2200-2350 siguen identicos pixel a
+  pixel. Eragon/Pokemon/Medabots no cambian en sus baselines.
+- **Ritmo (commit `e98fcb1`)**: `frame_wait()` duerme el presupuesto del frame y
+  gira el ultimo milisegundo (SDL_Delay/Sleep tienen granularidad de 1 ms y
+  volvian antes, frames ~4 % rapidos). El titulo muestra el game code (0xAC).
+- **Suite (commit `b93ce1e`)**: `tools/run_gba_tests.py` con tres grupos:
+  veredictos de **jsmolka/gba-tests** (13 ROMs: 9 PASS, 0 FAIL, `nes.gba`
+  fallo conocido, 3 ROMs visuales de ppu aparte), **goldens de framebuffer**
+  (SHA-256 de nuestros frames; `--update` los regenera; `tools/golden/`) y
+  `--mgba` (informe de pixeles distintos contra mGBA, no pass/fail). El checkout
+  vive en `/workspace/work/gba-tests` (`--fetch` lo clona).
+- **Limitaciones conocidas (medidas, no arregladas)**: el core **no tiene cola
+  de prefetch de instrucciones**, asi que (a) `nes/nes.gba` falla el test de
+  pipeline de dos etapas (escribe 0 sobre la instruccion siguiente y nosotros la
+  re-leemos de memoria) y (b) el reloj interno de los juegos deriva ~2-4 %
+  respecto a mGBA (Eragon: +2 frames al arrancar, +18 en f456, +22 en f622; los
+  fades van 2 frames por paso en ambos, es pura fase). `bus_data_cycles()`
+  (`src/mem.c`) sigue en `#if 0`: los accesos a datos de ROM no cobran
+  waitstates. Arreglarlo de verdad = modelo de pipeline completo.
+- **Publicacion**: tag `v1.4.50` dispara CI `build-binaries`; despues mover el
+  tag `Latest`, renombrar su release a "Latest (v1.4.50)" con los assets nuevos
+  y dejar `v1.4.49` en `prerelease=true`. Ojo: `PATCH /releases/tags/Latest` da
+  404 tras mover el tag; parchear por **id**.
+
 ## RELEASE v1.4.49 (publicado 2026-11-25)
 
 - **Tag** `v1.4.49` = commit `957d0ce`; tag rodante `Latest` movido al mismo
