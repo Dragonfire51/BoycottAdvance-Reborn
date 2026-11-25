@@ -111,16 +111,22 @@ static void build_menu(void) {
     HMENU loadm = add_popup(file, "&Load State From Slot");
     HMENU savem = add_popup(file, "Sa&ve State To Slot");
     for (int i = 0; i < M_SLOT_COUNT; i++) {
-        const char *lbl = (g_cb.slot_text) ? g_cb.slot_text(i) : NULL;
-        char fallback[32];
-        if (!lbl) {
+        const char *load_lbl = (g_cb.slot_text) ? g_cb.slot_text(i, 0) : NULL;
+        const char *save_lbl = (g_cb.slot_text) ? g_cb.slot_text(i, 1) : NULL;
+        char fallback_load[32], fallback_save[32];
+        if (!load_lbl) {
             /* F1-F9 cover slots 0-8; the tenth slot is menu-only. */
-            if (i < 9) snprintf(fallback, sizeof fallback, "Slot %d  (F%d)", i, i + 1);
-            else       snprintf(fallback, sizeof fallback, "Slot %d", i);
-            lbl = fallback;
+            if (i < 9) snprintf(fallback_load, sizeof fallback_load, "Slot %d  (F%d)", i, i + 1);
+            else       snprintf(fallback_load, sizeof fallback_load, "Slot %d", i);
+            load_lbl = fallback_load;
         }
-        item(loadm, lbl, M_LOADSLOT0 + i);
-        item(savem, lbl, M_SAVESLOT0 + i);
+        if (!save_lbl) {
+            if (i < 9) snprintf(fallback_save, sizeof fallback_save, "Slot %d  (Shift+F%d)", i, i + 1);
+            else       snprintf(fallback_save, sizeof fallback_save, "Slot %d", i);
+            save_lbl = fallback_save;
+        }
+        item(loadm, load_lbl, M_LOADSLOT0 + i);
+        item(savem, save_lbl, M_SAVESLOT0 + i);
     }
     item(file, "&Load State", M_LOADSTATE);
     item(file, "&Save State", M_SAVESTATE);
@@ -224,13 +230,15 @@ static void sync_menu(HMENU m) {
             UINT st = (g_cb.checked && g_cb.checked((int)id)) ? MF_CHECKED : MF_UNCHECKED;
             CheckMenuItem(m, id, MF_BYCOMMAND | st);
             /* Slot items carry a save date, so their text changes over time. */
-            int slot = -1;
+            int slot = -1, for_save = 0;
             if (id >= (UINT)M_LOADSLOT0 && id <= (UINT)M_LOADSLOT_LAST)
                 slot = (int)id - M_LOADSLOT0;
-            else if (id >= (UINT)M_SAVESLOT0 && id <= (UINT)M_SAVESLOT_LAST)
+            else if (id >= (UINT)M_SAVESLOT0 && id <= (UINT)M_SAVESLOT_LAST) {
                 slot = (int)id - M_SAVESLOT0;
+                for_save = 1;
+            }
             if (slot >= 0 && g_cb.slot_text) {
-                const char *lbl = g_cb.slot_text(slot);
+                const char *lbl = g_cb.slot_text(slot, for_save);
                 if (lbl) ModifyMenuA(m, id, MF_BYCOMMAND | MF_STRING, id, lbl);
             }
         }

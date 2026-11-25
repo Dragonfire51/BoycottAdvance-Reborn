@@ -1445,3 +1445,41 @@ Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 - **Nota entorno**: el JDK no esta preinstalado; `openjdk-21-jdk-headless`
   (no hay 17 en apt). `sdk.dir=/workspace/android-sdk` ya en
   `android/local.properties`.
+
+## 2026-11-25: submenu "Save State To Slot" y auditoria del "kjjjt" (Medabots)
+
+- **Fix UI**: el submenu "Save State To Slot" mostraba el atajo del *load*
+  ("(F1)") porque `build_menu()` reutilizaba la misma etiqueta para los dos
+  submenus. `GuiCallbacks.slot_text` pasa a `(int slot, int for_save)` y
+  `win32.c` devuelve "  (Shift+F%d)" cuando `for_save`; `sync_menu()` distingue
+  load/save por el rango de IDs. `slot_text` usa **dos** buffers estaticos:
+  `build_menu()` pide las dos etiquetas seguidas y con uno solo la segunda
+  pisaba a la primera (los dos submenus acababan mostrando Shift+F). El
+  fallback de `gui.c` tambien usa dos buffers.
+- **"kjjjt" antes de la voz del juez (Medabots AX)**: investigado con captura
+  PCM frame a frame de los dos emuladores (mismos inputs `KEYS="START@950:5"`,
+  BIOS real, 1800 frames):
+  - `tools/headharness.c` (`PCMDUMP=`) escribe 44100 Hz estereo; el harness de
+    mGBA escribe a `core->audioSampleRate()` = **32768 Hz**, pero produce
+    **629 muestras/frame** (548.6 serian las correctas): su buffer lleva
+    ~4.4 s de contenido **duplicado** al principio (corr(mGBA 0-4.5 s, mGBA
+    4.5-9 s) = 0.735). No alinear por tiempo absoluto: usar el offset medido
+    (aprox. 4.55 s) o correlacion de envolventes.
+  - Con ese offset, el ataque de la musica (nuestro 14.43 s <-> mGBA 18.98 s)
+    y los 120 ms siguientes coinciden en forma de onda, espectro (200/150/250
+    Hz) y RMS (10657 vs 10739 en 15.20 s; ratio global 0.98 en 15-22 s). **No
+    hay ninguna ventana donde tengamos mas energia HF que mGBA**: el core no
+    mete ruido extra.
+  - `APUDUMP=1` (parche en /tmp sobre `headharness.c`) muestra que entre los
+    frames 269-559 (4.5-9.3 s) el juego esta **legitimamente en silencio**:
+    `SOUNDCNT_H=400E` (FIFO A/B no ruteados a L/R), `r1h/r2l=0800` (volumen 0),
+    `r3h=0000` (wave 0%), `r4l=0000` (noise 0). La pantalla esta en negro en
+    los dos emuladores. Lo que mGBA "suena" ahi es su prefijo duplicado.
+  - Conclusion: el artefacto no esta en el core con esta secuencia de entrada.
+    Candidatos restantes: (a) el camino de salida en tiempo real del `.exe`
+    (DirectSound: si un segmento no se rellena a tiempo, `DSBPLAY_LOOPING`
+    repite el segmento anterior -> "kjjjt"/stutter; `ds_thread` ya va a
+    `THREAD_PRIORITY_TIME_CRITICAL`), (b) un evento de juego al que no se llega
+    con solo START (hay que seleccionar un robattle en el menu). Siguiente paso
+    barato: pedir al usuario un WAV/MP4 del momento o un savestate justo antes,
+    y contar `apu_dbg_ringdrop`/underruns en la app durante ese instante.

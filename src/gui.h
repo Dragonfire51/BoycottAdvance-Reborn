@@ -57,9 +57,9 @@ typedef struct {
     int  (*joy_get)(int kp);
     void (*joy_set)(int kp, int value);
     /* Menu label for a save-state slot, e.g. "Slot 3  (F4)  saved 2026-10-30
-     * 17:32" or "Slot 3  (F4)  empty". Returns a pointer to caller-owned
-     * storage valid until the next call. */
-    const char *(*slot_text)(int slot);
+     * 17:32" or "Slot 3  (Shift+F4)  empty" when for_save is set. Returns a
+     * pointer to caller-owned storage valid until the next call. */
+    const char *(*slot_text)(int slot, int for_save);
 } GuiCallbacks;
 
 /* Attach the native menu bar to an existing window (its HWND on Windows).

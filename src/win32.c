@@ -439,24 +439,29 @@ static void state_path(char *b, size_t n) {
 
 /* Menu label for a slot: shortcut, plus the date and time the file was last
  * written so the user can tell the slots apart without loading them. */
-static const char *slot_text(int slot) {
-    static char buf[96];
-    char key[12] = "";
+static const char *slot_text(int slot, int for_save) {
+    /* Two buffers: build_menu asks for the load and save labels back to back. */
+    static char bufs[2][96];
+    char *buf = bufs[for_save ? 1 : 0];
+    char key[16] = "";
     char path[600];
-    if (slot < 9) snprintf(key, sizeof key, "  (F%d)", slot + 1);
+    if (slot < 9) {
+        if (for_save) snprintf(key, sizeof key, "  (Shift+F%d)", slot + 1);
+        else          snprintf(key, sizeof key, "  (F%d)", slot + 1);
+    }
     state_path_slot(path, sizeof path, slot);
     WIN32_FILE_ATTRIBUTE_DATA fa;
     if (GetFileAttributesExA(path, GetFileExInfoStandard, &fa)) {
         FILETIME ft = fa.ftLastWriteTime, lt;
         SYSTEMTIME st;
         if (FileTimeToLocalFileTime(&ft, &lt) && FileTimeToSystemTime(&lt, &st)) {
-            snprintf(buf, sizeof buf, "Slot %d%s   %04d-%02d-%02d %02d:%02d",
+            snprintf(buf, sizeof bufs[0], "Slot %d%s   %04d-%02d-%02d %02d:%02d",
                      slot, key, st.wYear, st.wMonth, st.wDay,
                      st.wHour, st.wMinute);
             return buf;
         }
     }
-    snprintf(buf, sizeof buf, "Slot %d%s   empty", slot, key);
+    snprintf(buf, sizeof bufs[0], "Slot %d%s   empty", slot, key);
     return buf;
 }
 
