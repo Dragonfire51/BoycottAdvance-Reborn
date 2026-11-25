@@ -388,16 +388,17 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         new android.app.AlertDialog.Builder(this)
             .setTitle("BoycottAdvance Reborn")
             .setMessage("Emulador GBA (C).\n\n" +
-                        "Version 1.4.43\n" +
+                        "Version 1.4.46\n" +
                         "Nucleo C99 compartido con los builds de escritorio.\n\n" +
                         "Novedades:\n" +
-                        "- Corregido el audio distorsionado (\"rayado\").\n" +
-                        "  El reset no inicializaba SOUNDBIAS, que quedaba\n" +
-                        "  a 0; el limitador del ADC recortaba entonces\n" +
-                        "  toda la mitad negativa de la senal (salida\n" +
-                        "  unipolar) y el sonido salia duro. Ahora\n" +
-                        "  SOUNDBIAS vale 0x0200 como en el hardware y la\n" +
-                        "  onda es bipolar, identica a mGBA.\n\n" +
+                        "- Juegos que corrian demasiado rapido: el HLE de\n" +
+                        "  IntrWait ya no libera la CPU antes de tiempo.\n" +
+                        "- Corregido el SWI Div de la BIOS (r1 y r3, y la\n" +
+                        "  division por cero).\n" +
+                        "- Auditoria de video y audio contra GBATEK y\n" +
+                        "  VBA-M: el resto ya era correcto.\n" +
+                        "- Escritorio: save states por ranura (10 slots,\n" +
+                        "  <rom>.ssN) con fecha y hora en el menu.\n\n" +
                         "Controles: D-pad, A/B, L/R, SELECT/START en pantalla.\n\n" +
                         "Carga de ROMs: usa \"Carpeta\" para dar acceso a la carpeta\n" +
                         "donde tengas los .gba (o .zip), o \"Archivo\" para elegir\n" +
