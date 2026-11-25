@@ -212,6 +212,20 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
+- **v1.4.51** - The frontend no longer draws garbage where an accented ROM name
+  or a non-ASCII cartridge title used to be.
+  - `fb_text()` (`src/fb.c`) indexed `font8x8_basic`, which only holds the first
+    128 code points, with the raw byte. Anything >= 0x80 (a UTF-8 `e` with an
+    accent in a ROM file name, the Shift-JIS title of a Japanese cartridge) read
+    past the end of the table and drew whatever global came next, which looked
+    like random CJK glyphs. UTF-8 is decoded now, the accented Latin letters fold
+    to ASCII (`Pokemon` stays readable) and the rest draws as `?`.
+  - `g->rom_title` is sanitised to printable ASCII when the cartridge is loaded,
+    so the *ROM Info* dialog cannot print raw header bytes.
+  - Native Windows build: the window is Unicode (`CreateWindowExW`) but its title
+    was set with `SetWindowTextA`; it now goes through `SetWindowTextW` with the
+    ANSI codepage Windows actually hands us.
+  - `tools/fb_text_test.c` covers the folding and the out-of-range bytes.
 - **v1.4.50** - Digimon Racing renders its track, and the halt/IntrWait SWIs
   run the real BIOS loop.
   - Affine backgrounds honour the 256-colour tile flag (`BGxCNT` bit 7): 64-byte

@@ -436,6 +436,15 @@ static void frame_wait(double ms) {
 static char  s_title[512];
 static float s_last_fps;
 
+/* The window is Unicode (RegisterClassExW), so the title must be set through
+ * the wide API: SetWindowTextA re-decoded our bytes with the ANSI codepage,
+ * and Windows hands us argv/paths in that codepage rather than UTF-8. */
+static void set_title(const char *s) {
+    wchar_t w[512];
+    if (g_hwnd && MultiByteToWideChar(CP_ACP, 0, s, -1, w, 512) > 0)
+        SetWindowTextW(g_hwnd, w);
+}
+
 static void update_title(float fps) {
     char name[256], t[512];
     const char *b = cfg.rompath, *p;
@@ -451,7 +460,7 @@ static void update_title(float fps) {
                  g->rom_code, name, fps);
     if (!strcmp(t, s_title)) return;
     snprintf(s_title, sizeof s_title, "%s", t);
-    if (g_hwnd) SetWindowTextA(g_hwnd, s_title);
+    set_title(s_title);
 }
 
 static void load_rom(const char *path) {

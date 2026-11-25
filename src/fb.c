@@ -59,9 +59,49 @@ void fb_rect_outline(FB *fb, int x, int y, int w, int h, uint32_t argb) {
     }
 }
 
+/* font8x8_basic only covers the first 128 code points, but the frontends hand
+ * us UTF-8 file names and raw ROM header bytes: indexing the table with a byte
+ * >= 0x80 read past its end and drew whatever global came next, which looked
+ * like random CJK glyphs.  Decode UTF-8 (or a stray Latin-1 byte), fold the
+ * accented letters down to ASCII and draw '?' for the rest. */
+static unsigned fold_ascii(unsigned cp) {
+    static const struct { unsigned cp; char ascii; } k_fold[] = {
+        {0xC0,'A'},{0xC1,'A'},{0xC2,'A'},{0xC3,'A'},{0xC4,'A'},{0xC5,'A'},
+        {0xC7,'C'},{0xC8,'E'},{0xC9,'E'},{0xCA,'E'},{0xCB,'E'},{0xCC,'I'},
+        {0xCD,'I'},{0xCE,'I'},{0xCF,'I'},{0xD1,'N'},{0xD2,'O'},{0xD3,'O'},
+        {0xD4,'O'},{0xD5,'O'},{0xD6,'O'},{0xD9,'U'},{0xDA,'U'},{0xDB,'U'},
+        {0xDC,'U'},{0xDD,'Y'},{0xE0,'a'},{0xE1,'a'},{0xE2,'a'},{0xE3,'a'},
+        {0xE4,'a'},{0xE5,'a'},{0xE7,'c'},{0xE8,'e'},{0xE9,'e'},{0xEA,'e'},
+        {0xEB,'e'},{0xEC,'i'},{0xED,'i'},{0xEE,'i'},{0xEF,'i'},{0xF1,'n'},
+        {0xF2,'o'},{0xF3,'o'},{0xF4,'o'},{0xF5,'o'},{0xF6,'o'},{0xF9,'u'},
+        {0xFA,'u'},{0xFB,'u'},{0xFC,'u'},{0xFD,'y'},{0xFF,'y'},
+    };
+    if (cp >= 0x20 && cp < 0x7F) return cp;
+    for (size_t i = 0; i < sizeof k_fold / sizeof k_fold[0]; i++)
+        if (k_fold[i].cp == cp) return (unsigned char)k_fold[i].ascii;
+    return '?';
+}
+
+static unsigned next_cp(const char **ps) {
+    const unsigned char *s = (const unsigned char *)*ps;
+    unsigned c = *s, n = 0, cp;
+    if (c < 0x80) { *ps = (const char *)s + 1; return c; }
+    if ((c & 0xE0) == 0xC0) { n = 1; cp = c & 0x1F; }
+    else if ((c & 0xF0) == 0xE0) { n = 2; cp = c & 0x0F; }
+    else if ((c & 0xF8) == 0xF0) { n = 3; cp = c & 0x07; }
+    else { *ps = (const char *)s + 1; return c; }   /* stray Latin-1 byte */
+    for (unsigned i = 1; i <= n; i++) {
+        if ((s[i] & 0xC0) != 0x80) { *ps = (const char *)s + 1; return c; }
+        cp = (cp << 6) | (s[i] & 0x3F);
+    }
+    *ps = (const char *)s + n + 1;
+    return cp;
+}
+
 void fb_text(FB *fb, int x, int y, const char *s, uint32_t argb) {
-    for (; *s; ++s, x += 8) {
-        const unsigned char *glyph = (const unsigned char *)font8x8_basic[(unsigned char)*s];
+    for (; *s; x += 8) {
+        const unsigned char *glyph =
+            (const unsigned char *)font8x8_basic[fold_ascii(next_cp(&s)) & 0x7F];
         for (int i = 0; i < 8; i++) {
             unsigned row = glyph[i];
             for (int j = 0; j < 8; j++)

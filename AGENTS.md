@@ -1356,6 +1356,27 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
+## RELEASE v1.4.51 (publicado 2026-11-26) — texto "en chino" en el OSD
+
+- **Sintoma reportado**: "el texto de titulo del emulador sale en chino y se
+  glitchea".
+- **Causa**: `fb_text()` (`src/fb.c`) indexaba `font8x8_basic`
+  (`src/font8x8.h:23`, solo `[128][8]`) con el byte crudo de la cadena.
+  Cualquier byte >= 0x80 (nombre de ROM en UTF-8 con acentos, titulo Shift-JIS
+  de una ROM japonesa, y `g->rom_title` crudo en el dialogo ROM Info) leia
+  **fuera** de la tabla y dibujaba como glifo lo que hubiera en el siguiente
+  global: glifos aleatorios que parecen CJK. ASan **no** lo detecta porque el
+  salto (1560 B) cae dentro de otro global valido; se ve renderizando a PPM.
+- **Fix**: `next_cp()` decodifica UTF-8 (o un byte Latin-1 suelto, o secuencia
+  truncada) y `fold_ascii()` pliega las letras acentuadas a ASCII
+  (`Pokemon` con acento -> `Pokemon`); lo que no tiene equivalente sale como
+  `?`. Ademas `g->rom_title` se sanea a ASCII imprimible al cargar la ROM, y en
+  Win32 el titulo va por `SetWindowTextW` + `CP_ACP` (la ventana es Unicode:
+  `RegisterClassExW`/`CreateWindowExW`, asi que `SetWindowTextA` re-decodificaba
+  los bytes con la pagina ANSI).
+- **Test**: `tools/fb_text_test.c` (compara buffers de pixeles; el comando de
+  compilacion esta en su cabecera). Suite `run_gba_tests.py` sigue en PASS.
+
 ## RELEASE v1.4.50 (publicado 2026-11-25)
 
 - **Tag** `v1.4.50`; tag rodante `Latest` movido al mismo commit. Contenido:

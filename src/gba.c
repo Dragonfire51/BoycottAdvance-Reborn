@@ -199,6 +199,12 @@ bool gba_load_rom(GBA *g, const char *path) {
     /* title */
     memcpy(g->rom_title, g->rom + 0xA0, 12);
     g->rom_title[12] = 0;
+    /* ROM Info prints this verbatim: Japanese headers are Shift-JIS and the
+       OSD font only has ASCII, so anything else would come out as garbage. */
+    for (int i = 0; i < 12; i++) {
+        unsigned char c = (unsigned char)g->rom_title[i];
+        if (c < 0x20 || c > 0x7E) g->rom_title[i] = '?';
+    }
     memcpy(g->rom_code, g->rom + 0xAC, 4);
     g->rom_code[4] = 0;
     for (int i = 0; i < 4; i++) {
