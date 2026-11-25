@@ -24,3 +24,6 @@ rec/
 
 # savestate slots written by the emulator
 *.ss[0-9]
+
+# dumps del harness sin prefijo
+(null).*.bin

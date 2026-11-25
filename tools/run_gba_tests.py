@@ -135,7 +135,8 @@ def frame_pixels(rom, frames, keys):
         env["KEYS"] = keys
     out = {}
     try:
-        run([HH, rom, str(frames), "dump"], env=env, timeout=1800)
+        run([HH, rom, str(frames), "dump", os.path.join(tmp, "cur")],
+            env=env, timeout=1800)
         for name in os.listdir(tmp):
             if name.endswith(".ppm"):
                 data = open(os.path.join(tmp, name), "rb").read()
