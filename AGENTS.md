@@ -1356,6 +1356,30 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
+## RELEASE v1.4.46 (publicado 2026-11-25)
+
+- **Tag** `v1.4.46` = commit `25c49cf` (main); tag rodante `Latest` movido al
+  mismo commit. Incluye los commits de v1.4.45 (`9cbe6b0`, que nunca se habia
+  publicado) y de v1.4.46 (`7865854`, `66407cb`, `25c49cf`).
+- **Contenido**:
+  - v1.4.45: HLE de `Div` (SWI 06h) corregido (`r1`/`r3`, division por cero) y
+    auditoria de video/audio contra GBATEK y VBA-M sin divergencias.
+  - v1.4.46: save states por ranura en ambos frontends de escritorio
+    (`<rom>.ssN`, 10 slots, submenus con fecha/hora, `F1..F9` carga y
+    `Shift+F1..F9` guarda; `F10` captura, `F12` About). El nucleo queda
+    intacto (`gba.c`/`mem.c`/`arm.c`/`ppu.c`/`apu.c`/`bios.c` byte-identicos
+    a v1.4.45). Se elimino el submenu muerto "State Slot".
+  - Version reflejada en el emulador: `src/gba.h` = v1.4.46 y Android
+    `versionCode 12` / `versionName "1.4.46"` + texto de About actualizado.
+- **Verificacion local**: Linux, win64 e i686 compilan limpios; los tres
+  binarios llevan "BoycottAdvance Reborn v1.4.46"; el `.exe` de Windows solo
+  importa DLLs nativas (sin SDL2); `packaging/build-packages.sh` genera
+  `.deb`/`.rpm` 1.4.46.
+- **Publicacion**: CI `build-binaries` (run 45523820168) publico el release
+  `v1.4.46` con 8 assets. Release rodante `Latest` renombrado a
+  "Latest (v1.4.46)" y assets reemplazados (`gh release upload --clobber`).
+  `v1.4.44` marcado `prerelease=true` (quedan estables solo v1.4.46 y Latest).
+
 ## RELEASE v1.4.40 (publicado 2026-11-06)
 
 - **Tag** `v1.4.40` = commit `64eeeab` (main); tag rodante `Latest` movido al
