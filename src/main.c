@@ -373,7 +373,7 @@ static SDL_Window *s_win;
 static char        s_title[512];
 
 static void update_title(float fps) {
-    char name[256], t[512];
+    char name[256], t[512], ascii[512];
     const char *b = cfg.rompath, *p;
     for (p = cfg.rompath; *p; p++) if (*p == '/' || *p == '\\') b = p + 1;
     snprintf(name, sizeof name, "%.255s", b);
@@ -384,8 +384,11 @@ static void update_title(float fps) {
     else
         snprintf(t, sizeof t, "%s - %s - %s - %.0f fps", GBA_TITLE,
                  g->rom_code, name, fps);
-    if (!strcmp(t, s_title)) return;
-    snprintf(s_title, sizeof s_title, "%s", t);
+    /* ASCII only: a ROM name in UTF-8/CJK used to end up in the caption and
+       the window manager drew whatever glyphs its font had. */
+    fb_ascii_fold(t, ascii, sizeof ascii);
+    if (!strcmp(ascii, s_title)) return;
+    snprintf(s_title, sizeof s_title, "%s", ascii);
     if (s_win) SDL_SetWindowTitle(s_win, s_title);
 }
 

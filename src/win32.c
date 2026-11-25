@@ -436,17 +436,22 @@ static void frame_wait(double ms) {
 static char  s_title[512];
 static float s_last_fps;
 
-/* The window is Unicode (RegisterClassExW), so the title has to go through the
- * wide API.  cfg.rompath is UTF-8 here (GetCommandLineW and GetOpenFileNameW
- * are converted to UTF-8 on the way in), so decoding it as ANSI - which is what
- * SetWindowTextA did - turned "Pokemon" with an accent into mojibake.  Fall
- * back to the ANSI codepage only for a legacy ini that stored a non-UTF-8
- * path. */
+/* ASCII -> UTF-16, one byte per unit.  The caption is folded to ASCII first, so
+ * no codepage conversion is involved and Windows cannot reinterpret the bytes:
+ * a ROM name with an accent used to reach the text layer as UTF-8 and come out
+ * as mojibake (CJK glyphs on a Japanese or Chinese codepage). */
+static void widen_ascii(const char *s, wchar_t *w, int n) {
+    int i;
+    for (i = 0; s[i] && i < n - 1; i++) w[i] = (wchar_t)(unsigned char)s[i];
+    w[i] = 0;
+}
+
 static void set_title(const char *s) {
     wchar_t w[512];
+    char a[512];
     if (!g_hwnd) return;
-    if (!MultiByteToWideChar(CP_UTF8, 0, s, -1, w, 512) &&
-        !MultiByteToWideChar(CP_ACP, 0, s, -1, w, 512)) return;
+    fb_ascii_fold(s, a, sizeof a);
+    widen_ascii(a, w, 512);
     SetWindowTextW(g_hwnd, w);
 }
 
@@ -1037,7 +1042,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
 
     {
         wchar_t wtitle[128];
-        MultiByteToWideChar(CP_UTF8, 0, GBA_TITLE, -1, wtitle, 128);
+        widen_ascii(GBA_TITLE, wtitle, 128);
         RECT r = { 0, 0, SCREEN_W * cfg.zoom, SCREEN_H * cfg.zoom };
         AdjustWindowRectEx(&r, WS_OVERLAPPEDWINDOW, TRUE, 0);
         g_hwnd = CreateWindowExW(0, wc.lpszClassName, wtitle,

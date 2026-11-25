@@ -212,14 +212,16 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
-- **v1.4.52** - Digimon Racing renders its track, the halt/IntrWait SWIs run the
+- **v1.4.53** - Digimon Racing renders its track, the halt/IntrWait SWIs run the
   real BIOS loop, and no text comes out garbled any more (the OSD, and the window
-  title of the native Windows build).
-  - Window title (native Windows build): `cfg.rompath` is UTF-8 (the command line
-    and the file dialog are converted on the way in) but the title was set with
-    `SetWindowTextA` / an ANSI conversion, so `Pokemon` with an accent came out as
-    mojibake (`PokÃ©mon` on a Western codepage, and actual CJK characters on a
-    Japanese or Chinese one). It now goes through `SetWindowTextW` with CP_UTF8.
+  title of both frontends).
+  - Window title: the caption is now **ASCII only**. A ROM name with an accent or
+    a Japanese/Chinese name used to reach the OS text layer as UTF-8 and be
+    decoded with the system codepage, so `Pokemon` with an accent came out as
+    `PokÃ©mon` on a Western codepage and as CJK glyphs on a Japanese or Chinese
+    one. `fb_ascii_fold()` folds the accented Latin letters to their base letter
+    and replaces anything else with `?`, and the native build widens the result
+    to UTF-16 by hand, so no codepage conversion is involved at all.
   - `fb_text()` (`src/fb.c`) indexed `font8x8_basic`, which only holds the first
     128 code points, with the raw byte. Anything >= 0x80 (a UTF-8 `e` with an
     accent in a ROM file name, the Shift-JIS title of a Japanese cartridge) read

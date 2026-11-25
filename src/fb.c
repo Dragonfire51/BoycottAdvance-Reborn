@@ -114,6 +114,14 @@ void fb_text(FB *fb, int x, int y, const char *s, uint32_t argb) {
     }
 }
 
+void fb_ascii_fold(const char *in, char *out, size_t n) {
+    size_t o = 0;
+    if (!out || n == 0) return;
+    while (in && *in && o + 1 < n)
+        out[o++] = (char)fold_ascii(next_cp(&in));
+    out[o] = 0;
+}
+
 void fb_blit_frame(FB *fb, int dx, int dy, int dw, int dh,
                    const uint16_t *frame555, int scanline) {
     if (dw <= 0 || dh <= 0) return;

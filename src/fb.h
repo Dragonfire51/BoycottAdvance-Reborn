@@ -9,6 +9,7 @@
 #ifndef FB_H
 #define FB_H
 #include <stdint.h>
+#include <stddef.h>
 
 typedef struct {
     int       w, h;
@@ -22,6 +23,11 @@ void fb_rect(FB *fb, int x, int y, int w, int h, uint32_t argb);      /* filled 
 void fb_rect_outline(FB *fb, int x, int y, int w, int h, uint32_t argb);
 void fb_hline(FB *fb, int x, int y, int w, uint32_t argb);
 void fb_text(FB *fb, int x, int y, const char *s, uint32_t argb);
+/* Copy `in` into `out` as printable ASCII: accented Latin letters fold to their
+ * base letter ("Pokemon" with an accent -> "Pokemon"), everything else without
+ * an ASCII equivalent becomes '?'.  Used for the window caption, which must
+ * never carry bytes a codepage could reinterpret. */
+void fb_ascii_fold(const char *in, char *out, size_t n);
 /* Nearest-neighbour scale of a GBA RGB555 frame into the target rect. */
 void fb_blit_frame(FB *fb, int dx, int dy, int dw, int dh,
                    const uint16_t *frame555, int scanline);

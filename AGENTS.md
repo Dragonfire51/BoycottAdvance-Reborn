@@ -1356,7 +1356,23 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
-## RELEASE v1.4.52 (publicado 2026-11-26) — titulo de ventana en Win32
+## RELEASE v1.4.53 (publicado 2026-11-26) — titulo de ventana ASCII
+
+- **Decision**: el caption no lleva nada que no sea ASCII. `fb_ascii_fold()`
+  (`src/fb.c`, testeado en `tools/fb_text_test.c`) pliega acentos
+  (`Pokemon` con acento -> `Pokemon`) y convierte el resto a `?`. En el frontend
+  Win32 `widen_ascii()` pasa el resultado a UTF-16 **byte a byte**, sin
+  `MultiByteToWideChar` ni pagina de codigos de por medio; en el de SDL el titulo
+  se pinta ya en ASCII.
+- **Por que**: el nombre del ROM llega al caption y cualquier byte >= 0x80 acaba
+  decodificado con la pagina del sistema (CP1252 -> `PokÃ©mon`, CP936 ->
+  `Pok茅mon`, CP932 -> `Pokﾃｩmon`). Con ASCII no hay conversion que pueda fallar.
+- **Nota**: `fb_text()` del OSD ya pliega igual desde v1.4.51.
+
+## RELEASE v1.4.52 (publicado y RETIRADO 2026-11-26) — titulo de ventana en Win32
+
+> Retirada: el usuario seguia viendo el titulo mal. Se paso a titulo ASCII.
+
 
 - **Sintoma**: "el texto del titulo del emulador sale en chino"; el resto del UI
   bien. Solo el titulo de la ventana, solo en el build nativo de Windows.
