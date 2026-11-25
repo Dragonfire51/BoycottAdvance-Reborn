@@ -100,6 +100,7 @@ static void render_affine_bg(GBA *g, int bgn, int y) {
     uint16_t bgcnt = p->bgcnt[bgn];
     uint32_t cbb = ((bgcnt >> 2) & 3) * 0x4000;
     uint32_t sb  = ((bgcnt >> 8) & 0x1F) * 0x800;
+    bool bpp8 = bgcnt & 0x80;                       /* 256-color tiles */
     bool wrap = bgcnt & 0x2000;                     /* area overflow: wraparound */
     int dim = 128 << ((bgcnt >> 14) & 3);           /* 128/256/512/1024, square */
     int mos_h = 1, mos_v = 1;
@@ -125,8 +126,16 @@ static void render_affine_bg(GBA *g, int bgn, int y) {
             if (!wrap) { out[x] = TRANS; continue; }
             sx &= dim - 1; sy &= dim - 1;
         }
+        /* Affine maps hold 1-byte tile numbers; a 16-color tile is 32 bytes and
+           uses palette bank 0 (no bank bits in the entry), a 256-color one 64. */
         int tno = read_vram8(g, sb + (uint32_t)(sy >> 3) * (uint32_t)(dim >> 3) + (uint32_t)(sx >> 3));
-        int idx = read_vram8(g, cbb + (uint32_t)tno * 64 + (uint32_t)(sy & 7) * 8 + (uint32_t)(sx & 7));
+        int idx;
+        if (bpp8) {
+            idx = read_vram8(g, cbb + (uint32_t)tno * 64 + (uint32_t)(sy & 7) * 8 + (uint32_t)(sx & 7));
+        } else {
+            int b = read_vram8(g, cbb + (uint32_t)tno * 32 + (uint32_t)(sy & 7) * 4 + (uint32_t)(sx >> 1));
+            idx = (sx & 1) ? (b >> 4) : (b & 0x0F);
+        }
         out[x] = idx ? read_pal(g, idx) : TRANS;
     }
 }

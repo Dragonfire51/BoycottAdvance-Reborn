@@ -27,14 +27,12 @@ static void aff_ensure_cos(void) {
     }
     s_cos_ready = 1;
 }
-/* GBA angle byte -> (cos, sin) in 1.15 fixed point. */
+/* GBA angle (1.15: 0x10000 = 360 deg) -> (cos, sin) in 1.15 fixed point. */
 static void aff_angle(int angle, int32_t *co, int32_t *si) {
     aff_ensure_cos();
-    int idx = angle & 0xFF;
-    int32_t c = s_cos_tbl[idx];
-    int32_t s = s_cos_tbl[(idx + 64) & 0xFF];
-    if (angle < 0) { s = -s; }  /* negative angle flips the sine */
-    *co = c; *si = s;
+    int idx = (angle >> 8) & 0xFF;
+    *co = s_cos_tbl[idx];
+    *si = -s_cos_tbl[(idx + 64) & 0xFF];   /* cos(x + 90) = -sin(x) */
 }
 static inline int32_t aff_sat16(int32_t v) {
     if (v > 32767) return 32767;
@@ -129,10 +127,9 @@ void swi_intr_wait(GBA *g) {
     } else {
         if (g->if_reg & mask) return;   /* ya hay una IRQ esperada */
     }
-    /* GBATEK (SWI 04h IntrWait): the CPU sleeps until one of the awaited
-       IRQs is raised. Unlike plain Halt, an unrelated IRQ must NOT wake it:
-       the BIOS loop re-checks the mask and re-halts. The wait_mask reserves
-       this path so only the awaited source releases the halt. */
+    /* GBATEK (SWI 04h IntrWait): la CPU duerme hasta que llegue una de las
+       IRQ esperadas; una IRQ ajena tambien la despierta (el bucle del BIOS
+       re-comprueba la mascara), por eso el handler debe poder ejecutarse. */
     g->cst.wait_mask = (uint16_t)mask;
     g->cst.halt = true;
 }
@@ -245,7 +242,7 @@ static void swi_affine_set(GBA *g) {
         int32_t cy  = (int16_t)gba_read16(g, off + 10);
         int32_t sx  = (int16_t)gba_read16(g, off + 12);   /* 8.8 fixed */
         int32_t sy  = (int16_t)gba_read16(g, off + 14);
-        int32_t theta = (int8_t)gba_read8(g, off + 16) << 8; /* sign extend, 1.15 angle */
+        int32_t theta = (int32_t)(uint16_t)gba_read16(g, off + 16);  /* 1.15 angle */
         off += 20;
 
         int32_t c, s;
@@ -284,7 +281,7 @@ static void swi_obj_affine_set(GBA *g) {
     for (int i = 0; i < count; i++) {
         int32_t sx  = (int16_t)gba_read16(g, off + 0);
         int32_t sy  = (int16_t)gba_read16(g, off + 2);
-        int32_t theta = (int8_t)gba_read8(g, off + 4) << 8;
+        int32_t theta = (int32_t)(uint16_t)gba_read16(g, off + 4);
         off += 8;
 
         int32_t c, s;
