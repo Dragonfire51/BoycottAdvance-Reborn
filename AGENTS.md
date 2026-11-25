@@ -1356,6 +1356,17 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
+## RELEASE v1.4.47 (publicado 2026-11-25)
+
+- **Tag** `v1.4.47` = commit `1686509`; tag rodante `Latest` movido al mismo
+  commit. Contenido: fix de las etiquetas del submenu "Save State To Slot"
+  (`Shift+F1..F9`) y la auditoria del "kjjjt" (seccion del 2026-11-25).
+- **Verificacion**: los tres binarios de escritorio llevan "v1.4.47"; Android
+  `versionCode 13` / `versionName "1.4.47"`; CI `build-binaries` (run
+  45528569667) publico los 8 assets; el release rodante se renombro a
+  "Latest (v1.4.47)" con los assets reemplazados y `v1.4.46` quedo
+  `prerelease=true` (estables: v1.4.47 y Latest).
+
 ## RELEASE v1.4.46 (publicado 2026-11-25)
 
 - **Tag** `v1.4.46` = commit `25c49cf` (main); tag rodante `Latest` movido al
