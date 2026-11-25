@@ -495,6 +495,15 @@ void gba_swi(GBA *g, uint32_t comment) {
     if (thumb_mode_p(g)) g->cpu.r[15] += 2;
     else                 g->cpu.r[15] += 4;
 
+    /* SWI 02h..05h (Halt/Stop/IntrWait/VBlankIntrWait) tienen semantica de
+       bucles del BIOS (halt, re-comprobacion de IF y re-halt) que un HLE no
+       reproduce: al despertar por una IRQ ajena el BIOS NO reanuda el codigo
+       tras el SWI.  Con un dump del BIOS cargado se ejecuta el vector real
+       (0x08), igual que mGBA; sin BIOS se usa el HLE de abajo. */
+    if (g->bios_loaded && swi_num >= 0x02 && swi_num <= 0x05) {
+        arm_enter_exception(g, 0x13, g->cpu.r[15], 0x08);
+        return;
+    }
     switch (swi_num) {
     case 0x00: swi_soft_reset(g); break;
     case 0x01: swi_register_ram_reset(g); break;

@@ -156,7 +156,7 @@ void arm_set_mode(GBA *g, uint32_t mode) {
     change_mode(g, (get_cpsr(g) & ~0x1Fu) | mode);
 }
 
-static void enter_exception(GBA *g, uint32_t mode, uint32_t lr_val, uint32_t pc_addr) {
+void arm_enter_exception(GBA *g, uint32_t mode, uint32_t lr_val, uint32_t pc_addr) {
     uint32_t old = get_cpsr(g);
     g->cpu.spsr[bank_of(mode)] = old;               /* SPSR_<mode> = CPSR */
     /* Los vectores se ejecutan en estado ARM con IRQ deshabilitadas. */
@@ -916,7 +916,7 @@ void arm_execute(GBA *g, uint32_t max_cycles) {
             }
             /* GBATEK (ARM CPU Exceptions): LR_irq = direccion de la siguiente instruccion + 4,
                tambien en estado Thumb (se vuelve con SUBS PC,LR,#4). */
-            enter_exception(g, 0x12, g->cpu.r[15] + 4, 0x18);
+            arm_enter_exception(g, 0x12, g->cpu.r[15] + 4, 0x18);
             add_cycles(g, 3);
             continue;
         }
