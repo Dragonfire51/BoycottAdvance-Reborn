@@ -1356,6 +1356,41 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
+## RELEASE v1.4.49 (publicado 2026-11-25)
+
+- **Tag** `v1.4.49` = commit `957d0ce`; tag rodante `Latest` movido al mismo
+  commit. Contenido: **fast-forward con TAB mantenido** y **volumen de salida
+  (0..200 %)**. No se elimino ninguna funcion de v1.4.48: el diff solo anade
+  codigo a `apu.c`/`gba.h`/`uiactions.h`/`gui.c`/`main.c`/`win32.c`.
+- **Fast-forward**: `g_ff_hold` (SDL: `SDLK_TAB` en KEYDOWN/KEYUP) y
+  `ff_hold()` (Win32 nativo: `GetAsyncKeyState(VK_TAB)`) se suman a
+  `cfg.autothrottle` en los tres puntos de ritmo (feed de audio, espera por el
+  ring y `Sleep`/`Delay`). Medido bajo Xvfb con el binario del release: 226
+  fps con TAB, 59 sin el.
+- **Volumen**: `apu_set_volume(pct)` (`src/apu.c`) aplica una ganancia Q8
+  atomica (`vol_q8`, 256 = 100 %) al sacar las muestras, en `apu_mix`,
+  `apu_drain` y `apu_drain_latest`, con saturacion a 16 bits (por encima del
+  100 % puede recortar). `VolumePercent` en el INI; items `M_VOL*`
+  (0/25/50/75/100/150/200 %) y `-`/`=` en pasos del 10 %. En el menu nativo de
+  `gui.c` cuelgan de *Sound Engine* (`sync_menu()` ya recursa en submenus, asi
+  que las marcas de check funcionan); en el menu propio de SDL son items
+  planos dentro de *Options* porque ese menu no tiene submenus.
+- **Verificacion**: `tools/volume_test.c` (reset limpio por volumen, 1200
+  frames de espera + 240 capturados, comparacion muestra a muestra: 0 %
+  silencio, 50 % = `s>>1`, 25 % = `s>>2`, 200 % = doble recortado, 8358
+  muestras recortadas => el camino de saturacion se ejercita). Los frames de
+  `-export` y `audio.wav` al 100 % son **byte-identicos** a v1.4.48. Ojo al
+  comparar builds: `resolve_asset("gba_bios.bin")` busca el asset **junto al
+  ejecutable**, asi que hay que igualar ese asset en los dos directorios o no
+  tenerlo en ninguno.
+- **Publicacion**: CI `build-binaries` (run 45670280200) fallo en el job
+  `android` en "Set up Android SDK" (flake de red, no del codigo);
+  `rerun-failed-jobs` paso los 6 jobs y `release` publico los 8 assets.
+  `Latest` renombrado a "Latest (v1.4.49)" con los assets reemplazados y
+  `v1.4.48` queda `prerelease=true`. **Ojo**: `PATCH /releases/tags/Latest`
+  devuelve 404 despues de mover el tag `Latest`; hay que parchear por **id**
+  del release.
+
 ## RELEASE v1.4.48 (publicado 2026-11-25)
 
 - **Tag** `v1.4.48`; tag rodante `Latest` movido al mismo commit. Contenido:
