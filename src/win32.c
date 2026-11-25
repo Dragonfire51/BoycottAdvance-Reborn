@@ -512,6 +512,9 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
+      "  - Save State To Slot now shows the\n"
+      "    real shortcut (Shift+F1..F9); it\n"
+      "    repeated the load one (F1..F9).\n"
       "  - Save-states by slot: 10 slots,\n"
       "    each in its own <rom>.ssN file.\n"
       "  - F1..F9 load slot 0..8,\n"

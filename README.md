@@ -211,6 +211,14 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
+- **v1.4.47** - Fix the *Save State To Slot* submenu labels.
+  - `build_menu()` reused one label for both slot submenus, so the save
+    submenu advertised the load shortcut (`F1`..`F9`) instead of
+    `Shift`+`F1`..`F9`. `slot_text()` now takes a `for_save` flag and keeps
+    one buffer per variant; `sync_menu()` picks it from the item id range.
+  - Verified by building both Windows targets without warnings and by
+    checking the new label strings in the binaries.
+
 - **v1.4.46** - Save-states by slot in both frontends. **UI only, the core is
   untouched** (`src/gba.c`, `src/mem.c`, `src/arm.c`, `src/ppu.c`, `src/apu.c`
   and `src/bios.c` are byte-identical to v1.4.45).

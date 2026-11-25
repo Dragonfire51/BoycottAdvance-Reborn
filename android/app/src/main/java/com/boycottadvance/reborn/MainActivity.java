@@ -388,9 +388,12 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         new android.app.AlertDialog.Builder(this)
             .setTitle("BoycottAdvance Reborn")
             .setMessage("Emulador GBA (C).\n\n" +
-                        "Version 1.4.46\n" +
+                        "Version 1.4.47\n" +
                         "Nucleo C99 compartido con los builds de escritorio.\n\n" +
                         "Novedades:\n" +
+                        "- Escritorio: el submenu Save State To Slot\n" +
+                        "  muestra Shift+F1..F9 (antes repetia el\n" +
+                        "  atajo de carga F1..F9).\n" +
                         "- Juegos que corrian demasiado rapido: el HLE de\n" +
                         "  IntrWait ya no libera la CPU antes de tiempo.\n" +
                         "- Corregido el SWI Div de la BIOS (r1 y r3, y la\n" +

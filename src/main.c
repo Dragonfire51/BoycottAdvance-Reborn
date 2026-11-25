@@ -441,6 +441,9 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
+      "  - Save State To Slot now shows the real\n"
+      "    shortcut (Shift+F1..F9); it repeated\n"
+      "    the load one (F1..F9).\n"
       "  - Save-states by slot: 10 slots, each\n"
       "    in its own <rom>.ssN file.\n"
       "  - F1..F9 load slot 0..8, Shift+F1..F9\n"
