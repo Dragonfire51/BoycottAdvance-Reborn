@@ -512,19 +512,16 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Save State To Slot now shows the\n"
-      "    real shortcut (Shift+F1..F9); it\n"
-      "    repeated the load one (F1..F9).\n"
-      "  - Save-states by slot: 10 slots,\n"
-      "    each in its own <rom>.ssN file.\n"
-      "  - F1..F9 load slot 0..8,\n"
-      "    Shift+F1..F9 save into it;\n"
-      "    slot 9 is menu-only.\n"
-      "  - File > Load State From Slot and\n"
-      "    Save State To Slot list every slot\n"
-      "    with the date and time it was saved.\n"
+      "  - The picture now scales with the\n"
+      "    window: resizing, maximizing and\n"
+      "    fullscreen enlarge the game instead\n"
+      "    of leaving it at the fixed zoom.\n"
+      "  - Stretch Fit To Screen fills the\n"
+      "    window exactly; with it off the\n"
+      "    scale snaps to whole multiples so\n"
+      "    the pixels stay crisp.\n"
       "  - F10 screenshot, F11 fullscreen,\n"
-      "    F12 About (previously F5/F1).";
+      "    F12 About, P pause.";
     msgbox("History", hist);
 }
 static void reset_keys(void) {
@@ -858,24 +855,10 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 static void compose_frame(FB *fb, float fps) {
     fb_fill(fb, 0xFF000000);
     int aw = fb->w, ah = fb->h;
-    /* Scale factor that keeps the 3:2 aspect. "Fit to window" uses the
-     * largest whole multiple; a fixed zoom is reduced when the client area
-     * is smaller, so the picture is never cropped. */
-    double s;
-    if (cfg.scalemode == 1) {
-        double sx = (double)aw / SCREEN_W, sy = (double)ah / SCREEN_H;
-        s = sx < sy ? sx : sy;
-    } else {
-        s = cfg.zoom;
-        double sx = (double)aw / SCREEN_W, sy = (double)ah / SCREEN_H;
-        double lim = sx < sy ? sx : sy;
-        if (s > lim) s = lim;
-    }
-    /* Snap to a whole multiple so nearest-neighbour scaling keeps every pixel
-       the same width (a fractional factor makes columns/rows of uneven width,
-       which shimmers while scrolling). When the client is smaller than the
-       native size there is no integer factor left, so keep the fractional fit. */
-    if (s >= 1.0) s = (double)(int)s;
+    /* The picture always follows the client area, so resizing, maximizing and
+     * fullscreen all scale it. "Stretch Fit To Screen" fills the area exactly;
+     * by default the factor snaps to a whole multiple to keep pixels crisp. */
+    double s = fb_fit_scale(aw, ah, cfg.scalemode != 1);
     int dstw = (int)(SCREEN_W * s), dsth = (int)(SCREEN_H * s);
     if (dstw < 1) dstw = 1;
     if (dsth < 1) dsth = 1;

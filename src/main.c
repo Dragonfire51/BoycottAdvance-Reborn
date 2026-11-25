@@ -441,18 +441,16 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - Save State To Slot now shows the real\n"
-      "    shortcut (Shift+F1..F9); it repeated\n"
-      "    the load one (F1..F9).\n"
-      "  - Save-states by slot: 10 slots, each\n"
-      "    in its own <rom>.ssN file.\n"
-      "  - F1..F9 load slot 0..8, Shift+F1..F9\n"
-      "    save into it; slot 9 is menu-only.\n"
-      "  - File > Load State From Slot and\n"
-      "    Save State To Slot list every slot\n"
-      "    with the date and time it was saved.\n"
+      "  - The picture now scales with the\n"
+      "    window: resizing, maximizing and\n"
+      "    fullscreen enlarge the game instead\n"
+      "    of leaving it at the fixed zoom.\n"
+      "  - Stretch Fit To Screen fills the\n"
+      "    window exactly; with it off the\n"
+      "    scale snaps to whole multiples so\n"
+      "    the pixels stay crisp.\n"
       "  - F10 screenshot, F11 fullscreen,\n"
-      "    F12 About (previously F5/F1).");
+      "    F12 About, P pause.");
 }
 static void show_cmdline(void) {
     dlg_text("BoycottAdvance Command Line Options",
@@ -898,17 +896,11 @@ int main(int argc, char **argv) {
         int mh = gui_active ? 0 : MENUBAR_H;   /* native GUI has its own bar */
         int aw = fb.w, ah = fb.h - mh;
         int dstx, dsty, dstw, dsth;
-        {   /* keep the 3:2 aspect and never crop the picture */
-            double s;
-            if (cfg.scalemode == 1) {
-                double sx = (double)aw / SCREEN_W, sy = (double)ah / SCREEN_H;
-                s = sx < sy ? sx : sy;
-            } else {
-                s = cfg.zoom;
-                double sx = (double)aw / SCREEN_W, sy = (double)ah / SCREEN_H;
-                double lim = sx < sy ? sx : sy;
-                if (s > lim) s = lim;
-            }
+        {   /* the picture always follows the client area (resize, maximize,
+               fullscreen); "Stretch Fit To Screen" fills it exactly, by
+               default the factor snaps to a whole multiple to stay crisp */
+            int snap = cfg.scalemode != 1;
+            double s = fb_fit_scale(aw, ah, snap);
             dstw = (int)(SCREEN_W * s); dsth = (int)(SCREEN_H * s);
             if (dstw < 1) dstw = 1;
             if (dsth < 1) dsth = 1;

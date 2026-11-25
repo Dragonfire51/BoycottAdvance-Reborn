@@ -25,5 +25,11 @@ void fb_text(FB *fb, int x, int y, const char *s, uint32_t argb);
 /* Nearest-neighbour scale of a GBA RGB555 frame into the target rect. */
 void fb_blit_frame(FB *fb, int dx, int dy, int dw, int dh,
                    const uint16_t *frame555, int scanline);
+/* Scale factor that fits the 240x160 picture inside an aw x ah area, keeping
+ * the 3:2 aspect. The picture always follows the client area (resize,
+ * maximize, fullscreen). snap!=0 rounds down to a whole multiple from 1x up
+ * so nearest-neighbour keeps every pixel the same size; snap==0 fills the
+ * area exactly (uneven pixels, only sensible with smoothing on). */
+double fb_fit_scale(int aw, int ah, int snap);
 
 #endif

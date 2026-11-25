@@ -388,9 +388,12 @@ public class MainActivity extends Activity implements TouchControlsView.Listener
         new android.app.AlertDialog.Builder(this)
             .setTitle("BoycottAdvance Reborn")
             .setMessage("Emulador GBA (C).\n\n" +
-                        "Version 1.4.47\n" +
+                        "Version 1.4.48\n" +
                         "Nucleo C99 compartido con los builds de escritorio.\n\n" +
                         "Novedades:\n" +
+                        "- Escritorio: el juego escala con la ventana al\n" +
+                        "  redimensionar, maximizar o poner a pantalla\n" +
+                        "  completa (antes se quedaba al zoom fijo).\n" +
                         "- Escritorio: el submenu Save State To Slot\n" +
                         "  muestra Shift+F1..F9 (antes repetia el\n" +
                         "  atajo de carga F1..F9).\n" +

@@ -211,6 +211,20 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
+- **v1.4.48** - The picture follows the window size.
+  - Both frontends scaled the picture with the fixed zoom (`ScreenZoom`)
+    unless *Stretch Fit To Screen* was on, so resizing or maximizing the
+    window left the game at its original size in the middle of the client
+    area.
+  - New `fb_fit_scale()` (`src/fb.c`) always fits the 240x160 picture into
+    the client area keeping the 3:2 aspect: resizing, maximizing and
+    fullscreen now enlarge the game. The factor snaps to a whole multiple
+    from 1x up so nearest-neighbour keeps every pixel the same size;
+    *Stretch Fit To Screen* fills the area exactly instead.
+  - Unit test: `tools/scale_test.c`. Checked on the SDL build under Xvfb: a
+    1000x700 window draws the picture at 960x640 (4x), and 1000x666 with
+    stretch on, instead of the old fixed 720x480.
+
 - **v1.4.47** - Fix the *Save State To Slot* submenu labels.
   - `build_menu()` reused one label for both slot submenus, so the save
     submenu advertised the load shortcut (`F1`..`F9`) instead of

@@ -18,6 +18,16 @@ void fb_init(FB *fb, int w, int h) {
 }
 void fb_free(FB *fb) { free(fb->px); fb->px = NULL; fb->w = fb->h = 0; }
 
+double fb_fit_scale(int aw, int ah, int snap) {
+    double sx = (double)aw / SCREEN_W, sy = (double)ah / SCREEN_H;
+    double s = sx < sy ? sx : sy;
+    /* Whole multiples keep every emulator pixel the same width; a fractional
+       factor makes columns/rows of uneven width, which shimmers when
+       scrolling. Below 1x there is no integer factor left, so keep it. */
+    if (snap && s >= 1.0) s = (double)(int)s;
+    return s > 0.0 ? s : 0.0;
+}
+
 void fb_fill(FB *fb, uint32_t argb) {
     for (int i = 0; i < fb->w * fb->h; i++) fb->px[i] = argb;
 }

@@ -1356,6 +1356,24 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
+## RELEASE v1.4.48 (publicado 2026-11-25)
+
+- **Tag** `v1.4.48`; tag rodante `Latest` movido al mismo commit. Contenido:
+  el cuadro deja de quedarse al zoom fijo y **escala con la ventana**.
+- **Bug**: los dos frontends usaban `cfg.zoom` salvo con "Stretch Fit To
+  Screen" activo, asi que al redimensionar o maximizar la ventana el juego
+  seguia a 720x480 (zoom 3 por defecto) centrado en un cliente mayor.
+- **Fix**: `fb_fit_scale(aw, ah, snap)` en `src/fb.c` (antes habia dos copias
+  del mismo calculo, una en `main.c` y otra en `win32.c`): encaja siempre el
+  cuadro 240x160 en el area cliente conservando el 3:2, redondeando hacia
+  abajo a multiplos enteros desde 1x (pixeles cuadrados con nearest
+  neighbour) y dejando la fraccion por debajo de 1x. `snap = cfg.scalemode !=
+  1`: "Stretch Fit To Screen" rellena el area exacta, sin redondeo.
+- **Verificacion**: `tools/scale_test.c` (10 casos). En el build SDL bajo
+  Xvfb, ventana 1000x700 -> cuadro 960x640 en (20,39) (4x) y 1000x666 con
+  stretch; antes se quedaba en 720x480. Los tres binarios de escritorio
+  llevan "v1.4.48"; Android `versionCode 14` / `versionName "1.4.48"`.
+
 ## RELEASE v1.4.47 (publicado 2026-11-25)
 
 - **Tag** `v1.4.47` = commit `1686509`; tag rodante `Latest` movido al mismo
