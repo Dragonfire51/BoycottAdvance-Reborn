@@ -1373,6 +1373,10 @@ Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
   Xvfb, ventana 1000x700 -> cuadro 960x640 en (20,39) (4x) y 1000x666 con
   stretch; antes se quedaba en 720x480. Los tres binarios de escritorio
   llevan "v1.4.48"; Android `versionCode 14` / `versionName "1.4.48"`.
+- **Publicacion**: CI `build-binaries` (run 45663247391) publico los 8 assets
+  en v1.4.48; el release rodante se renombro a "Latest (v1.4.48)" con los
+  assets reemplazados y `v1.4.47` quedo `prerelease=true` (estables: v1.4.48
+  y Latest).
 
 ## RELEASE v1.4.47 (publicado 2026-11-25)
 
