@@ -170,9 +170,18 @@ static void build_menu(void) {
      * three engines are loaded at run time (see audio_out.c), so the native
      * import table stays SDL/OpenAL-free. */
     HMENU se = add_popup(opt, "Sound Engine");
-    item(se, "SDL", M_SE_SDL);
-    item(se, "OpenAL", M_SE_OPENAL);
-    item(se, "DirectSound", M_SE_DSOUND);
+    HMENU vol = add_popup(se, "Volumen");
+    item(vol, "0%", M_VOL0);
+    item(vol, "25%", M_VOL25);
+    item(vol, "50%", M_VOL50);
+    item(vol, "75%", M_VOL75);
+    item(vol, "100%", M_VOL100);
+    item(vol, "150%", M_VOL150);
+    item(vol, "200%", M_VOL200);
+    HMENU eng = add_popup(se, "Engine");
+    item(eng, "SDL", M_SE_SDL);
+    item(eng, "OpenAL", M_SE_OPENAL);
+    item(eng, "DirectSound", M_SE_DSOUND);
     sep(opt);
     item(opt, "Select BIOS File...", M_SELBIOS);
     item(opt, "BIOS Enable", M_BIOSEN);

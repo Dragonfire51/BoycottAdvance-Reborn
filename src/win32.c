@@ -53,6 +53,7 @@ typedef struct {
     int  zoom, scalemode, scanline, smooth, autothrottle;
     int  showfps, showfps_pct, frameskip, autoframeskip, sound_enable;
     int  dsound_a, dsound_b, gbc_sound, reverse_stereo;
+    int  vol_pct;                 /* volumen de salida, % (0..200) */
     int  biosenable, biosfastboot, skipintros, autorun, flashid, state_slot;
     int  video_backend;
     int  sound_engine;            /* AUDIO_ENGINE_* selected in Options */
@@ -93,6 +94,8 @@ typedef struct {
     volatile int closing;
 } Audio;
 static Audio g_audio;
+/* TAB pulsado = fast-forward mientras se mantiene (sin throttle). */
+static int ff_hold(void);
 
 /* Fill a fragment from the APU.  With the throttle off the emulation runs far
  * ahead of real time, so the ring fills much faster than the device drains it;
@@ -102,7 +105,7 @@ static Audio g_audio;
  * intros.  Shared by the waveOut fallback and every audio_out engine. */
 static void audio_render(int16_t *dst, int frames) {
     if (cfg.sound_enable && g) {
-        if (cfg.autothrottle) {
+        if (cfg.autothrottle && !ff_hold()) {
             apu_mix(g, dst, frames);
         } else {
             int n = apu_drain_latest(dst, frames);
@@ -344,6 +347,9 @@ static void cfg_load(const char *path) {
     cfg.smooth       = ini_geti(path, "SmoothEmulation", 0);
     cfg.scalemode    = ini_geti(path, "ScaleMode", 0);
     cfg.reverse_stereo= ini_geti(path, "ReverseStereo", 0);
+    cfg.vol_pct      = ini_geti(path, "VolumePercent", 100);
+    if (cfg.vol_pct < 0) cfg.vol_pct = 0;
+    if (cfg.vol_pct > 200) cfg.vol_pct = 200;
     ini_get(path, "RomPath", cfg.lastdir, sizeof cfg.lastdir);
     if (!cfg.lastdir[0]) snprintf(cfg.lastdir, sizeof cfg.lastdir, ".");
     for (int i = 0; i < KP_COUNT; i++) {
@@ -368,13 +374,14 @@ static int cfg_save(const char *path) {
       "FrameSkip %d\nAutoFrameSkip %d\nSoundEnable %d\nGameboySoundEnable %d\n"
       "DirectSoundAEnable %d\nDirectSoundBEnable %d\nBIOSEnable %d\nBIOSFastBoot %d\n"
       "SkipIntros %d\nAutoRun %d\nFlashROMId %d\nStateSlot %d\nVideoBackend %d\n"
-      "SoundEngine %d\nSmoothEmulation %d\nScaleMode %d\nReverseStereo %d\nRomPath %s\n",
+      "SoundEngine %d\nSmoothEmulation %d\nScaleMode %d\nReverseStereo %d\n"
+      "VolumePercent %d\nRomPath %s\n",
       cfg.zoom, cfg.scanline, cfg.autothrottle, cfg.showfps, cfg.showfps_pct,
       cfg.frameskip, cfg.autoframeskip, cfg.sound_enable, cfg.gbc_sound,
       cfg.dsound_a, cfg.dsound_b, cfg.biosenable, cfg.biosfastboot,
       cfg.skipintros, cfg.autorun, cfg.flashid, cfg.state_slot,
       cfg.video_backend, cfg.sound_engine, cfg.smooth, cfg.scalemode, cfg.reverse_stereo,
-      cfg.lastdir) < 0) ok = 0;
+      cfg.vol_pct, cfg.lastdir) < 0) ok = 0;
     for (int i = 0; i < KP_COUNT; i++)
         if (fprintf(f, "Key_%s %d\n", KP_NAME[i], cfg.keymap[i]) < 0) ok = 0;
     for (int i = 0; i < KP_COUNT; i++)
@@ -512,14 +519,14 @@ static void show_history(void) {
     static const char *hist =
       GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - The picture now scales with the\n"
-      "    window: resizing, maximizing and\n"
-      "    fullscreen enlarge the game instead\n"
-      "    of leaving it at the fixed zoom.\n"
-      "  - Stretch Fit To Screen fills the\n"
-      "    window exactly; with it off the\n"
-      "    scale snaps to whole multiples so\n"
-      "    the pixels stay crisp.\n"
+      "  - Hold TAB to fast-forward: the\n"
+      "    game runs as fast as the machine\n"
+      "    allows while the key is down.\n"
+      "  - Output volume: Options > Sound\n"
+      "    Engine > Volumen (0, 25, 50, 75,\n"
+      "    100, 150, 200 %), or - and = on\n"
+      "    the keyboard in 10 % steps.\n"
+      "  - Above 100 % the mix can clip.\n"
       "  - F10 screenshot, F11 fullscreen,\n"
       "    F12 About, P pause.";
     msgbox("History", hist);
@@ -681,6 +688,28 @@ static void resize_for_zoom(void) {
                  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+/* Volumen de salida: ids contiguos M_VOL0..M_VOL200 con estos porcentajes. */
+static int vol_pct_from_id(int id) {
+    static const int pct[] = { 0, 25, 50, 75, 100, 150, 200 };
+    return pct[id - M_VOL0];
+}
+static void vol_set(int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 200) pct = 200;
+    cfg.vol_pct = pct;
+    apu_set_volume(pct);
+}
+static int ff_hold(void) { return (GetAsyncKeyState(VK_TAB) & 0x8000) != 0; }
+/* -/= bajan y suben el volumen 10 % (flancos, para no repetir al mantener). */
+static void poll_volume_keys(void) {
+    static int prev_minus, prev_plus;
+    int minus = (GetAsyncKeyState(VK_OEM_MINUS) & 0x8000) != 0;
+    int plus  = (GetAsyncKeyState(VK_OEM_PLUS)  & 0x8000) != 0;
+    if (minus && !prev_minus) vol_set(cfg.vol_pct - 10);
+    if (plus  && !prev_plus)  vol_set(cfg.vol_pct + 10);
+    prev_minus = minus; prev_plus = plus;
+}
+
 static void do_action(int id) {
     switch (id) {
     case M_LOADROM:  gui_native_open_rom(); break;
@@ -716,6 +745,9 @@ static void do_action(int id) {
     case M_DSOUNDB:  cfg.dsound_b = !cfg.dsound_b; break;
     case M_GBCSOUND: cfg.gbc_sound = !cfg.gbc_sound; break;
     case M_REVSTEREO: cfg.reverse_stereo = !cfg.reverse_stereo; break;
+    case M_VOL0: case M_VOL25: case M_VOL50: case M_VOL75:
+    case M_VOL100: case M_VOL150: case M_VOL200:
+        vol_set(vol_pct_from_id(id)); break;
     case M_SE_SDL: case M_SE_OPENAL: case M_SE_DSOUND:
         cfg.sound_engine = id - M_SE_SDL;
         if (cfg.sound_enable) audio_reopen();
@@ -778,6 +810,7 @@ static int item_checked(int id) {
         if (id>=M_SE_SDL && id<=M_SE_DSOUND) return cfg.sound_engine==id-M_SE_SDL;
         if (id>=M_ZOOM1 && id<=M_ZOOM4) return cfg.zoom==id-M_ZOOM1+1;
         if (id>=M_SKIP0 && id<=M_SKIP5) return cfg.frameskip==id-M_SKIP0;
+        if (id>=M_VOL0 && id<=M_VOL200) return cfg.vol_pct==vol_pct_from_id(id);
         if (id>=M_VB_AUTO && id<=M_VB_D3D) {
             static const int map[6] = { VID_GDI, VID_GDI, VID_GDI, VID_GDI,
                                         VID_GDI, VID_DIRECT3D };
@@ -884,6 +917,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     g_inst = inst;
 
     cfg_load_best();
+    apu_set_volume(cfg.vol_pct);
     const char *rom_arg = NULL;
     {
         LPWSTR w = GetCommandLineW();
@@ -1005,6 +1039,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
         if (g_quit) break;
 
         poll_joy_capture();
+        poll_volume_keys();
 
         /* Run one frame.  When sound is on, pace by the ring-buffer level:
            let the audio device drain what is queued before producing more, so
@@ -1012,7 +1047,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
            last sample) - both are audible as crackle.  A time-based sleep
            alone is too coarse (Sleep(1) granularity) and drifts. */
         if (!g_paused && g->rom_size > 0) {
-            if (cfg.autothrottle && cfg.sound_enable && g_audio_active) {
+            if (cfg.autothrottle && !ff_hold() && cfg.sound_enable && g_audio_active) {
                 uint32_t t0 = GetTickCount();
                 while (apu_available() > 2048 && GetTickCount() - t0 < 50) Sleep(1);
             }
@@ -1062,7 +1097,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
         if (dt >= 0.5) { fps = framecount / (float)dt; framecount = 0; t_fps = t1; }
         double frame_ms = (double)(t1.QuadPart - t_frame.QuadPart) * 1000.0 / (double)freq.QuadPart;
         last_frame_ms = frame_ms;
-        if (cfg.autothrottle && !g_paused && g->rom_size > 0 && frame_ms < GBA_FRAME_MS
+        if (cfg.autothrottle && !ff_hold() && !g_paused && g->rom_size > 0 && frame_ms < GBA_FRAME_MS
             && !(cfg.sound_enable && g_audio_active)) {
             /* No audio device to pace against: fall back to a wall-clock sleep. */
             Sleep((DWORD)(GBA_FRAME_MS - frame_ms));

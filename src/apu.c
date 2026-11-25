@@ -90,11 +90,30 @@ static inline uint8_t read_wave(const Apu *a, int bank, int idx) {
 #define EMPTY_PAUSE  (RING_FRAMES)  /* ~186 ms sin datos = pausa, no underrun */
 static int      declick = DECLICK_LEN;   /* ganancia Q8, 256 = unidad */
 static unsigned empty_run = 0;           /* muestras seguidas sin datos */
+/* Volumen de usuario en Q8 (256 = 100 %).  Se aplica al sacar las muestras,
+ * igual para el callback normal, el fast-forward y los volcados, de modo que
+ * lo que se oye y lo que se exporta coinciden. */
+static atomic_int vol_q8 = 256;
+
+void apu_set_volume(int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 200) pct = 200;
+    atomic_store_explicit(&vol_q8, (pct * 256 + 50) / 100, memory_order_relaxed);
+}
+
+/* Aplica una ganancia Q8 (0..512) con saturacion a 16 bits. */
+static int16_t gain_sample(int16_t s, int g) {
+    int32_t v = (int32_t)s * g >> 8;
+    if (v > 32767) v = 32767;
+    else if (v < -32768) v = -32768;
+    return (int16_t)v;
+}
 
 void apu_mix(GBA *g, int16_t *stream, int nframes) {
     (void)g;
     unsigned rd = atomic_load_explicit(&ring_r, memory_order_relaxed);
     unsigned w  = atomic_load_explicit(&ring_w, memory_order_acquire);
+    int vol = atomic_load_explicit(&vol_q8, memory_order_relaxed);
     for (int i = 0; i < nframes; i++) {
         if (rd != w) {
             last_l = ring[(rd & (RING_FRAMES - 1)) * 2];
@@ -106,8 +125,9 @@ void apu_mix(GBA *g, int16_t *stream, int nframes) {
             if (empty_run < EMPTY_PAUSE) empty_run++;
             else if (declick > 0) declick--;                /* pausa: baja a 0 */
         }
-        stream[i * 2]     = (int16_t)((int32_t)last_l * declick >> 8);
-        stream[i * 2 + 1] = (int16_t)((int32_t)last_r * declick >> 8);
+        int g = (declick * vol) >> 8;
+        stream[i * 2]     = gain_sample(last_l, g);
+        stream[i * 2 + 1] = gain_sample(last_r, g);
     }
     atomic_store_explicit(&ring_r, rd, memory_order_release);
 }
@@ -124,10 +144,11 @@ int apu_available(void) {
 int apu_drain(int16_t *stream, int maxframes) {
     unsigned rd = atomic_load_explicit(&ring_r, memory_order_relaxed);
     unsigned w  = atomic_load_explicit(&ring_w, memory_order_acquire);
+    int vol = atomic_load_explicit(&vol_q8, memory_order_relaxed);
     int n = 0;
     while (n < maxframes && rd != w) {
-        stream[n * 2]     = ring[(rd & (RING_FRAMES - 1)) * 2];
-        stream[n * 2 + 1] = ring[(rd & (RING_FRAMES - 1)) * 2 + 1];
+        stream[n * 2]     = gain_sample(ring[(rd & (RING_FRAMES - 1)) * 2], vol);
+        stream[n * 2 + 1] = gain_sample(ring[(rd & (RING_FRAMES - 1)) * 2 + 1], vol);
         rd++; n++;
     }
     atomic_store_explicit(&ring_r, rd, memory_order_release);
@@ -146,11 +167,12 @@ int apu_drain_latest(int16_t *stream, int maxframes) {
     if (avail > RING_FRAMES) { rd = w - RING_FRAMES; avail = RING_FRAMES; }
     unsigned take = (avail > (unsigned)maxframes) ? (unsigned)maxframes : avail;
     unsigned start = w - take;              /* keep the newest `take` frames */
+    int vol = atomic_load_explicit(&vol_q8, memory_order_relaxed);
     int n = 0;
     for (unsigned i = 0; i < take; i++) {
         unsigned idx = (start + i) & (RING_FRAMES - 1);
-        stream[n * 2]     = ring[idx * 2];
-        stream[n * 2 + 1] = ring[idx * 2 + 1];
+        stream[n * 2]     = gain_sample(ring[idx * 2], vol);
+        stream[n * 2 + 1] = gain_sample(ring[idx * 2 + 1], vol);
         n++;
     }
     atomic_store_explicit(&ring_r, w, memory_order_release);

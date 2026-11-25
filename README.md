@@ -98,7 +98,7 @@ debugger is intentionally omitted). Settings are stored in
 - **Options** — Frameskip (0..5), Auto Frame Skip, Smooth Emulation,
   Auto Speed Throttle, Show FPS, Show FPS in percent, Sound Enable,
   Enable DSound A/B, Enable GBC Sound, Reverse Sound Stereo,
-  Sound Engine (SDL / OpenAL / DirectSound),
+  Sound Engine (Volumen 0..200 % / Engine SDL / OpenAL / DirectSound),
   Select BIOS File, BIOS Enable, Skip BIOS Boot, Skip Intro Hacks,
   Controllers Configuration
 - **Help** — History..., Command Line Options..., About...
@@ -207,10 +207,25 @@ per button). Defaults:
 
 Emulator shortcuts: `F1`..`F9` load save-state slots 0..8, `Shift`+`F1`..`F9`
 save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
-`P` pause, `Esc` quit.
+`P` pause, `Esc` quit. **Hold `TAB` to fast-forward** while it is down, and
+`-` / `=` change the output volume in 10 % steps (0..200 %).
 
 ## Version history
 
+- **v1.4.49** - Fast-forward with TAB held, and output volume.
+  - Holding `TAB` runs the emulation unthrottled until the key is released
+    (the existing *Auto Speed Throttle* toggle still works as a sticky
+    fast-forward). SDL latches the key from its event loop; the native Win32
+    build polls `VK_TAB`.
+  - New *Options > Sound Engine > Volumen* submenu (0, 25, 50, 75, 100, 150,
+    200 %) with the active value checked, plus `-` / `=` for 10 % steps. The
+    setting is stored as `VolumePercent` in the INI.
+  - The gain is applied when the samples leave the APU (`apu_set_volume()` in
+    `src/apu.c`), so the callback, the fast-forward path and the WAV dumps all
+    match. Above 100 % the mix saturates instead of wrapping (it can clip).
+  - `tools/volume_test.c` renders the same 240 frames at 0/25/50/100/200 % from
+    a fresh reset and checks every sample: 0 % silent, 50 % and 25 % exactly
+    half/quarter, 200 % exactly doubled and clipped.
 - **v1.4.48** - The picture follows the window size.
   - Both frontends scaled the picture with the fixed zoom (`ScreenZoom`)
     unless *Stretch Fit To Screen* was on, so resizing or maximizing the

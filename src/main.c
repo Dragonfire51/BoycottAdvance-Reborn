@@ -60,6 +60,7 @@ typedef struct {
     int  zoom, scalemode, scanline, smooth, autothrottle;
     int  showfps, showfps_pct, frameskip, autoframeskip, sound_enable;
     int  dsound_a, dsound_b, gbc_sound, reverse_stereo;
+    int  vol_pct;                 /* volumen de salida, % (0..200) */
     int  biosenable, biosfastboot, skipintros, autorun, flashid, state_slot;
     int  video_backend;
     int  keymap[KP_COUNT];        /* SDL_Scancode per keypad button */
@@ -69,6 +70,7 @@ typedef struct {
 static Config cfg;
 static GBA   *g;
 static int    g_paused;
+static int    g_ff_hold;           /* TAB pulsado: fast-forward sin throttle */
 static int    gui_active;          /* native Win32 menu bar in use? */
 static SDL_AudioDeviceID g_adev;   /* so menu callbacks can pause audio */
 static SDL_Window *g_win;          /* main window (for menu callbacks) */
@@ -116,6 +118,9 @@ static void cfg_load(const char *path) {
     cfg.smooth       = ini_geti(path, "SmoothEmulation", 0);
     cfg.scalemode    = ini_geti(path, "ScaleMode", 0);
     cfg.reverse_stereo= ini_geti(path, "ReverseStereo", 0);
+    cfg.vol_pct      = ini_geti(path, "VolumePercent", 100);
+    if (cfg.vol_pct < 0) cfg.vol_pct = 0;
+    if (cfg.vol_pct > 200) cfg.vol_pct = 200;
     ini_get(path, "RomPath", cfg.lastdir, sizeof cfg.lastdir);
     if (!cfg.lastdir[0]) snprintf(cfg.lastdir, sizeof cfg.lastdir, ".");
     for (int i = 0; i < KP_COUNT; i++) {
@@ -134,13 +139,13 @@ static void cfg_save(const char *path) {
       "FrameSkip %d\nAutoFrameSkip %d\nSoundEnable %d\nGameboySoundEnable %d\n"
       "DirectSoundAEnable %d\nDirectSoundBEnable %d\nBIOSEnable %d\nBIOSFastBoot %d\n"
       "SkipIntros %d\nAutoRun %d\nFlashROMId %d\nStateSlot %d\nVideoBackend %d\n"
-      "SmoothEmulation %d\nScaleMode %d\nReverseStereo %d\nRomPath %s\n",
+      "SmoothEmulation %d\nScaleMode %d\nReverseStereo %d\nVolumePercent %d\nRomPath %s\n",
       cfg.zoom, cfg.scanline, cfg.autothrottle, cfg.showfps, cfg.showfps_pct,
       cfg.frameskip, cfg.autoframeskip, cfg.sound_enable, cfg.gbc_sound,
       cfg.dsound_a, cfg.dsound_b, cfg.biosenable, cfg.biosfastboot,
       cfg.skipintros, cfg.autorun, cfg.flashid, cfg.state_slot,
       cfg.video_backend, cfg.smooth, cfg.scalemode, cfg.reverse_stereo,
-      cfg.lastdir);
+      cfg.vol_pct, cfg.lastdir);
     for (int i = 0; i < KP_COUNT; i++)
         fprintf(f, "Key_%s %d\n", KP_NAME[i], cfg.keymap[i]);
     for (int i = 0; i < KP_COUNT; i++)
@@ -159,7 +164,7 @@ static void audio_cb(void *ud, Uint8 *stream, int len) {
         memset(stream, 0, len);
         return;
     }
-    if (cfg.autothrottle) {
+    if (cfg.autothrottle && !g_ff_hold) {
         apu_mix(gg, out, n);
     } else {
         /* Fast-forwarding (autothrottle off): the ring fills far faster than
@@ -224,7 +229,11 @@ static MenuItem m_options[] = {
     {"Auto Speed Throttle",M_THROTTLE},{"",0},{"Show FPS",M_SHOWFPS},
     {"Show FPS in percent (%)",M_SHOWFPSPCT},{"",0},{"Sound Enable",M_SOUND},
     {"Enable DSound A",M_DSOUNDA},{"Enable DSound B",M_DSOUNDB},{"Enable GBC Sound",M_GBCSOUND},
-    {"Reverse Sound Stereo",M_REVSTEREO},{"",0},{"Select BIOS File...",M_SELBIOS},
+    {"Reverse Sound Stereo",M_REVSTEREO},
+    {"",0},{"Volume 0%",M_VOL0},{"Volume 25%",M_VOL25},{"Volume 50%",M_VOL50},
+    {"Volume 75%",M_VOL75},{"Volume 100%",M_VOL100},{"Volume 150%",M_VOL150},
+    {"Volume 200%",M_VOL200},
+    {"",0},{"Select BIOS File...",M_SELBIOS},
     {"BIOS Enable",M_BIOSEN},{"Skip BIOS Boot",M_BIOSBOOT},{"Skip Intro Hacks",M_SKIPINTROS},
     {"",0},{"Frame Buffer",0},
     {"Auto (SDL)",M_VB_AUTO},{"Software (SDL)",M_VB_SOFT},{"OpenGL (SDL)",M_VB_GL},
@@ -441,14 +450,14 @@ static void show_history(void) {
     /* Only the changes of the current release, as the user expects. */
     dlg_text("History", GBA_TITLE "\n\n"
       "What's new in " GBA_VERSION ":\n"
-      "  - The picture now scales with the\n"
-      "    window: resizing, maximizing and\n"
-      "    fullscreen enlarge the game instead\n"
-      "    of leaving it at the fixed zoom.\n"
-      "  - Stretch Fit To Screen fills the\n"
-      "    window exactly; with it off the\n"
-      "    scale snaps to whole multiples so\n"
-      "    the pixels stay crisp.\n"
+      "  - Hold TAB to fast-forward: the\n"
+      "    game runs as fast as the machine\n"
+      "    allows while the key is down.\n"
+      "  - Output volume: Options > Sound\n"
+      "    Engine > Volumen (0, 25, 50, 75,\n"
+      "    100, 150, 200 %), or - and = on\n"
+      "    the keyboard in 10 % steps.\n"
+      "  - Above 100 % the mix can clip.\n"
       "  - F10 screenshot, F11 fullscreen,\n"
       "    F12 About, P pause.");
 }
@@ -473,6 +482,18 @@ static void begin_key_capture(int kp) {
 static void toggle_fullscreen(SDL_Window *w) {
     static int fs = 0; fs = !fs;
     SDL_SetWindowFullscreen(w, fs ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+}
+
+/* Volumen de salida: ids contiguos M_VOL0..M_VOL200 con estos porcentajes. */
+static int vol_pct_from_id(int id) {
+    static const int pct[] = { 0, 25, 50, 75, 100, 150, 200 };
+    return pct[id - M_VOL0];
+}
+static void vol_set(int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 200) pct = 200;
+    cfg.vol_pct = pct;
+    apu_set_volume(pct);
 }
 
 static void do_action(int id) {
@@ -514,6 +535,9 @@ static void do_action(int id) {
     case M_DSOUNDB: cfg.dsound_b = !cfg.dsound_b; break;
     case M_GBCSOUND: cfg.gbc_sound = !cfg.gbc_sound; break;
     case M_REVSTEREO: cfg.reverse_stereo = !cfg.reverse_stereo; break;
+    case M_VOL0: case M_VOL25: case M_VOL50: case M_VOL75:
+    case M_VOL100: case M_VOL150: case M_VOL200:
+        vol_set(vol_pct_from_id(id)); break;
     case M_SELBIOS:
         if (gui_active) gui_native_open_bios();
         else { gba_load_bios(g, "gba_bios.bin"); dlg_text("BIOS","BIOS loaded from gba_bios.bin"); }
@@ -589,6 +613,7 @@ static int item_checked(int id) {
     default:
         if (id>=M_ZOOM1 && id<=M_ZOOM4) return cfg.zoom==id-M_ZOOM1+1;
         if (id>=M_SKIP0 && id<=M_SKIP5) return cfg.frameskip==id-M_SKIP0;
+        if (id>=M_VOL0 && id<=M_VOL200) return cfg.vol_pct==vol_pct_from_id(id);
         if (id>=M_VB_AUTO && id<=M_VB_D3D) {
             static const int map[6] = { VID_AUTO, VID_SOFTWARE, VID_OPENGL,
                                         VID_VULKAN, VID_GDI, VID_DIRECT3D };
@@ -682,6 +707,7 @@ static void resolve_asset(const char *name, char *out, size_t n) {
 int main(int argc, char **argv) {
     const char *rom_arg = NULL;
     cfg_load("boycottadvance-reborn.ini");        /* defaults first */
+    apu_set_volume(cfg.vol_pct);
     /* -export <outdir> <frames> <f1,f2,...> <wavsec>: headless evidence run
        (PNG screenshots + WAV) from the same core code as this build, with no
        window or audio device.  Handled before SDL is initialised. */
@@ -832,6 +858,7 @@ int main(int argc, char **argv) {
                     continue;
                 }
                 if (dialog_kind) { if (k==SDLK_ESCAPE) dialog_kind=0; continue; }
+                if (k==SDLK_TAB) g_ff_hold = 1;
                 if (k==SDLK_ESCAPE) { if (menu_open>=0) menu_open=-1; else running=0; }
                 else if (k>=SDLK_F1 && k<=SDLK_F9) {
                     int slot = k - SDLK_F1;
@@ -849,13 +876,17 @@ int main(int argc, char **argv) {
                 else if (k==SDLK_p) g_paused = !g_paused;
                 else if (k==SDLK_F11) toggle_fullscreen(win);
                 else if (k==SDLK_F12) show_about();
+                else if (k==SDLK_MINUS) vol_set(cfg.vol_pct - 10);
+                else if (k==SDLK_EQUALS || k==SDLK_PLUS) vol_set(cfg.vol_pct + 10);
+            } else if (ev.type == SDL_KEYUP) {
+                if (ev.key.keysym.sym == SDLK_TAB) g_ff_hold = 0;
             }
         }
 
         if (!g_paused && g->rom_size > 0) {
             /* When sound is on, pace by the audio device queue so it never
                overflows (dropped samples) or runs dry (repeated last sample). */
-            if (cfg.autothrottle && cfg.sound_enable && g_adev) {
+            if (cfg.autothrottle && !g_ff_hold && cfg.sound_enable && g_adev) {
                 uint32_t t0 = SDL_GetTicks();
                 while (audio_avail() > 2048 && SDL_GetTicks() - t0 < 50) SDL_Delay(1);
             }
@@ -954,7 +985,7 @@ int main(int argc, char **argv) {
 
         uint32_t now = SDL_GetTicks();
         last_frame_ms = (double)(now - last);
-        if (cfg.autothrottle && !g_paused && !(cfg.sound_enable && g_adev)) {
+        if (cfg.autothrottle && !g_ff_hold && !g_paused && !(cfg.sound_enable && g_adev)) {
             /* No audio device to pace against: fall back to a wall-clock delay.
              * 16.7427 ms = 59.7275 Hz; re-read the clock after the delay so
              * the wait is counted in this frame (otherwise every other
