@@ -199,6 +199,12 @@ bool gba_load_rom(GBA *g, const char *path) {
     /* title */
     memcpy(g->rom_title, g->rom + 0xA0, 12);
     g->rom_title[12] = 0;
+    memcpy(g->rom_code, g->rom + 0xAC, 4);
+    g->rom_code[4] = 0;
+    for (int i = 0; i < 4; i++) {
+        unsigned char c = (unsigned char)g->rom_code[i];
+        if (c < 0x20 || c > 0x7E) g->rom_code[i] = '-';
+    }
     /* Save type from the marker strings Nintendo's save drivers leave in
        the ROM image (VBA-M src/core/gba/gbaFlash.cpp: EEPROM_ / SRAM_ /
        FLASH1M_ / FLASH512_ / FLASH prefixes).  Note SRAM_ (not SRAM_V):

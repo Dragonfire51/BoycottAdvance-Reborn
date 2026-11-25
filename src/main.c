@@ -270,6 +270,7 @@ typedef struct { char name[260]; int is_dir; } DirEnt;
 static DirEnt rom_list[BROWSER_MAX]; static int rom_count, rom_sel;
 static char   rom_dir[512];              /* directory currently listed */
 static void   load_rom(const char *path);
+static void   update_title(float fps);
 
 static int has_rom_ext(const char *n) {
     size_t L = strlen(n);
@@ -353,6 +354,41 @@ static void rom_activate(int idx) {
     if (g->rom_size > 0) { snprintf(cfg.lastdir, sizeof cfg.lastdir, "%s", rom_dir); dialog_kind = 0; }
 }
 
+/* ------------------------------------------------------------- frame pace */
+/* Sleep the rest of a frame budget and then spin the last millisecond:
+ * SDL_Delay has 1 ms granularity and usually returns early, which made a
+ * 59.73 Hz frame run ~4% fast. */
+static void frame_wait(double ms) {
+    Uint64 freq = SDL_GetPerformanceFrequency();
+    Uint64 t0 = SDL_GetPerformanceCounter();
+    Uint64 need = (Uint64)(ms * 1e-3 * (double)freq);
+    if (ms > 1.5) SDL_Delay((Uint32)(ms - 1.0));
+    while (SDL_GetPerformanceCounter() - t0 < need) { }
+}
+
+/* ------------------------------------------------------------------ title */
+/* Window title: version, the loaded cartridge (game code + file name) and the
+ * speed the game is running at. Only touches the OS when the text changes. */
+static SDL_Window *s_win;
+static char        s_title[512];
+
+static void update_title(float fps) {
+    char name[256], t[512];
+    const char *b = cfg.rompath, *p;
+    for (p = cfg.rompath; *p; p++) if (*p == '/' || *p == '\\') b = p + 1;
+    snprintf(name, sizeof name, "%.255s", b);
+    char *dot = strrchr(name, '.');
+    if (dot && dot != name) *dot = 0;
+    if (!g || g->rom_size == 0)
+        snprintf(t, sizeof t, "%s - %.0f fps", GBA_TITLE, fps);
+    else
+        snprintf(t, sizeof t, "%s - %s - %s - %.0f fps", GBA_TITLE,
+                 g->rom_code, name, fps);
+    if (!strcmp(t, s_title)) return;
+    snprintf(s_title, sizeof s_title, "%s", t);
+    if (s_win) SDL_SetWindowTitle(s_win, s_title);
+}
+
 /* ------------------------------------------------------------------ actions */
 static void load_rom(const char *path) {
     /* Flush the battery of the ROM being replaced before its state is gone. */
@@ -362,6 +398,7 @@ static void load_rom(const char *path) {
         const char *sl = strrchr(path,'/'); if (!sl) sl = strrchr(path,'\\');
         if (sl) { size_t n = sl-path; if (n<sizeof cfg.lastdir) { memcpy(cfg.lastdir,path,n); cfg.lastdir[n]=0; } }
         gba_reset(g); g_paused = 0;
+        update_title(0.0f);
     } else dlg_text("Error", "Cannot load ROM file.");
 }
 
@@ -777,6 +814,8 @@ int main(int argc, char **argv) {
     SDL_Window *win = SDL_CreateWindow(GBA_TITLE, SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED, w, h, SDL_WINDOW_RESIZABLE);
     if (!win) { fprintf(stderr,"no window: %s\n", SDL_GetError()); SDL_Quit(); free(g); return 1; }
+    s_win = win;
+    update_title(0.0f);          /* the ROM may have been loaded before this */
     {
         SDL_Surface *ico = SDL_CreateRGBSurfaceWithFormatFrom(
             (void *)gba_icon_argb, GBA_ICON_W, GBA_ICON_H, 32, GBA_ICON_W*4,
@@ -985,19 +1024,24 @@ int main(int argc, char **argv) {
 
         uint32_t now = SDL_GetTicks();
         last_frame_ms = (double)(now - last);
-        if (cfg.autothrottle && !g_ff_hold && !g_paused && !(cfg.sound_enable && g_adev)) {
-            /* No audio device to pace against: fall back to a wall-clock delay.
-             * 16.7427 ms = 59.7275 Hz; re-read the clock after the delay so
-             * the wait is counted in this frame (otherwise every other
-             * delay is skipped and the game runs ~1.5x too fast). */
+        if (cfg.autothrottle && !g_ff_hold && !g_paused) {
+            /* Wall-clock ceiling on top of the audio pacing: a device that
+             * drains its queue faster than real time (SDL "disk"/"dummy", an
+             * underrunning backend) would otherwise let the game run at
+             * several hundred fps. 16.7427 ms = 59.7275 Hz; re-read the clock
+             * after the delay so the wait is counted in this frame (otherwise
+             * every other delay is skipped and the game runs ~1.5x too fast). */
             double el = (double)(now - last);
-            if (el < 16.7427) SDL_Delay((uint32_t)(16.7427 - el));
+            if (el < 16.7427) frame_wait(16.7427 - el);
             last = SDL_GetTicks();
         } else {
             last = now;
         }
         fps_n++;
-        if (now-fps_t>=500) { fps = fps_n*1000.0f/(now-fps_t); fps_n=0; fps_t=now; }
+        if (now-fps_t>=500) {
+            fps = fps_n*1000.0f/(now-fps_t); fps_n=0; fps_t=now;
+            update_title(fps);
+        }
     }
 
     gba_save_battery(g, cfg.rompath);

@@ -419,6 +419,41 @@ static void cfg_load_best(void) {
 /* ------------------------------------------------------------------ messages */
 static void msgbox(const char *t, const char *b) { gui_native_message(t, b); }
 
+/* Sleep the rest of a frame budget and spin the last millisecond: Sleep() has
+ * 1 ms granularity and returns early, which makes the frame run slightly fast. */
+static void frame_wait(double ms) {
+    LARGE_INTEGER f, t0;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&t0);
+    long long need = (long long)(ms * 1e-3 * (double)f.QuadPart);
+    if (ms > 1.5) Sleep((DWORD)(ms - 1.0));
+    LARGE_INTEGER t;
+    do { QueryPerformanceCounter(&t); } while (t.QuadPart - t0.QuadPart < need);
+}
+
+/* Window title: version, the loaded cartridge (game code + file name) and the
+ * speed the game is running at. Only touches the OS when the text changes. */
+static char  s_title[512];
+static float s_last_fps;
+
+static void update_title(float fps) {
+    char name[256], t[512];
+    const char *b = cfg.rompath, *p;
+    for (p = cfg.rompath; *p; p++) if (*p == '/' || *p == '\\') b = p + 1;
+    snprintf(name, sizeof name, "%.255s", b);
+    char *dot = strrchr(name, '.');
+    if (dot && dot != name) *dot = 0;
+    s_last_fps = fps;
+    if (!g || g->rom_size == 0)
+        snprintf(t, sizeof t, "%s - %.0f fps", GBA_TITLE, fps);
+    else
+        snprintf(t, sizeof t, "%s - %s - %s - %.0f fps", GBA_TITLE,
+                 g->rom_code, name, fps);
+    if (!strcmp(t, s_title)) return;
+    snprintf(s_title, sizeof s_title, "%s", t);
+    if (g_hwnd) SetWindowTextA(g_hwnd, s_title);
+}
+
 static void load_rom(const char *path) {
     /* Flush the battery of the ROM being replaced before its state is gone. */
     if (g->rom_size > 0 && cfg.rompath[0]) gba_save_battery(g, cfg.rompath);
@@ -427,6 +462,7 @@ static void load_rom(const char *path) {
         const char *sl = strrchr(path,'/'); if (!sl) sl = strrchr(path,'\\');
         if (sl) { size_t n = sl-path; if (n<sizeof cfg.lastdir) { memcpy(cfg.lastdir,path,n); cfg.lastdir[n]=0; } }
         gba_reset(g); g_paused = 0;
+        update_title(0.0f);
     } else msgbox("Error", "Cannot load ROM file.");
 }
 
@@ -636,10 +672,10 @@ static void capture_key(int kp) {
 }
 static void on_key_assign(int vk) {
     if (key_capture < 0) return;
-    if (vk == VK_ESCAPE) { key_capture = -1; SetWindowTextA(g_hwnd, GBA_TITLE); return; }
+    if (vk == VK_ESCAPE) { key_capture = -1; update_title(s_last_fps); return; }
     cfg.keymap[key_capture] = vk;
     key_capture = -1;
-    SetWindowTextA(g_hwnd, GBA_TITLE);
+    update_title(s_last_fps);
     gui_native_sync();
     save_cfg();
 }
@@ -652,7 +688,7 @@ static void on_joy_assign(int value) {
     if (joy_capture < 0) return;
     cfg.joymap[joy_capture] = value;
     joy_capture = -1;
-    SetWindowTextA(g_hwnd, GBA_TITLE);
+    update_title(s_last_fps);
     gui_native_sync();
     save_cfg();
 }
@@ -663,7 +699,7 @@ static void poll_joy_capture(void) {
     static int prev_buttons = 0;
     int buttons = 0, pov = 0;
     if (!ctl_joy_raw(&buttons, &pov)) return;
-    if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) { joy_capture = -1; SetWindowTextA(g_hwnd, GBA_TITLE); return; }
+    if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) { joy_capture = -1; update_title(s_last_fps); return; }
     int newly = buttons & ~prev_buttons;
     prev_buttons = buttons;
     if (newly) {
@@ -997,6 +1033,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
             NULL, NULL, inst, NULL);
     }
     if (!g_hwnd) { MessageBoxA(NULL, "Cannot create window.", GBA_NAME, MB_OK|MB_ICONERROR); free(g); return 1; }
+    update_title(0.0f);          /* the ROM may have been loaded before this */
 
     SetWindowLongPtrA(g_hwnd, GWLP_USERDATA, 0);
 
@@ -1094,13 +1131,16 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
         QueryPerformanceCounter(&t1);
         framecount++;
         double dt = (double)(t1.QuadPart - t_fps.QuadPart) / (double)freq.QuadPart;
-        if (dt >= 0.5) { fps = framecount / (float)dt; framecount = 0; t_fps = t1; }
+        if (dt >= 0.5) {
+            fps = framecount / (float)dt; framecount = 0; t_fps = t1;
+            update_title(fps);
+        }
         double frame_ms = (double)(t1.QuadPart - t_frame.QuadPart) * 1000.0 / (double)freq.QuadPart;
         last_frame_ms = frame_ms;
-        if (cfg.autothrottle && !ff_hold() && !g_paused && g->rom_size > 0 && frame_ms < GBA_FRAME_MS
-            && !(cfg.sound_enable && g_audio_active)) {
-            /* No audio device to pace against: fall back to a wall-clock sleep. */
-            Sleep((DWORD)(GBA_FRAME_MS - frame_ms));
+        if (cfg.autothrottle && !ff_hold() && !g_paused && g->rom_size > 0 && frame_ms < GBA_FRAME_MS) {
+            /* Wall-clock ceiling on top of the audio pacing (a device that
+             * drains faster than real time would run the game far too fast). */
+            frame_wait(GBA_FRAME_MS - frame_ms);
             QueryPerformanceCounter(&t1);
         }
         t_frame = t1;

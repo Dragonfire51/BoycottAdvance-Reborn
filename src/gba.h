@@ -258,6 +258,7 @@ typedef struct GBA {
     uint32_t rom_size;
     uint32_t rom_mask;
     char     rom_title[16];
+    char     rom_code[8];         /* 4-char game code, header 0xAC */
 
     uint8_t  save_mem[SAVE_MAX];
     uint32_t save_size;
