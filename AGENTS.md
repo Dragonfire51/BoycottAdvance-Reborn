@@ -1356,7 +1356,31 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
-## RELEASE v1.4.51 (publicado 2026-11-26) — texto "en chino" en el OSD
+## RELEASE v1.4.52 (publicado 2026-11-26) — titulo de ventana en Win32
+
+- **Sintoma**: "el texto del titulo del emulador sale en chino"; el resto del UI
+  bien. Solo el titulo de la ventana, solo en el build nativo de Windows.
+- **Causa**: `update_title()` (`src/win32.c`) pasaba el titulo por
+  `SetWindowTextA`, es decir, Windows decodificaba los bytes con la **pagina ANSI
+  (CP_ACP)**. Pero en ese frontend `cfg.rompath` es **UTF-8**: `main()` usa
+  `GetCommandLineW()` + `CommandLineToArgvW()` y convierte con
+  `WideCharToMultiByte(CP_UTF8)`, y el dialogo de ficheros devuelve UTF-8 via
+  `wide_to_utf8()`. Resultado: `Pokemon` con acento -> `PokÃ©mon` en CP1252 y
+  **`Pok茅mon`** (ideograma incluido) en CP936/CP932, que es el "chino" que se ve.
+  Verificado con `'…'.encode('utf-8').decode(cp)` en Python.
+- **Fix**: `set_title()` usa `SetWindowTextW` con **CP_UTF8** y solo cae a
+  `CP_ACP` si la cadena no es UTF-8 valido (ini antiguo). La ventana ya era
+  Unicode (`RegisterClassExW`/`CreateWindowExW`).
+- **Leccion**: en el frontend Win32 **todo el texto interno es UTF-8**; las APIs
+  `...A` de Windows no valen para nada que pueda llevar acentos. La version
+  anterior del fix (v1.4.51) cambio a `SetWindowTextW` pero con `CP_ACP`, que es
+  justo la conversion equivocada.
+
+## RELEASE v1.4.51 (publicado y RETIRADO 2026-11-26) — texto "en chino" en el OSD
+
+> Retirada: el bug del titulo de ventana seguia (era otro sitio). Su contenido va
+> en **v1.4.52**. Se conserva por el diagnostico del OSD.
+
 
 - **Sintoma reportado**: "el texto de titulo del emulador sale en chino y se
   glitchea".

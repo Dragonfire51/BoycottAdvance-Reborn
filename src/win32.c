@@ -436,13 +436,18 @@ static void frame_wait(double ms) {
 static char  s_title[512];
 static float s_last_fps;
 
-/* The window is Unicode (RegisterClassExW), so the title must be set through
- * the wide API: SetWindowTextA re-decoded our bytes with the ANSI codepage,
- * and Windows hands us argv/paths in that codepage rather than UTF-8. */
+/* The window is Unicode (RegisterClassExW), so the title has to go through the
+ * wide API.  cfg.rompath is UTF-8 here (GetCommandLineW and GetOpenFileNameW
+ * are converted to UTF-8 on the way in), so decoding it as ANSI - which is what
+ * SetWindowTextA did - turned "Pokemon" with an accent into mojibake.  Fall
+ * back to the ANSI codepage only for a legacy ini that stored a non-UTF-8
+ * path. */
 static void set_title(const char *s) {
     wchar_t w[512];
-    if (g_hwnd && MultiByteToWideChar(CP_ACP, 0, s, -1, w, 512) > 0)
-        SetWindowTextW(g_hwnd, w);
+    if (!g_hwnd) return;
+    if (!MultiByteToWideChar(CP_UTF8, 0, s, -1, w, 512) &&
+        !MultiByteToWideChar(CP_ACP, 0, s, -1, w, 512)) return;
+    SetWindowTextW(g_hwnd, w);
 }
 
 static void update_title(float fps) {
