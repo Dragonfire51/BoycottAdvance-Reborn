@@ -485,7 +485,7 @@ static int caption_buttons_x(HWND h) {
 static void caption_paint(HWND h) {
     int bord = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
     int act  = (GetActiveWindow() == h);
-    int right, iconw, cap;
+    int right, iconw, cap, menuh;
     POINT pt = { 0, 0 };
     RECT wr, r, tr;
     wchar_t w[512];
@@ -495,11 +495,20 @@ static void caption_paint(HWND h) {
     if (!cfg.owncaption || !s_title[0]) return;
     if (!(GetWindowLongPtrW(h, GWL_STYLE) & WS_CAPTION)) return;   /* fullscreen */
     if (IsIconic(h)) return;
-    /* The caption strip is everything above the client area: SM_CYCAPTION is
-       smaller than the themed title bar on Windows 10/11. */
+    /* The caption strip is everything above the client area minus the menu bar
+       (the menu is non-client too): SM_CYCAPTION alone is smaller than the
+       themed title bar on Windows 10/11. */
     GetWindowRect(h, &wr);
     ClientToScreen(h, &pt);
-    cap = pt.y - wr.top;
+    menuh = 0;
+    if (GetMenu(h)) {
+        MENUBARINFO mbi;
+        mbi.cbSize = sizeof mbi;
+        menuh = GetMenuBarInfo(h, OBJID_MENU, 0, &mbi)
+              ? (int)(mbi.rcBar.bottom - mbi.rcBar.top)
+              : GetSystemMetrics(SM_CYMENU);
+    }
+    cap = pt.y - wr.top - menuh;
     right = caption_buttons_x(h);
     r.left = bord; r.top = 0;
     r.right = right - 2;
@@ -650,9 +659,11 @@ static void show_about(void) {
     char body[2048], hex[8 * 40 + 8];
     wchar_t back[256];
     size_t o = 0;
+    int len;
+    back[0] = 0;
     hex[0] = 0;
-    GetWindowTextW(g_hwnd, back, 256);
-    for (int i = 0; back[i] && i < 32; i++) {
+    len = GetWindowTextW(g_hwnd, back, 256);
+    for (int i = 0; back[i] && i < 16; i++) {
         int n = snprintf(hex + o, sizeof hex - o, "%04X ", (unsigned)back[i]);
         if (n <= 0) break;
         o += (size_t)n;
@@ -669,8 +680,9 @@ static void show_about(void) {
       "Original BoycottAdvance was cardware: if you liked it,\n"
       "please send a postcard. Keep crediting the authors.\n\n"
       "Window caption we set:\n%.200s\n\n"
-      "Caption Windows stored (code units):\n%.300s",
-      s_title, hex);
+      "Caption Windows stored (%d units):\n%ls\n\n"
+      "First units: %.120s",
+      s_title, len, back, hex);
     msgbox("About", body);
 }
 static void show_history(void) {

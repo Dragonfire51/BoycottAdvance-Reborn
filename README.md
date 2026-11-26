@@ -212,6 +212,11 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
+- **v1.4.55** - Fixes the caption strip painted by v1.4.54: the height was
+  taken as "everything above the client area", and the menu bar is part of the
+  non-client area, so the caption fill also covered the menu (blank blue strip,
+  items reappearing only while hovered). The menu bar height is now measured
+  with `GetMenuBarInfo()` and subtracted.
 - **v1.4.54** - The window caption is drawn by the emulator itself (native
   Windows build). On some systems the non-client area comes out as garbage: the
   text is plain ASCII, yet the frame shows CJK glyphs and so does the taskbar

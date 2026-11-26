@@ -1356,6 +1356,18 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
+## RELEASE v1.4.55 (publicado 2026-11-26) — franja del caption sin comerse el menu
+
+- El caption de v1.4.54 se pintaba bien (el usuario ya lo ve:
+  "BoycottAdvance Reborn v1.4.54"), pero la franja se calculaba como "todo lo que
+  hay por encima del area cliente", y **la barra de menu tambien es area no
+  cliente** -> el relleno tapaba el menu (franja azul, items solo al pasar el
+  cursor, y otra vez tapados tras cada WM_NCPAINT).
+- Fix: `GetMenuBarInfo(h, OBJID_MENU, 0, &mbi)` (fallback `SM_CYMENU`) y
+  `cap = client_top - window_top - menuh`.
+- `Help > About...` ahora imprime tambien la longitud y el texto que Windows
+  guardo (`%ls`), no solo el hex.
+
 ## RELEASE v1.4.54 (publicado 2026-11-26) — caption dibujado por el emulador
 
 - El usuario reporto que el caption seguia "en chino" **tambien con la barra de
