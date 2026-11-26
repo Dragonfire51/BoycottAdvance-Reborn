@@ -212,6 +212,17 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
+- **v1.4.56** - Back to the v1.4.49 CPU timing, plus the caption fixes.
+  - **Reverted** the two timing changes that came with v1.4.50: the HLE of
+    `IntrWait`/`VBlankIntrWait` no longer returns on an unrelated IRQ (it parks
+    the CPU until the awaited source, as the BIOS loop does), and `SWI 02h..05h`
+    no longer jump into the BIOS vector. Both advanced the game clock (games ran
+    too fast - Medabots AX - and Digimon Racing ended up on a white screen).
+  - Caption: drawn with the system **menu font** instead of a named "Segoe UI"
+    (on a machine whose title-bar font renders ASCII as CJK, the menu bar still
+    draws fine), the strip ends where the menu bar starts (measured with
+    `GetMenuBarInfo`, so the themed menu bar is never covered), and the frame is
+    repainted when a menu closes so the labels do not stay blank.
 - **v1.4.55** - Fixes the caption strip painted by v1.4.54: the height was
   taken as "everything above the client area", and the menu bar is part of the
   non-client area, so the caption fill also covered the menu (blank blue strip,

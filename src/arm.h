@@ -10,8 +10,6 @@ void gba_add_cycles(GBA *g, uint32_t n);  /* charge emulated cycles (BIOS HLE ti
 void gba_swi_stall(GBA *g, uint32_t n);   /* queue BIOS decompression cost (drained per segment) */
 void gba_swi(GBA *g, uint32_t comment);   /* SVC / BIOS (comment = SWI number) */
 void arm_set_mode(GBA *g, uint32_t mode);
-/* Entra en una excepcion: SPSR_<mode> = CPSR, LR_<mode> = lr_val, PC = pc_addr */
-void arm_enter_exception(GBA *g, uint32_t mode, uint32_t lr_val, uint32_t pc_addr);
 void arm_raise_interrupt(GBA *g, int n);
 void arm_set_irq_line(GBA *g, bool high);
 bool arm_is_halted(GBA *g);

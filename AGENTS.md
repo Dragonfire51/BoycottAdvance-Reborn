@@ -1356,6 +1356,23 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
+## RELEASE v1.4.56 (publicado 2026-11-26) — vuelta al timing de v1.4.49
+
+- El usuario reporto **regresiones de emulacion**: Medabots AX "corre
+  rapidisimo" y Digimon Racing "pantalla blanca".  Ninguna version de la serie
+  del caption toco el nucleo, asi que la causa son los dos commits de timing que
+  entraron en v1.4.50 y que **el propio mensaje de commit admitia** ("adelanta el
+  reloj de juego"):
+  - `d8e8e3c` (IntrWait ya no aparca la CPU) -> revertido.
+  - `959127a` (SWI 02h-05h entran en el vector real del BIOS) -> revertido.
+- Se conservan: `add1aa1` (afines 256 colores + angulo 1.15), `31a196c` (OSD),
+  `e98fcb1` (ritmo de frame) y todo el trabajo del caption.
+- Caption: fuente = `lfMenuFont` del sistema (la barra de menu se ve bien en el
+  equipo del usuario; "Segoe UI" por nombre le sale rota), franja = hasta
+  `GetMenuBarInfo(OBJID_MENU).rcBar.top`, y `RedrawWindow(RDW_FRAME)` al cerrar
+  un menu (`WM_UNINITMENUPOPUP`/`WM_EXITMENULOOP`) para que las etiquetas no
+  queden en blanco.
+
 ## RELEASE v1.4.55 (publicado 2026-11-26) — franja del caption sin comerse el menu
 
 - El caption de v1.4.54 se pintaba bien (el usuario ya lo ve:

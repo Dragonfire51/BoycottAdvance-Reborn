@@ -485,7 +485,7 @@ static int caption_buttons_x(HWND h) {
 static void caption_paint(HWND h) {
     int bord = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
     int act  = (GetActiveWindow() == h);
-    int right, iconw, cap, menuh;
+    int right, iconw, cap;
     POINT pt = { 0, 0 };
     RECT wr, r, tr;
     wchar_t w[512];
@@ -500,15 +500,19 @@ static void caption_paint(HWND h) {
        themed title bar on Windows 10/11. */
     GetWindowRect(h, &wr);
     ClientToScreen(h, &pt);
-    menuh = 0;
     if (GetMenu(h)) {
         MENUBARINFO mbi;
         mbi.cbSize = sizeof mbi;
-        menuh = GetMenuBarInfo(h, OBJID_MENU, 0, &mbi)
-              ? (int)(mbi.rcBar.bottom - mbi.rcBar.top)
-              : GetSystemMetrics(SM_CYMENU);
+        /* The caption ends exactly where the menu bar starts; subtracting
+           SM_CYMENU from the client top leaves part of the themed menu bar
+           covered on Windows 10/11. */
+        if (GetMenuBarInfo(h, OBJID_MENU, 0, &mbi) && mbi.rcBar.bottom > mbi.rcBar.top)
+            cap = (int)(mbi.rcBar.top - wr.top);
+        else
+            cap = pt.y - wr.top - GetSystemMetrics(SM_CYMENU);
+    } else {
+        cap = pt.y - wr.top;
     }
-    cap = pt.y - wr.top - menuh;
     right = caption_buttons_x(h);
     r.left = bord; r.top = 0;
     r.right = right - 2;
@@ -530,11 +534,20 @@ static void caption_paint(HWND h) {
         iconw = 20;
     }
 
-    if (!s_capfont)
-        s_capfont = CreateFontW(-MulDiv(9, GetDeviceCaps(dc, LOGPIXELSY), 72),
-                                0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
-                                OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                CLEARTYPE_QUALITY, VARIABLE_PITCH, L"Segoe UI");
+    if (!s_capfont) {
+        /* Use the system menu font, not "Segoe UI" by name: on a machine where
+           the caption/title-bar font renders ASCII as CJK, the menu bar still
+           draws fine, so that face is known good. */
+        NONCLIENTMETRICSW ncm;
+        ncm.cbSize = sizeof ncm;
+        if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof ncm, &ncm, 0))
+            s_capfont = CreateFontIndirectW(&ncm.lfMenuFont);
+        if (!s_capfont)
+            s_capfont = CreateFontW(-MulDiv(9, GetDeviceCaps(dc, LOGPIXELSY), 72),
+                                    0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                                    OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                    CLEARTYPE_QUALITY, VARIABLE_PITCH, L"Tahoma");
+    }
     if (s_capfont) {
         HGDIOBJ old = SelectObject(dc, s_capfont);
         widen_ascii(s_title, w, 512);
@@ -1039,6 +1052,13 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     }
+    case WM_UNINITMENUPOPUP:
+    case WM_EXITMENULOOP:
+        /* The menu bar is non-client: after a popup closes, Windows does not
+           always repaint it on its own and the labels stay blank until the
+           cursor hovers one. */
+        RedrawWindow(h, NULL, NULL, RDW_FRAME | RDW_INVALIDATE);
+        break;
     case WM_NCPAINT:
     case WM_NCACTIVATE: {
         LRESULT r = DefWindowProcW(h, msg, wp, lp);

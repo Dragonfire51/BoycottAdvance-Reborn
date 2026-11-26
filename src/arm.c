@@ -156,7 +156,7 @@ void arm_set_mode(GBA *g, uint32_t mode) {
     change_mode(g, (get_cpsr(g) & ~0x1Fu) | mode);
 }
 
-void arm_enter_exception(GBA *g, uint32_t mode, uint32_t lr_val, uint32_t pc_addr) {
+static void enter_exception(GBA *g, uint32_t mode, uint32_t lr_val, uint32_t pc_addr) {
     uint32_t old = get_cpsr(g);
     g->cpu.spsr[bank_of(mode)] = old;               /* SPSR_<mode> = CPSR */
     /* Los vectores se ejecutan en estado ARM con IRQ deshabilitadas. */
@@ -892,13 +892,33 @@ void arm_execute(GBA *g, uint32_t max_cycles) {
                 if (until < budget_left) { g->cycle = g->sio_deadline; sio_update(g, 0); continue; }
             }
         }
-        /* SWI 04h/05h (IntrWait/VBlankIntrWait), HLE.  El BIOS duerme en un
-           bucle software: una IRQ ajena despierta la CPU, su handler se ejecuta
-           y el bucle vuelve a dormir.  Aqui solo se duerme via `halt`, de modo
-           que un handler de VCount/HBlank puede correr durante la espera (lo
-           necesitan los efectos por scanline); contrapartida conocida: al
-           despertar se reanuda el codigo tras el SWI aunque la IRQ no fuera la
-           esperada, lo que adelanta el reloj de juego (Digimon Racing ~5%). */
+        /* SWI 04h/05h (IntrWait/VBlankIntrWait), HLE.  The mask is a *software*
+           loop in the BIOS, not a hardware filter: the BIOS HALTs, any enabled
+           IRQ wakes it and runs its handler, and the loop re-HALTs until the
+           awaited flag is pending.  With no BIOS loop we reproduce that here:
+           an unrelated enabled IRQ (e.g. a VCount handler during a
+           VBlankIntrWait) must still preempt; the wait simply stays armed
+           (wait_mask) until the awaited source arrives.  Suppressing those IRQs
+           stalled per-scanline handlers until VBlank (mGBA runs the real loop). */
+        if (g->cst.wait_mask) {
+            if (g->if_reg & g->cst.wait_mask) {
+                g->cst.wait_mask = 0;           /* awaited source: wait is over */
+                g->cst.halt = false;
+            } else if ((g->if_reg & g->ie & 0x3FFF) && g->ime &&
+                       !(g->cpu.cpsr & CPSR_I)) {
+                g->cst.halt = false;            /* deliverable unrelated IRQ preempts; wait stays armed */
+            } else {
+                /* The awaited flag is not set and no IRQ can be served right
+                   now: the BIOS wait loop HALTs, it does NOT return to the
+                   caller.  Sleeping on `wait_mask` (not on `halt`) is what
+                   keeps the SWI atomic: without it the game resumed at the
+                   instruction after the SWI on every unrelated IRQ and ran its
+                   whole frame loop at CPU speed. */
+                g->cycle = start + max_cycles;
+                break;
+            }
+        }
+
         /* Una CPU en halt despierta en cuanto hay una IRQ habilitada (IE & IF),
            sin importar IME ni el bit I del CPSR; IME/I solo gobiernan el salto al vector. */
         if (g->cst.halt && (g->if_reg & g->ie & 0x3FFF)) g->cst.halt = false;
@@ -916,7 +936,7 @@ void arm_execute(GBA *g, uint32_t max_cycles) {
             }
             /* GBATEK (ARM CPU Exceptions): LR_irq = direccion de la siguiente instruccion + 4,
                tambien en estado Thumb (se vuelve con SUBS PC,LR,#4). */
-            arm_enter_exception(g, 0x12, g->cpu.r[15] + 4, 0x18);
+            enter_exception(g, 0x12, g->cpu.r[15] + 4, 0x18);
             add_cycles(g, 3);
             continue;
         }
