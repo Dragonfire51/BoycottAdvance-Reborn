@@ -880,8 +880,10 @@ static int vol_pct_from_id(int id) {
 static void vol_set(int pct) {
     if (pct < 0) pct = 0;
     if (pct > 200) pct = 200;
+    if (pct == cfg.vol_pct) return;
     cfg.vol_pct = pct;
     apu_set_volume(pct);
+    save_cfg();            /* the keyboard -/= path has no menu action to do it */
 }
 static int ff_hold(void) { return (GetAsyncKeyState(VK_TAB) & 0x8000) != 0; }
 /* -/= bajan y suben el volumen 10 % (flancos, para no repetir al mantener). */

@@ -212,6 +212,9 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
+- **v1.4.57** - The output volume chosen with `-` / `=` on the keyboard is
+  written to the INI straight away; only the menu entries went through the
+  action path that saves, so the percentage was lost on exit.
 - **v1.4.56** - Back to the v1.4.49 CPU timing, plus the caption fixes.
   - **Reverted** the two timing changes that came with v1.4.50: the HLE of
     `IntrWait`/`VBlankIntrWait` no longer returns on an unrelated IRQ (it parks

@@ -1356,6 +1356,12 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
+## RELEASE v1.4.57 (publicado 2026-11-26) — volumen por teclado se guarda
+
+- `vol_set()` no llamaba a `save_cfg()`: las entradas de menu si (via
+  `gui_cb_action`), pero `-`/`=` por teclado solo cambiaban `cfg.vol_pct` en
+  memoria.  Ahora persiste al cambiar.
+
 ## RELEASE v1.4.56 (publicado 2026-11-26) — vuelta al timing de v1.4.49
 
 - El usuario reporto **regresiones de emulacion**: Medabots AX "corre
