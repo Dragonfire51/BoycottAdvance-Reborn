@@ -1356,6 +1356,23 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
+## RELEASE v1.4.54 (publicado 2026-11-26) — caption dibujado por el emulador
+
+- El usuario reporto que el caption seguia "en chino" **tambien con la barra de
+  tareas**, con el texto ya en ASCII puro (v1.4.53).  Se verifico el binario
+  publicado (objdump: `mov %ax,(%rcx,%rdx,2)` + `SetWindowTextW`) -> la cadena
+  que se envia es ASCII, asi que el fallo esta en el pintado del marco.
+- **Fix**: `caption_paint()` en `src/win32.c` pinta la franja del titulo en
+  `WM_NCPAINT`/`WM_NCACTIVATE` (icono + texto con `CreateFontW("Segoe UI")`,
+  colores `COLOR_ACTIVECAPTION/CAPTIONTEXT`).  El ancho de los botones se deduce
+  con `WM_NCHITTEST` (`HTCLOSE`/`HTMINBUTTON`/`HTMAXBUTTON`), no a ojo, para no
+  taparlos.  Se salta en fullscreen (sin `WS_CAPTION`).  Opt-out: `OwnCaption 0`.
+- **Sin fps en el caption**: cambiaba decenas de veces por segundo y repintaba
+  el marco; el OSD ya lo muestra.
+- **Diagnostico**: `Help > About...` (F12) imprime la cadena del caption y los
+  code units que Windows guardo (`GetWindowTextW`, hex) -> distingue "cadena
+  nuestra mal" de "pintado del sistema".
+
 ## RELEASE v1.4.53 (publicado 2026-11-26) — titulo de ventana ASCII
 
 - **Decision**: el caption no lleva nada que no sea ASCII. `fb_ascii_fold()`

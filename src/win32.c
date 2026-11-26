@@ -52,6 +52,7 @@ static const int JOY_DEFAULT[KP_COUNT] = {
 typedef struct {
     int  zoom, scalemode, scanline, smooth, autothrottle;
     int  showfps, showfps_pct, frameskip, autoframeskip, sound_enable;
+    int  owncaption;
     int  dsound_a, dsound_b, gbc_sound, reverse_stereo;
     int  vol_pct;                 /* volumen de salida, % (0..200) */
     int  biosenable, biosfastboot, skipintros, autorun, flashid, state_slot;
@@ -327,6 +328,9 @@ static void cfg_load(const char *path) {
     cfg.scanline     = ini_geti(path, "Scanline", 0);
     cfg.autothrottle = ini_geti(path, "AutoThrottle", 1);
     cfg.showfps      = ini_geti(path, "ShowFPS", 1);
+    /* Draw the window caption ourselves: some systems render the caption font
+       as garbage for plain ASCII.  Set OwnCaption=0 to use the stock one. */
+    cfg.owncaption   = ini_geti(path, "OwnCaption", 1);
     cfg.showfps_pct  = ini_geti(path, "ShowFPSPercent", 0);
     cfg.frameskip    = ini_geti(path, "FrameSkip", 0);
     cfg.autoframeskip= ini_geti(path, "AutoFrameSkip", 0);
@@ -375,13 +379,13 @@ static int cfg_save(const char *path) {
       "DirectSoundAEnable %d\nDirectSoundBEnable %d\nBIOSEnable %d\nBIOSFastBoot %d\n"
       "SkipIntros %d\nAutoRun %d\nFlashROMId %d\nStateSlot %d\nVideoBackend %d\n"
       "SoundEngine %d\nSmoothEmulation %d\nScaleMode %d\nReverseStereo %d\n"
-      "VolumePercent %d\nRomPath %s\n",
+      "VolumePercent %d\nOwnCaption %d\nRomPath %s\n",
       cfg.zoom, cfg.scanline, cfg.autothrottle, cfg.showfps, cfg.showfps_pct,
       cfg.frameskip, cfg.autoframeskip, cfg.sound_enable, cfg.gbc_sound,
       cfg.dsound_a, cfg.dsound_b, cfg.biosenable, cfg.biosfastboot,
       cfg.skipintros, cfg.autorun, cfg.flashid, cfg.state_slot,
       cfg.video_backend, cfg.sound_engine, cfg.smooth, cfg.scalemode, cfg.reverse_stereo,
-      cfg.vol_pct, cfg.lastdir) < 0) ok = 0;
+      cfg.vol_pct, cfg.owncaption, cfg.lastdir) < 0) ok = 0;
     for (int i = 0; i < KP_COUNT; i++)
         if (fprintf(f, "Key_%s %d\n", KP_NAME[i], cfg.keymap[i]) < 0) ok = 0;
     for (int i = 0; i < KP_COUNT; i++)
@@ -431,8 +435,8 @@ static void frame_wait(double ms) {
     do { QueryPerformanceCounter(&t); } while (t.QuadPart - t0.QuadPart < need);
 }
 
-/* Window title: version, the loaded cartridge (game code + file name) and the
- * speed the game is running at. Only touches the OS when the text changes. */
+/* Window title: version plus the loaded cartridge (game code + file name).
+ * Only touches the OS when the text changes. */
 static char  s_title[512];
 static float s_last_fps;
 
@@ -453,6 +457,88 @@ static void set_title(const char *s) {
     fb_ascii_fold(s, a, sizeof a);
     widen_ascii(a, w, 512);
     SetWindowTextW(g_hwnd, w);
+    RedrawWindow(g_hwnd, NULL, NULL, RDW_FRAME | RDW_INVALIDATE);
+}
+
+/* The caption text is drawn here rather than left to Windows: on some systems
+ * the non-client area comes out as garbage (stale backing store, or a theme
+ * caption font that renders our ASCII with the wrong glyphs), and the frame is
+ * repainted often enough that it shows.  Only the text strip is touched; the
+ * frame, the icon and the min/max/close buttons stay Windows'. */
+static HFONT s_capfont;
+
+/* Left edge of the caption buttons, in window coordinates: ask Windows with
+ * WM_NCHITTEST so the theme and the DPI decide, not a guess. */
+static int caption_buttons_x(HWND h) {
+    RECT wr;
+    int x;
+    GetWindowRect(h, &wr);
+    for (x = wr.right - 2; x > wr.left; x -= 4) {
+        LRESULT ht = SendMessageW(h, WM_NCHITTEST, 0,
+                                  MAKELPARAM((short)x, (short)(wr.top + 4)));
+        if (ht != HTCLOSE && ht != HTMAXBUTTON && ht != HTMINBUTTON && ht != HTHELP)
+            return x - wr.left;
+    }
+    return wr.right - wr.left;
+}
+
+static void caption_paint(HWND h) {
+    int bord = GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+    int act  = (GetActiveWindow() == h);
+    int right, iconw, cap;
+    POINT pt = { 0, 0 };
+    RECT wr, r, tr;
+    wchar_t w[512];
+    HDC dc;
+    HICON ic;
+
+    if (!cfg.owncaption || !s_title[0]) return;
+    if (!(GetWindowLongPtrW(h, GWL_STYLE) & WS_CAPTION)) return;   /* fullscreen */
+    if (IsIconic(h)) return;
+    /* The caption strip is everything above the client area: SM_CYCAPTION is
+       smaller than the themed title bar on Windows 10/11. */
+    GetWindowRect(h, &wr);
+    ClientToScreen(h, &pt);
+    cap = pt.y - wr.top;
+    right = caption_buttons_x(h);
+    r.left = bord; r.top = 0;
+    r.right = right - 2;
+    r.bottom = cap;
+    if (r.right <= r.left + 4 || cap < 8) return;
+    dc = GetWindowDC(h);
+    if (!dc) return;
+
+    HBRUSH bg = CreateSolidBrush(GetSysColor(act ? COLOR_ACTIVECAPTION
+                                                 : COLOR_INACTIVECAPTION));
+    FillRect(dc, &r, bg);
+    DeleteObject(bg);
+
+    iconw = 0;
+    ic = (HICON)SendMessageW(h, WM_GETICON, ICON_SMALL, 0);
+    if (!ic) ic = (HICON)GetClassLongPtrW(h, GCLP_HICONSM);
+    if (ic) {
+        DrawIconEx(dc, r.left + 2, (cap - 16) / 2, ic, 16, 16, 0, NULL, DI_NORMAL);
+        iconw = 20;
+    }
+
+    if (!s_capfont)
+        s_capfont = CreateFontW(-MulDiv(9, GetDeviceCaps(dc, LOGPIXELSY), 72),
+                                0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
+                                OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                CLEARTYPE_QUALITY, VARIABLE_PITCH, L"Segoe UI");
+    if (s_capfont) {
+        HGDIOBJ old = SelectObject(dc, s_capfont);
+        widen_ascii(s_title, w, 512);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, GetSysColor(act ? COLOR_CAPTIONTEXT
+                                         : COLOR_INACTIVECAPTIONTEXT));
+        tr.left = r.left + 2 + iconw; tr.top = 0;
+        tr.right = r.right - 4; tr.bottom = cap;
+        DrawTextW(dc, w, -1, &tr, DT_SINGLELINE | DT_VCENTER |
+                                  DT_END_ELLIPSIS | DT_NOPREFIX);
+        SelectObject(dc, old);
+    }
+    ReleaseDC(h, dc);
 }
 
 static void update_title(float fps) {
@@ -463,11 +549,12 @@ static void update_title(float fps) {
     char *dot = strrchr(name, '.');
     if (dot && dot != name) *dot = 0;
     s_last_fps = fps;
+    /* No fps in the caption: it changed dozens of times a second and every
+       change repainted the frame (the OSD already shows it). */
     if (!g || g->rom_size == 0)
-        snprintf(t, sizeof t, "%s - %.0f fps", GBA_TITLE, fps);
+        snprintf(t, sizeof t, "%s", GBA_TITLE);
     else
-        snprintf(t, sizeof t, "%s - %s - %s - %.0f fps", GBA_TITLE,
-                 g->rom_code, name, fps);
+        snprintf(t, sizeof t, "%s - %s - %s", GBA_TITLE, g->rom_code, name);
     if (!strcmp(t, s_title)) return;
     snprintf(s_title, sizeof s_title, "%s", t);
     set_title(s_title);
@@ -556,8 +643,21 @@ static void show_rom_info(void) {
         g->rom_size/1024, save_type_name(g->save_type), g->save_size);
     msgbox("ROM Info", b);
 }
+/* The About box doubles as the caption diagnostic: it shows the string we set
+ * and the code units Windows stored for the window, so a caption that comes out
+ * garbled can be told apart from a title we built wrong. */
 static void show_about(void) {
-    msgbox("About",
+    char body[2048], hex[8 * 40 + 8];
+    wchar_t back[256];
+    size_t o = 0;
+    hex[0] = 0;
+    GetWindowTextW(g_hwnd, back, 256);
+    for (int i = 0; back[i] && i < 32; i++) {
+        int n = snprintf(hex + o, sizeof hex - o, "%04X ", (unsigned)back[i]);
+        if (n <= 0) break;
+        o += (size_t)n;
+    }
+    snprintf(body, sizeof body,
       GBA_TITLE "\nClean-room reconstruction of BoycottAdvance 0.2.8\n"
       "with a complete ARM7TDMI core and BIOS SWI emulation.\n"
       "Windows build: native GDI/Direct3D9, waveOut audio, no SDL.\n\n"
@@ -567,7 +667,11 @@ static void show_about(void) {
       "  Contributors: Anarko, Fitzy, Dysfunction, Perfect Dark,\n"
       "  SMY, Niels Wagenaar, Forgotten, Champipi\n\n"
       "Original BoycottAdvance was cardware: if you liked it,\n"
-      "please send a postcard. Keep crediting the authors.");
+      "please send a postcard. Keep crediting the authors.\n\n"
+      "Window caption we set:\n%.200s\n\n"
+      "Caption Windows stored (code units):\n%.300s",
+      s_title, hex);
+    msgbox("About", body);
 }
 static void show_history(void) {
     /* Show only the changes of the current release, as the user expects. */
@@ -922,6 +1026,12 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         default: break;
         }
         return 0;
+    }
+    case WM_NCPAINT:
+    case WM_NCACTIVATE: {
+        LRESULT r = DefWindowProcW(h, msg, wp, lp);
+        caption_paint(h);
+        return r;
     }
     case WM_ERASEBKGND:
         /* The presenter paints the whole client area every frame (GDI

@@ -212,6 +212,15 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
+- **v1.4.54** - The window caption is drawn by the emulator itself (native
+  Windows build). On some systems the non-client area comes out as garbage: the
+  text is plain ASCII, yet the frame shows CJK glyphs and so does the taskbar
+  button. The caption strip is now painted with a font the emulator creates
+  (`Segoe UI`), over the system caption colours, and the title no longer carries
+  the fps (it repainted the frame dozens of times a second and the OSD already
+  shows it). `Help > About...` prints the caption string and the code units
+  Windows stored for it. Set `OwnCaption 0` in `ps1emu.ini`/`boycottadvance.ini`
+  to go back to the stock caption.
 - **v1.4.53** - Digimon Racing renders its track, the halt/IntrWait SWIs run the
   real BIOS loop, and no text comes out garbled any more (the OSD, and the window
   title of both frontends).
