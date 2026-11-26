@@ -1356,6 +1356,28 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
+## RELEASE v1.4.59 (publicado 2026-11-26) — el "kjj" antes de una voz fuerte
+
+- Sintoma: un "kjj" justo antes de "Medabots!, Robattle!" (Medabots AX). Voz
+  clara, percusion clara: el ataque de un sonido fuerte se recortaba.
+- **Causa**: la salida rellenaba un ring seco con sample-and-hold y solo se
+  fundia a silencio tras `EMPTY_PAUSE` = **186 ms**. Un hueco de 20-60 ms (un
+  frame lento) dejaba el nivel clavado en un DC hasta que entraba la voz: se
+  perdia su ataque y el escalon se oia. El nivel del ring ademas solo tenia
+  **tope** (`> 2048` Sleep), sin minimo: el nivel hacía un paseo aleatorio desde
+  0 y se secaba a menudo.
+- **Fix** (`src/apu.c`): `HOLD_GAP` 96 muestras (~2.2 ms) de sample-and-hold y
+  despues fundido a silencio en `DECLICK_LEN` 192 (~4.4 ms); los huecos cortos
+  siguen manteniendo la muestra (fundirse en todos ellos crujia, ver v1.4.2x).
+  (`src/win32.c`): ventana objetivo `AO_RING_LOW..AO_RING_HIGH` = 1024..3072
+  frames; por debajo de la cota baja se salta `frame_wait` para recargar.
+  (`apu_write_reg 0x082`): el reset del FIFO tambien dispara `dma_fifo_request`.
+- **Verificacion**: `tools/apu_mix_test.c` (hueco corto mantiene, hueco largo se
+  funde sin DC ni clics, vuelta de datos, reset del FIFO). Con el codigo viejo
+  falla (2 fallos); con el fix, 9 PASS. El PCM del juego es **bit-identico**
+  antes/despues (corr 1.0000, todas las muestras iguales), asi que el contenido
+  emulado no cambia: solo el camino de salida.
+
 ## RELEASE v1.4.58 (publicado 2026-11-26) — caption solo con el titulo en ingles
 
 - Peticion del usuario: "EL TITULO DEBE ESTAR SOLO EN INGLES"; si sigue

@@ -212,6 +212,18 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
+- **v1.4.59** - Audio: the "kjj" before a loud voice (Medabots AX's *Medabots!
+  Robattle!*) is gone. When the output ring ran dry, `apu_mix()` used to hold the
+  last sample for as long as the starvation lasted (186 ms before it faded), so
+  the level sat at a DC where the next loud sound began: its attack was cut and
+  the step was audible. Now a gap shorter than 2.2 ms still holds the sample
+  (that is what avoids clicks), but a longer one fades to silence in 4.4 ms and
+  fades back in when data returns. The ring is also paced against a target
+  window (1024..3072 frames) instead of only an upper limit: below the low
+  mark the frame wait is skipped so the emulator refills the buffer instead of
+  letting it walk down to zero. Reset of a Direct Sound FIFO now also raises its
+  DMA request, as the hardware does, so a new sample starts with real data.
+  `tools/apu_mix_test.c` covers the mixer cases.
 - **v1.4.58** - The window caption is the fixed English title only:
   `BoycottAdvance Reborn v1.4.58`. The cartridge name and game code are gone
   from it, so nothing from the ROM reaches the title (they were the strings that
