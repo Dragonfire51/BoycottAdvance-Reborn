@@ -535,18 +535,15 @@ static void caption_paint(HWND h) {
     }
 
     if (!s_capfont) {
-        /* Use the system menu font, not "Segoe UI" by name: on a machine where
-           the caption/title-bar font renders ASCII as CJK, the menu bar still
-           draws fine, so that face is known good. */
-        NONCLIENTMETRICSW ncm;
-        ncm.cbSize = sizeof ncm;
-        if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof ncm, &ncm, 0))
-            s_capfont = CreateFontIndirectW(&ncm.lfMenuFont);
-        if (!s_capfont)
-            s_capfont = CreateFontW(-MulDiv(9, GetDeviceCaps(dc, LOGPIXELSY), 72),
-                                    0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+        /* Named faces, not the system caption/menu LOGFONT: on a machine whose
+           caption font maps ASCII to CJK glyphs, lfMenuFont is the broken one
+           too, while these render correctly (verified on the affected build). */
+        static const wchar_t *faces[] = { L"Segoe UI", L"Tahoma", L"Arial" };
+        int h = -MulDiv(9, GetDeviceCaps(dc, LOGPIXELSY), 72);
+        for (int i = 0; i < 3 && !s_capfont; i++)
+            s_capfont = CreateFontW(h, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
                                     OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                    CLEARTYPE_QUALITY, VARIABLE_PITCH, L"Tahoma");
+                                    CLEARTYPE_QUALITY, VARIABLE_PITCH, faces[i]);
     }
     if (s_capfont) {
         HGDIOBJ old = SelectObject(dc, s_capfont);
@@ -564,21 +561,13 @@ static void caption_paint(HWND h) {
 }
 
 static void update_title(float fps) {
-    char name[256], t[512];
-    const char *b = cfg.rompath, *p;
-    for (p = cfg.rompath; *p; p++) if (*p == '/' || *p == '\\') b = p + 1;
-    snprintf(name, sizeof name, "%.255s", b);
-    char *dot = strrchr(name, '.');
-    if (dot && dot != name) *dot = 0;
     s_last_fps = fps;
-    /* No fps in the caption: it changed dozens of times a second and every
-       change repainted the frame (the OSD already shows it). */
-    if (!g || g->rom_size == 0)
-        snprintf(t, sizeof t, "%s", GBA_TITLE);
-    else
-        snprintf(t, sizeof t, "%s - %s - %s", GBA_TITLE, g->rom_code, name);
-    if (!strcmp(t, s_title)) return;
-    snprintf(s_title, sizeof s_title, "%s", t);
+    /* The caption is the fixed English title and nothing else.  Anything taken
+     * from the cartridge (file name, game code) came back rendered as CJK
+     * glyphs on some systems, and the fps changed dozens of times a second and
+     * repainted the frame (the OSD shows it). */
+    if (!strcmp(s_title, GBA_TITLE)) return;
+    snprintf(s_title, sizeof s_title, "%s", GBA_TITLE);
     set_title(s_title);
 }
 
@@ -669,18 +658,7 @@ static void show_rom_info(void) {
  * and the code units Windows stored for the window, so a caption that comes out
  * garbled can be told apart from a title we built wrong. */
 static void show_about(void) {
-    char body[2048], hex[8 * 40 + 8];
-    wchar_t back[256];
-    size_t o = 0;
-    int len;
-    back[0] = 0;
-    hex[0] = 0;
-    len = GetWindowTextW(g_hwnd, back, 256);
-    for (int i = 0; back[i] && i < 16; i++) {
-        int n = snprintf(hex + o, sizeof hex - o, "%04X ", (unsigned)back[i]);
-        if (n <= 0) break;
-        o += (size_t)n;
-    }
+    char body[2048];
     snprintf(body, sizeof body,
       GBA_TITLE "\nClean-room reconstruction of BoycottAdvance 0.2.8\n"
       "with a complete ARM7TDMI core and BIOS SWI emulation.\n"
@@ -691,11 +669,7 @@ static void show_about(void) {
       "  Contributors: Anarko, Fitzy, Dysfunction, Perfect Dark,\n"
       "  SMY, Niels Wagenaar, Forgotten, Champipi\n\n"
       "Original BoycottAdvance was cardware: if you liked it,\n"
-      "please send a postcard. Keep crediting the authors.\n\n"
-      "Window caption we set:\n%.200s\n\n"
-      "Caption Windows stored (%d units):\n%ls\n\n"
-      "First units: %.120s",
-      s_title, len, back, hex);
+      "please send a postcard. Keep crediting the authors.");
     msgbox("About", body);
 }
 static void show_history(void) {

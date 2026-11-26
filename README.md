@@ -212,6 +212,13 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
+- **v1.4.58** - The window caption is the fixed English title only:
+  `BoycottAdvance Reborn v1.4.58`. The cartridge name and game code are gone
+  from it, so nothing from the ROM reaches the title (they were the strings that
+  came back as CJK glyphs on the affected systems), and the caption no longer
+  changes at all after start-up. It is still drawn by the emulator with a named
+  face (`Segoe UI`, falling back to `Tahoma`/`Arial`) because the system caption
+  font on those machines maps ASCII to CJK.
 - **v1.4.57** - The output volume chosen with `-` / `=` on the keyboard is
   written to the INI straight away; only the menu entries went through the
   action path that saves, so the percentage was lost on exit.

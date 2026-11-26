@@ -1356,6 +1356,19 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
+## RELEASE v1.4.58 (publicado 2026-11-26) — caption solo con el titulo en ingles
+
+- Peticion del usuario: "EL TITULO DEBE ESTAR SOLO EN INGLES"; si sigue
+  convirtiendose a CJK, quitar el titulo del ROM.  Hecho:
+  `update_title()` pone `GBA_TITLE` y nada mas (ni nombre de fichero ni game
+  code), asi que el caption no cambia nunca tras arrancar.
+- **Fuente**: se vuelve a `CreateFontW(L"Segoe UI", FW_SEMIBOLD)` con reservas
+  `Tahoma`/`Arial`.  Dato clave: en v1.4.54 (sin ROM) el caption se leia bien con
+  esa fuente, y con `lfMenuFont` (v1.4.57) volvio a salir en CJK -> en esos
+  equipos **`lfMenuFont` tambien esta roto**; la barra de menu la dibuja el tema,
+  no `lfMenuFont`.
+- `show_about()` vuelve a ser informativo (se quito el volcado de diagnostico).
+
 ## RELEASE v1.4.57 (publicado 2026-11-26) — volumen por teclado se guarda
 
 - `vol_set()` no llamaba a `save_cfg()`: las entradas de menu si (via
