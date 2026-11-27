@@ -212,6 +212,18 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
+- **v1.4.61** - The mixer half of v1.4.59 is back on its own, without the
+  pacing that broke that release. When the output ring runs dry the mixer used
+  to hold the last sample for up to 186 ms before fading, which leaves a DC
+  level sitting there exactly where the next loud sound begins: its attack is
+  cut and the step is heard. Short gaps (under 2.2 ms) still hold the sample,
+  because fading on every one of those is the constant crackle of v1.4.38;
+  longer ones fade to silence in 4.4 ms and fade back in with the data.
+  `tools/apu_mix_test.c` covers it (9 checks, 2 of them fail on the old code).
+  Measured on Medabots AX at the "Medabots! Robattle!" line: the mix saturates
+  the DAC range in 1.46 s of every 30 (the voice attack lands while the music
+  already clips), so the next suspect if this does not fix it is the mixing
+  level, not the delivery.
 - **v1.4.60** - Reverted the audio-delivery changes of v1.4.59, which made
   things worse: the "refill the ring when it is low" pacing could skip the
   frame wait over and over, so the emulator ran unthrottled (games at 2x,

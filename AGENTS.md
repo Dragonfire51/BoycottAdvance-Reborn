@@ -1356,6 +1356,22 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
+## RELEASE v1.4.61 (publicado 2026-11-26) — el mixer de v1.4.59, solo el mixer
+
+- Se reaplica **solo** la mitad de mezcla de v1.4.59: `HOLD_GAP` 96 (~2.2 ms) de
+  sample-and-hold y luego fundido en `DECLICK_LEN` 192 (~4.4 ms), con subida al
+  volver los datos.  Sin el pacing (que era la regresion) ni el
+  `dma_fifo_request` del reset de FIFO.
+- Razon: el usuario probo v1.4.59, pero esa version corria **sin freno** (2x), y
+  con el audio troceado no se podia juzgar el cambio del mixer.  Este va solo.
+- Verificado: `tools/apu_mix_test.c` 9 PASS (con el codigo viejo fallan 2);
+  `apu_drain` (camino headless) intacto -> el PCM emulado no cambia.
+- Referencia mGBA (video del usuario, ROM EU, misma escena): su grabacion no
+  satura ni una muestra; la nuestra satura 1,46 s de 30 (PSG solo llega a 511 en
+  los mismos momentos).  La cadena de mezcla coincide con mGBA
+  (`sum<<3`, `*(1+volL)`, `>> (4-volH)`, `_applyBias` con clamp), asi que la
+  saturacion puede ser fiel; siguiente sospechoso si el "kjj" sigue.
+
 ## RELEASE v1.4.60 (publicado 2026-11-26) — revertido v1.4.59 (era una regresion)
 
 - **v1.4.59 se retira**.  Sintomas reportados por el usuario: el audio igual (el
