@@ -7,7 +7,10 @@ boycottadvance-reborn-*.exe
 boycottadvance-reborn.ini
 *.res
 
-# local test ROMs
+# ROMs de prueba: nunca en el repo (copyright)
+*.gba
+*.gba.ss*
+*.sav
 /tmp_*.gba
 
 # local capture artifacts
