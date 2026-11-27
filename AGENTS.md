@@ -1356,27 +1356,27 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
-## RELEASE v1.4.59 (publicado 2026-11-26) — el "kjj" antes de una voz fuerte
+## RELEASE v1.4.60 (publicado 2026-11-26) — revertido v1.4.59 (era una regresion)
 
-- Sintoma: un "kjj" justo antes de "Medabots!, Robattle!" (Medabots AX). Voz
-  clara, percusion clara: el ataque de un sonido fuerte se recortaba.
-- **Causa**: la salida rellenaba un ring seco con sample-and-hold y solo se
-  fundia a silencio tras `EMPTY_PAUSE` = **186 ms**. Un hueco de 20-60 ms (un
-  frame lento) dejaba el nivel clavado en un DC hasta que entraba la voz: se
-  perdia su ataque y el escalon se oia. El nivel del ring ademas solo tenia
-  **tope** (`> 2048` Sleep), sin minimo: el nivel hacía un paseo aleatorio desde
-  0 y se secaba a menudo.
-- **Fix** (`src/apu.c`): `HOLD_GAP` 96 muestras (~2.2 ms) de sample-and-hold y
-  despues fundido a silencio en `DECLICK_LEN` 192 (~4.4 ms); los huecos cortos
-  siguen manteniendo la muestra (fundirse en todos ellos crujia, ver v1.4.2x).
-  (`src/win32.c`): ventana objetivo `AO_RING_LOW..AO_RING_HIGH` = 1024..3072
-  frames; por debajo de la cota baja se salta `frame_wait` para recargar.
-  (`apu_write_reg 0x082`): el reset del FIFO tambien dispara `dma_fifo_request`.
-- **Verificacion**: `tools/apu_mix_test.c` (hueco corto mantiene, hueco largo se
-  funde sin DC ni clics, vuelta de datos, reset del FIFO). Con el codigo viejo
-  falla (2 fallos); con el fix, 9 PASS. El PCM del juego es **bit-identico**
-  antes/despues (corr 1.0000, todas las muestras iguales), asi que el contenido
-  emulado no cambia: solo el camino de salida.
+- **v1.4.59 se retira**.  Sintomas reportados por el usuario: el audio igual (el
+  "kjj" sigue), **la pista de Digimon Racing otra vez glitcheada**, Eragon con
+  glitches.
+- **Causa 1 (la grave)**: el pacing nuevo saltaba `frame_wait` siempre que
+  `apu_available() < 1024`.  El nivel del ring oscila alrededor de la cota (el
+  hilo de DirectSound consume segmentos de 1024), asi que la condicion era
+  cierta casi siempre -> el emulador corria **sin freno** (2x, frameskip,
+  tearing y pistas rotas en juegos sensibles al tiempo).  Leccion: un "catch-up"
+  sin histeresis ni limite de frecuencia no es un catch-up, es quitar el
+  throttle.
+- **Causa 2**: el fundido a silencio a los 2.2 ms convertia un underrun cronico
+  en cortes audibles (antes se sostenia la muestra).
+- **Causa 3**: `dma_fifo_request` dentro de `apu_write_reg(0x082)` puede anidar
+  un `dma_run` si un DMA escribe SOUNDCNT_H, y suma ciclos dentro de una
+  escritura de CPU (riesgo de timing).
+- Hecho: `git revert a6ad3bf` -> `apu.c`/`win32.c` vuelven a v1.4.58 (mismo
+  PCM).  El "kjj" sigue **abierto**: hace falta el ROM EU (AK9P) para reproducir
+  con el savestate del usuario (`...0527...ss0`), que solo carga en su ROM (el
+  estado guarda game code + tamano).
 
 ## RELEASE v1.4.58 (publicado 2026-11-26) — caption solo con el titulo en ingles
 

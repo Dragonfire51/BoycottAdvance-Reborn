@@ -79,15 +79,15 @@ static inline uint8_t read_wave(const Apu *a, int bank, int idx) {
  * de nuevo hacia arriba.  VBA-M emite silencio cuando su buffer esta vacio
  * (audio_sdl.cpp, `SDL_memset(stream, 0, length)`).
  *
- * Los huecos cortos (hasta HOLD_GAP) mantienen el sample-and-hold: fundirse en
- * cada uno modulaba la amplitud y sonaba a crujido constante (medido: los
- * "dips" de envolvente subian de 210 a 463 por minuto en hambruna).  Un hueco
- * mas largo NO se sostiene: mantener el ultimo nivel durante decenas de ms deja
- * un DC que, en una frase fuerte (una voz, el golpe de un menu), recorta su
- * ataque y deja un "kjj" al entrar.  Pasado HOLD_GAP la salida se funde a
- * silencio en DECLICK_LEN muestras y vuelve a subir cuando llegan datos. */
-#define DECLICK_LEN  192            /* ~4.4 ms a 44.1 kHz */
-#define HOLD_GAP      96            /* ~2.2 ms de sample-and-hold, luego silencio */
+ * El fundido SOLO se activa tras `EMPTY_PAUSE` muestras seguidas sin datos, es
+ * decir una pausa real (menus, P) y no un underrun momentaneo.  Fundirse en
+ * cada hueco corto modulaba la amplitud y sonaba a crujido constante (medido:
+ * los "dips" de envolvente subian de 210 a 463 por minuto en hambruna); con el
+ * umbral, los huecos cortos mantienen el sample-and-hold de siempre y no
+ * crujen.  En reproduccion normal el ring no se vacia, la ganancia se queda en
+ * 256 (unidad) y la senal no cambia. */
+#define DECLICK_LEN  256            /* ~5.8 ms a 44.1 kHz */
+#define EMPTY_PAUSE  (RING_FRAMES)  /* ~186 ms sin datos = pausa, no underrun */
 static int      declick = DECLICK_LEN;   /* ganancia Q8, 256 = unidad */
 static unsigned empty_run = 0;           /* muestras seguidas sin datos */
 /* Volumen de usuario en Q8 (256 = 100 %).  Se aplica al sacar las muestras,
@@ -122,8 +122,8 @@ void apu_mix(GBA *g, int16_t *stream, int nframes) {
             empty_run = 0;
             if (declick < DECLICK_LEN) declick++;           /* vuelven datos: sube */
         } else {
-            if (empty_run < HOLD_GAP) empty_run++;
-            else if (declick > 0) declick--;                /* hueco largo: baja a 0 */
+            if (empty_run < EMPTY_PAUSE) empty_run++;
+            else if (declick > 0) declick--;                /* pausa: baja a 0 */
         }
         int g = (declick * vol) >> 8;
         stream[i * 2]     = gain_sample(last_l, g);
@@ -404,13 +404,11 @@ void apu_write_reg(GBA *g, uint32_t reg, uint16_t v) {
             a->fifo_head[0] = a->fifo_len[0] = 0;
             a->fifo_held[0] = a->fifo_prev[0] = 0;
             a->fifo_frac[0] = 0; a->fifo_interp[0] = 0;
-            dma_fifo_request(g, 0);   /* el reset tambien dispara la peticion DMA */
         }
         if (wv & 0x8000) {   /* reset FIFO B */
             a->fifo_head[1] = a->fifo_len[1] = 0;
             a->fifo_held[1] = a->fifo_prev[1] = 0;
             a->fifo_frac[1] = 0; a->fifo_interp[1] = 0;
-            dma_fifo_request(g, 1);
         }
         return;
     case 0x084:

@@ -1197,12 +1197,6 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
     timeBeginPeriod(1);
     LARGE_INTEGER freq, t_frame, t1, t_fps; QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&t_frame); QueryPerformanceCounter(&t_fps);
-    /* Target level of the APU ring (frames at 44.1 kHz): the device side holds
-   AO_SEGS segments of the output buffer on top, so this window plus those
-   segments is the tolerance against a slow frame. */
-#define AO_RING_HIGH  3072
-#define AO_RING_LOW   1024
-
     int framecount = 0;
     float fps = 0;
     int skipc = 0;
@@ -1229,7 +1223,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
         if (!g_paused && g->rom_size > 0) {
             if (cfg.autothrottle && !ff_hold() && cfg.sound_enable && g_audio_active) {
                 uint32_t t0 = GetTickCount();
-                while (apu_available() > AO_RING_HIGH && GetTickCount() - t0 < 50) Sleep(1);
+                while (apu_available() > 2048 && GetTickCount() - t0 < 50) Sleep(1);
             }
             gba_update_keypad(g, key_state());
             gba_run_frame(g);
@@ -1280,14 +1274,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
         }
         double frame_ms = (double)(t1.QuadPart - t_frame.QuadPart) * 1000.0 / (double)freq.QuadPart;
         last_frame_ms = frame_ms;
-        /* A dry ring is not silent: apu_mix() holds the last sample, which cuts
-           the attack of the next loud sound ("kjj").  While the ring is below
-           the low-water mark the wall-clock wait is skipped so the emulator
-           refills it; the ring then settles around AO_RING_LOW..AO_RING_HIGH
-           instead of walking down to zero. */
-        int audio_below = cfg.sound_enable && g_audio_active && apu_available() < AO_RING_LOW;
-        if (cfg.autothrottle && !ff_hold() && !g_paused && g->rom_size > 0 &&
-            frame_ms < GBA_FRAME_MS && !audio_below) {
+        if (cfg.autothrottle && !ff_hold() && !g_paused && g->rom_size > 0 && frame_ms < GBA_FRAME_MS) {
             /* Wall-clock ceiling on top of the audio pacing (a device that
              * drains faster than real time would run the game far too fast). */
             frame_wait(GBA_FRAME_MS - frame_ms);
