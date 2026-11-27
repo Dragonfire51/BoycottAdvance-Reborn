@@ -16,7 +16,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define GBA_VERSION  "v1.4.61"
+#define GBA_VERSION  "v1.4.62"
 #define GBA_NAME     "BoycottAdvance Reborn"
 #define GBA_TITLE    GBA_NAME " " GBA_VERSION
 
@@ -383,6 +383,9 @@ void apu_reset(GBA *g);
 void apu_step(GBA *g, uint32_t cycles);                 /* genera muestras al ring */
 void apu_mix(GBA *g, int16_t *stream, int nframes);     /* callback de audio */
 void apu_set_volume(int pct);                          /* volumen de usuario 0..200 %, 100 = unidad */
+typedef struct { unsigned underruns, drops, held, mixed; } ApuStats;
+void apu_stats(ApuStats *out);                         /* diagnostico del camino de audio */
+void apu_stats_reset(void);
 int  apu_available(void);                              /* muestras listas en el ring */
 int  apu_drain(int16_t *stream, int maxframes);          /* vacia el ring (tests) */
 int  apu_drain_latest(int16_t *stream, int maxframes);   /* decima al tramo mas reciente */

@@ -560,6 +560,42 @@ static void caption_paint(HWND h) {
     ReleaseDC(h, dc);
 }
 
+/* Diagnostico del camino de audio: una linea cada medio segundo en
+ * audio_diag.log, junto al .ini.  Separa un problema de mezcla (sin
+ * underruns: la senal generada ya viene mal) de uno de entrega (underruns o
+ * drops: el ring se vacia o se llena).  `held` y `mixed` son por intervalo, asi
+ * que held/mixed es la fraccion de muestras que no eran audio real. */
+static void audio_diag_log(float fps) {
+    static FILE *f;
+    static int inited;
+    static ApuStats last;
+    static uint32_t t0;
+    if (!inited) {
+        inited = 1;
+        char path[MAX_PATH];
+        const char *ini = ini_path();
+        const char *sl = strrchr(ini, '/');
+        if (!sl) sl = strrchr(ini, '\\');
+        if (sl) snprintf(path, sizeof path, "%.*saudio_diag.log", (int)(sl - ini + 1), ini);
+        else snprintf(path, sizeof path, "audio_diag.log");
+        f = fopen(path, "wt");
+        if (f) {
+            fprintf(f, "# t_s fps underruns drops held mixed avail\n");
+            fflush(f);
+        }
+    }
+    if (!f) return;
+    ApuStats s;
+    apu_stats(&s);
+    uint32_t now = GetTickCount();
+    if (!t0) t0 = now;
+    fprintf(f, "%.1f %.1f %u %u %u %u %d\n", (now - t0) / 1000.0, fps,
+            s.underruns - last.underruns, s.drops - last.drops,
+            s.held - last.held, s.mixed - last.mixed, apu_available());
+    fflush(f);
+    last = s;
+}
+
 static void update_title(float fps) {
     s_last_fps = fps;
     /* The caption is the fixed English title and nothing else.  Anything taken
@@ -1271,6 +1307,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
         if (dt >= 0.5) {
             fps = framecount / (float)dt; framecount = 0; t_fps = t1;
             update_title(fps);
+            audio_diag_log(fps);
         }
         double frame_ms = (double)(t1.QuadPart - t_frame.QuadPart) * 1000.0 / (double)freq.QuadPart;
         last_frame_ms = frame_ms;

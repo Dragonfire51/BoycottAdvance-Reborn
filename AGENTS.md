@@ -1356,6 +1356,19 @@ al gameplay en f1250 sin input.
 Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
 (releases `video-esmeralda-90s` y `video-medabots-90s`).
 
+## RELEASE v1.4.62 (publicado 2026-11-27) — diagnostico del camino de audio
+
+- El usuario confirma que v1.4.61 **no** arregla el "kjj": la teoria del DC
+  sostenido queda descartada como causa unica.
+- En vez de seguir adivinando, `src/apu.c` lleva contadores atomicos
+  (`apu_stats()`): underruns (el callback pidio y el ring estaba vacio), drops
+  (ring lleno, muestras tiradas), held (muestras sostenidas) y mixed.  `win32.c`
+  los vuelca cada 0,5 s a `audio_diag.log` junto al `.ini` con fps y nivel del
+  ring.  Sin cambio de comportamiento.
+- Tests: `tools/apu_mix_test.c` 12 PASS (3 nuevos de contadores).
+- Siguiente paso pendiente: pedir al usuario el `audio_diag.log` + una grabacion
+  de NUESTRO emulador (la del video era de mGBA) en la escena del "kjj".
+
 ## RELEASE v1.4.61 (publicado 2026-11-26) — el mixer de v1.4.59, solo el mixer
 
 - Se reaplica **solo** la mitad de mezcla de v1.4.59: `HOLD_GAP` 96 (~2.2 ms) de

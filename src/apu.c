@@ -32,6 +32,10 @@ static const uint8_t DUTY[4] = { 0x80, 0xC0, 0xF0, 0xFC };
 #define RING_FRAMES 8192u                   /* potencia de 2 */
 static int16_t ring[RING_FRAMES * 2];
 static atomic_uint ring_w, ring_r;
+/* Diagnostico del camino de audio: se ve en el titulo y en audio_diag.log.
+   underrun = el callback pidio muestras y el ring estaba vacio (se sostuvo o
+   se fundio la ultima); drop = el ring estaba lleno y se tiro lo generado. */
+static atomic_uint st_underrun, st_drop, st_held, st_mixed;
 static int16_t last_l, last_r;
 
 #ifdef APUDBG
@@ -45,6 +49,7 @@ static void ring_push(int16_t l, int16_t r) {
 #ifdef APUDBG
         apu_dbg_ringdrop++;
 #endif
+        atomic_fetch_add_explicit(&st_drop, 1, memory_order_relaxed);
         return;                                             /* lleno: se descarta */
     }
     ring[(w & (RING_FRAMES - 1)) * 2]     = l;
@@ -122,6 +127,9 @@ void apu_mix(GBA *g, int16_t *stream, int nframes) {
             empty_run = 0;
             if (declick < DECLICK_LEN) declick++;           /* vuelven datos: sube */
         } else {
+            if (empty_run == 0)
+                atomic_fetch_add_explicit(&st_underrun, 1, memory_order_relaxed);
+            atomic_fetch_add_explicit(&st_held, 1, memory_order_relaxed);
             if (empty_run < HOLD_GAP) empty_run++;
             else if (declick > 0) declick--;                /* hueco largo: baja a 0 */
         }
@@ -130,6 +138,22 @@ void apu_mix(GBA *g, int16_t *stream, int nframes) {
         stream[i * 2 + 1] = gain_sample(last_r, g);
     }
     atomic_store_explicit(&ring_r, rd, memory_order_release);
+    atomic_fetch_add_explicit(&st_mixed, (unsigned)nframes, memory_order_relaxed);
+}
+
+/* Contadores acumulados desde el ultimo apu_stats_reset(). */
+void apu_stats(ApuStats *out) {
+    out->underruns = atomic_load_explicit(&st_underrun, memory_order_relaxed);
+    out->drops     = atomic_load_explicit(&st_drop, memory_order_relaxed);
+    out->held      = atomic_load_explicit(&st_held, memory_order_relaxed);
+    out->mixed     = atomic_load_explicit(&st_mixed, memory_order_relaxed);
+}
+
+void apu_stats_reset(void) {
+    atomic_store_explicit(&st_underrun, 0, memory_order_relaxed);
+    atomic_store_explicit(&st_drop, 0, memory_order_relaxed);
+    atomic_store_explicit(&st_held, 0, memory_order_relaxed);
+    atomic_store_explicit(&st_mixed, 0, memory_order_relaxed);
 }
 
 /* Cuantas muestras hay listas para reproducir (utilidad de test). */

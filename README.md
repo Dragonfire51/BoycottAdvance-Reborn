@@ -212,6 +212,15 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
+- **v1.4.62** - Audio diagnostics. The mixer now counts what the output path
+  does wrong instead of guessing: `underruns` (the device asked for samples and
+  the ring was empty), `drops` (the ring was full and produced samples were
+  thrown away), `held` (samples that were not real audio) and `mixed`. They are
+  written every half second to `audio_diag.log`, next to the `.ini`, with the
+  fps and the ring level. A log with no underruns and no drops points at the
+  mixing stage; a log full of them points at delivery (the emulator not keeping
+  up, or the buffer being too tight). No behaviour change: this release only
+  measures.
 - **v1.4.61** - The mixer half of v1.4.59 is back on its own, without the
   pacing that broke that release. When the output ring runs dry the mixer used
   to hold the last sample for up to 186 ms before fading, which leaves a DC

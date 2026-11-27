@@ -70,6 +70,20 @@ int main(void) {
     }
     check(maxstep <= abs(held) / 4 + 1, "el fundido no hace escalones (sin clic)");
 
+    /* --- contadores de diagnostico (ring de 8192 frames) --- */
+    ApuStats st;
+    apu_stats_reset();
+    g->apu.master = false;                      /* solo llena el ring, sin DMA */
+    apu_step(g, (uint32_t)(12000.0 * 16777216.0 / SAMPLE_RATE) + 1);
+    apu_stats(&st);
+    check(st.drops > 0, "ring lleno: cuenta los descartes");
+    apu_stats_reset();
+    for (int i = 0; i < 6; i++) apu_mix(g, buf, 2048);   /* 12288 > ring */
+    apu_stats(&st);
+    check(st.underruns >= 1, "ring vacio: cuenta el underrun");
+    check(st.held > 0 && st.mixed == 12288, "cuenta sostenidas y mezcladas");
+    g->apu.master = true;
+
     /* --- 3. data comes back: fades in and the samples are the real ones --- */
     fill_ring(g, 1024);
     avail = apu_available();
