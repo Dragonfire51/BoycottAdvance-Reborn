@@ -212,6 +212,15 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
+- **v1.4.64** - Audio capture. `MixerHeadroom` did not change the crunch for
+  the reporter (60 % and 50 % still sound the same), so the DAC ceiling is out
+  as a cause. `RecordAudio 1` in the `.ini` now dumps the exact stream that goes
+  to the device into `audio_dump.wav`, next to the executable (stereo, 44.1 kHz,
+  up to three minutes, written from the audio thread, same declick and volume
+  the user hears). That splits the remaining suspects in two: if the WAV
+  crunches too, the problem is in generation or mixing; if the WAV is clean, it
+  is in the output path (DirectSound, waveOut, device format). Nothing is
+  written unless the key is set.
 - **v1.4.63** - Mixer headroom. Measured against mGBA (built headless as a
   reference, same ROM, same keys, from boot): our audio matches it to within
   1.2 % RMS, with the same peak and no clipping, and the mixing formula is

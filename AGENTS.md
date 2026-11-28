@@ -1807,3 +1807,9 @@ Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
   It is a fidelity/comfort trade-off, not a fix for a defect.
 - `VolumePercent` does **not** help with clipping: it is applied when draining
   the ring, after the clamp.
+- **`RecordAudio 1` in the `.ini` writes `audio_dump.wav`** next to the EXE:
+  the stream after `apu_mix` (declick + user volume), before the driver. It is
+  the way to tell a core/mixing defect from an output-path one without asking
+  the user to record with a phone. Ask for that WAV, never for a phone capture:
+  the phone one is mono, has DC, is AAC and band-limited, and cannot be used to
+  measure clipping or artefacts.

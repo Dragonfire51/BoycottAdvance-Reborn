@@ -56,6 +56,7 @@ typedef struct {
     int  dsound_a, dsound_b, gbc_sound, reverse_stereo;
     int  vol_pct;                 /* volumen de salida, % (0..200) */
     int  mix_headroom;            /* margen de mezcla, % (25..100); 100 = recorte del hardware */
+    int  record_audio;            /* volcar el flujo de audio a audio_dump.wav */
     int  biosenable, biosfastboot, skipintros, autorun, flashid, state_slot;
     int  video_backend;
     int  sound_engine;            /* AUDIO_ENGINE_* selected in Options */
@@ -99,6 +100,56 @@ static Audio g_audio;
 /* TAB pulsado = fast-forward mientras se mantiene (sin throttle). */
 static int ff_hold(void);
 
+/* Grabacion del flujo que va al dispositivo (RecordAudio=1 en el .ini).
+ * Es la senal tal cual sale del mezclador, con el mismo declick y volumen que
+ * escucha el usuario, pero antes del driver: sirve para separar un problema de
+ * generacion/mezcla de uno del camino de salida (DirectSound, waveOut, formato
+ * del dispositivo).  Se escribe desde el hilo de audio, unico consumidor. */
+static const char *exe_dir(void);   /* definido mas abajo, en la seccion .ini */
+static FILE *wav_f;
+static long   wav_bytes;
+static int    wav_max_bytes = AUDIO_FREQ * 4 * 180;   /* tope: 3 minutos */
+
+static void wav_put32(uint8_t *p, uint32_t v) { p[0]=v&0xFF; p[1]=(v>>8)&0xFF; p[2]=(v>>16)&0xFF; p[3]=(v>>24)&0xFF; }
+static void wav_put16(uint8_t *p, uint16_t v) { p[0]=v&0xFF; p[1]=(v>>8)&0xFF; }
+
+static void wav_open(void) {
+    if (wav_f) return;
+    char path[MAX_PATH];
+    snprintf(path, sizeof path, "%saudio_dump.wav", exe_dir());
+    wav_f = fopen(path, "wb");
+    if (!wav_f) return;
+    uint8_t h[44]; memset(h, 0, sizeof h);
+    memcpy(h, "RIFF", 4); memcpy(h + 8, "WAVEfmt ", 8);
+    wav_put32(h + 16, 16);              /* tamano del bloque fmt */
+    wav_put16(h + 20, 1);               /* PCM */
+    wav_put16(h + 22, 2);               /* estereo */
+    wav_put32(h + 24, AUDIO_FREQ);
+    wav_put32(h + 28, AUDIO_FREQ * 4);  /* bytes/s */
+    wav_put16(h + 32, 4);               /* block align */
+    wav_put16(h + 34, 16);              /* bits */
+    memcpy(h + 36, "data", 4);
+    wav_bytes = 0;
+    fwrite(h, 1, sizeof h, wav_f);
+}
+
+static void wav_close(void) {
+    if (!wav_f) return;
+    uint8_t v[4];
+    fflush(wav_f);
+    fseek(wav_f, 4, SEEK_SET);  wav_put32(v, (uint32_t)(36 + wav_bytes)); fwrite(v, 1, 4, wav_f);
+    fseek(wav_f, 40, SEEK_SET); wav_put32(v, (uint32_t)wav_bytes);        fwrite(v, 1, 4, wav_f);
+    fclose(wav_f);
+    wav_f = NULL;
+}
+
+static void wav_tap(const int16_t *dst, int frames) {
+    if (!wav_f || wav_bytes >= wav_max_bytes) return;
+    size_t n = (size_t)frames * 4;
+    if (wav_bytes + (long)n > wav_max_bytes) n = (size_t)(wav_max_bytes - wav_bytes);
+    if (fwrite(dst, 1, n, wav_f) == n) wav_bytes += (long)n;
+}
+
 /* Fill a fragment from the APU.  With the throttle off the emulation runs far
  * ahead of real time, so the ring fills much faster than the device drains it;
  * rather than muting (or letting it overflow) we decimate to the newest
@@ -125,6 +176,7 @@ static void audio_render(int16_t *dst, int frames) {
         while (apu_drain(dst, frames) > 0) { /* discard */ }
         memset(dst, 0, (size_t)frames * 2 * sizeof(int16_t));
     }
+    wav_tap(dst, frames);
 }
 static void audio_fill(int16_t *dst) { audio_render(dst, AUDIO_SAMPLES); }
 /* Callback shape expected by audio_out (interleaved stereo s16). */
@@ -215,6 +267,7 @@ static void wave_close(void) {
  * path so the emulator always has sound. */
 static int  g_ao_fallback;      /* engine chosen by the user was unavailable */
 static int  audio_open(void) {
+    if (cfg.record_audio) wav_open();
     g_ao_fallback = 0;
     if (audio_out_open(cfg.sound_engine, AUDIO_FREQ, AUDIO_SAMPLES,
                        audio_ao_fill, NULL) == 0) {
@@ -230,6 +283,7 @@ static void audio_close(void) {
     if (g_ao_fallback) wave_close();
     else               audio_out_close();
     g_audio_active = 0;
+    wav_close();
 }
 /* Reopen the device after the engine changes; keeps the emulation running. */
 static void audio_reopen(void) {
@@ -337,6 +391,7 @@ static void cfg_load(const char *path) {
     cfg.autoframeskip= ini_geti(path, "AutoFrameSkip", 0);
     cfg.sound_enable = ini_geti(path, "SoundEnable", 1);
     cfg.mix_headroom = ini_geti(path, "MixerHeadroom", 100);
+    cfg.record_audio = ini_geti(path, "RecordAudio", 0);
     cfg.gbc_sound    = ini_geti(path, "GameboySoundEnable", 1);
     cfg.dsound_a     = ini_geti(path, "DirectSoundAEnable", 1);
     cfg.dsound_b     = ini_geti(path, "DirectSoundBEnable", 1);
@@ -381,13 +436,13 @@ static int cfg_save(const char *path) {
       "DirectSoundAEnable %d\nDirectSoundBEnable %d\nBIOSEnable %d\nBIOSFastBoot %d\n"
       "SkipIntros %d\nAutoRun %d\nFlashROMId %d\nStateSlot %d\nVideoBackend %d\n"
       "SoundEngine %d\nSmoothEmulation %d\nScaleMode %d\nReverseStereo %d\n"
-      "VolumePercent %d\nMixerHeadroom %d\nOwnCaption %d\nRomPath %s\n",
+      "VolumePercent %d\nMixerHeadroom %d\nRecordAudio %d\nOwnCaption %d\nRomPath %s\n",
       cfg.zoom, cfg.scanline, cfg.autothrottle, cfg.showfps, cfg.showfps_pct,
       cfg.frameskip, cfg.autoframeskip, cfg.sound_enable, cfg.gbc_sound,
       cfg.dsound_a, cfg.dsound_b, cfg.biosenable, cfg.biosfastboot,
       cfg.skipintros, cfg.autorun, cfg.flashid, cfg.state_slot,
       cfg.video_backend, cfg.sound_engine, cfg.smooth, cfg.scalemode, cfg.reverse_stereo,
-      cfg.vol_pct, cfg.mix_headroom, cfg.owncaption, cfg.lastdir) < 0) ok = 0;
+      cfg.vol_pct, cfg.mix_headroom, cfg.record_audio, cfg.owncaption, cfg.lastdir) < 0) ok = 0;
     for (int i = 0; i < KP_COUNT; i++)
         if (fprintf(f, "Key_%s %d\n", KP_NAME[i], cfg.keymap[i]) < 0) ok = 0;
     for (int i = 0; i < KP_COUNT; i++)
