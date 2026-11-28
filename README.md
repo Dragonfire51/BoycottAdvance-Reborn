@@ -212,6 +212,20 @@ save into that slot, `F10` screenshot, `F11` fullscreen, `F12` about,
 
 ## Version history
 
+- **v1.4.63** - Mixer headroom. Measured against mGBA (built headless as a
+  reference, same ROM, same keys, from boot): our audio matches it to within
+  1.2 % RMS, with the same peak and no clipping, and the mixing formula is
+  identical down to `_applyBias`. The log from v1.4.62 confirms the delivery
+  path is clean (zero drops, six underruns of 5-63 samples in 200 s). What is
+  left is the DAC range: in the "Medabots! Robattle!" scene the four PSG
+  channels peak at 1237 units against a 511 ceiling (the wave channel alone
+  reaches 240; nothing is over range on its own, the sum is), and 4.86 % of the
+  samples end up pinned at full scale. The GBA really does clip there, so this
+  is faithful, but it is what a saturated transient sounds like. New
+  `MixerHeadroom` key in the `.ini` (25..100, default 100 = hardware
+  clipping): scale the mix before the DAC clamp. Measured on that scene, 70 %
+  leaves 0.38 % of samples clipped, 60 % leaves 0.06 % and 50 % leaves 54
+  samples in 30 s. Lower it to 60-70 if the crunch is what you hear.
 - **v1.4.62** - Audio diagnostics. The mixer now counts what the output path
   does wrong instead of guessing: `underruns` (the device asked for samples and
   the ring was empty), `drops` (the ring was full and produced samples were

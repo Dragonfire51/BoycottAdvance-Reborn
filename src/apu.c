@@ -106,6 +106,20 @@ void apu_set_volume(int pct) {
     atomic_store_explicit(&vol_q8, (pct * 256 + 50) / 100, memory_order_relaxed);
 }
 
+/* Headroom de mezcla, en % del fondo de escala del DAC (100 = sin margen).
+ * La suma PSG+DS puede pasar del tope de 10 bits y el hardware recorta ahi; con
+ * los cuatro canales PSG fuertes y volumen maestro 7/7 el juego llega a ~1230
+ * unidades contra un techo de 511, asi que el recorte se oye como crujido en
+ * cada ataque.  Con 100 se reproduce el hardware; por debajo se escala la suma
+ * antes del recorte (mas margen, menos fidelidad). */
+static atomic_int head_q8 = 256;
+
+void apu_set_headroom(int pct) {
+    if (pct < 25) pct = 25;
+    if (pct > 100) pct = 100;
+    atomic_store_explicit(&head_q8, (pct * 256 + 50) / 100, memory_order_relaxed);
+}
+
 /* Aplica una ganancia Q8 (0..512) con saturacion a 16 bits. */
 static int16_t gain_sample(int16_t s, int g) {
     int32_t v = (int32_t)s * g >> 8;
@@ -620,6 +634,10 @@ static void gen_sample(GBA *g, int16_t *outl, int16_t *outr) {
     if (a->cnt_h & 0x1000) r += fb;
     if (a->cnt_h & 0x2000) l += fb;
 
+    {
+        int h = atomic_load_explicit(&head_q8, memory_order_relaxed);
+        if (h != 256) { l = (l * h) >> 8; r = (r * h) >> 8; }
+    }
     if (l > 511) l = 511;
     if (l < -512) l = -512;
     if (r > 511) r = 511;

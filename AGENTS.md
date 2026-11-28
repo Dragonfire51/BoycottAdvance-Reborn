@@ -1779,3 +1779,31 @@ Videos publicados en el repo `Dragonfire51/boycottadvance-reborn-session-export`
     con solo START (hay que seleccionar un robattle en el menu). Siguiente paso
     barato: pedir al usuario un WAV/MP4 del momento o un savestate justo antes,
     y contar `apu_dbg_ringdrop`/underruns en la app durante ese instante.
+
+## Audio: reference and the DAC ceiling (v1.4.63)
+
+- **mGBA headless is the reference.** `pip install cmake`, then configure
+  `/tmp/mgba` with all optional deps OFF and `-DBUILD_QT=OFF -DBUILD_SDL=OFF`;
+  `cmake --build` takes seconds and produces `libmgba.so`. A harness must be
+  compiled with **the same `-D` flags as the library** (`C_DEFINES` in
+  `build/CMakeFiles/mgba.dir/flags.make`) or `struct mCore` layout mismatches
+  and `core->init` segfaults through a garbage pointer. The GBA core already
+  runs at 32768 Hz, so compare **band energies and per-second RMS**, not
+  waveforms: the two emulators are never sample-synchronous.
+- Head to head from boot with the same scripted keys, the outputs match to
+  ~1 % RMS and the same peak. Do not trust a comparison unless both runs are in
+  the same part of the game: an unaligned window of "the same song" shows
+  spectral differences of 10x that are pure content mismatch.
+- The mixing chain in `src/apu.c` reproduces mGBA exactly: PSG
+  `((ch1+ch2+ch3)<<3 + ch4<<3) * (1+volL) >> (4-volH)`, DS
+  `(fifo<<2) >> !vol`, then `+bias` clamped to 10 bits and
+  `(x-bias)*vol*3>>4`. **The PSG channels are unsigned**, so duty != 50 % and
+  the wave channel put a large DC on the sum (measured: +10086 on the Medabots
+  battle scene). That DC eats half the DAC headroom, and with all four
+  channels loud the sum reaches ~1237 against a 511 ceiling, i.e. the hardware
+  clips and 4.86 % of samples end up pinned. That is faithful, not a bug.
+- `MixerHeadroom` in the `.ini` (25..100, default 100) scales the sum just
+  before the clamp: 70 -> 0.38 % of samples clipped, 60 -> 0.06 %, 50 -> none.
+  It is a fidelity/comfort trade-off, not a fix for a defect.
+- `VolumePercent` does **not** help with clipping: it is applied when draining
+  the ring, after the clamp.

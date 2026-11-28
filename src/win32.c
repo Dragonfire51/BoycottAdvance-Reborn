@@ -55,6 +55,7 @@ typedef struct {
     int  owncaption;
     int  dsound_a, dsound_b, gbc_sound, reverse_stereo;
     int  vol_pct;                 /* volumen de salida, % (0..200) */
+    int  mix_headroom;            /* margen de mezcla, % (25..100); 100 = recorte del hardware */
     int  biosenable, biosfastboot, skipintros, autorun, flashid, state_slot;
     int  video_backend;
     int  sound_engine;            /* AUDIO_ENGINE_* selected in Options */
@@ -335,6 +336,7 @@ static void cfg_load(const char *path) {
     cfg.frameskip    = ini_geti(path, "FrameSkip", 0);
     cfg.autoframeskip= ini_geti(path, "AutoFrameSkip", 0);
     cfg.sound_enable = ini_geti(path, "SoundEnable", 1);
+    cfg.mix_headroom = ini_geti(path, "MixerHeadroom", 100);
     cfg.gbc_sound    = ini_geti(path, "GameboySoundEnable", 1);
     cfg.dsound_a     = ini_geti(path, "DirectSoundAEnable", 1);
     cfg.dsound_b     = ini_geti(path, "DirectSoundBEnable", 1);
@@ -379,13 +381,13 @@ static int cfg_save(const char *path) {
       "DirectSoundAEnable %d\nDirectSoundBEnable %d\nBIOSEnable %d\nBIOSFastBoot %d\n"
       "SkipIntros %d\nAutoRun %d\nFlashROMId %d\nStateSlot %d\nVideoBackend %d\n"
       "SoundEngine %d\nSmoothEmulation %d\nScaleMode %d\nReverseStereo %d\n"
-      "VolumePercent %d\nOwnCaption %d\nRomPath %s\n",
+      "VolumePercent %d\nMixerHeadroom %d\nOwnCaption %d\nRomPath %s\n",
       cfg.zoom, cfg.scanline, cfg.autothrottle, cfg.showfps, cfg.showfps_pct,
       cfg.frameskip, cfg.autoframeskip, cfg.sound_enable, cfg.gbc_sound,
       cfg.dsound_a, cfg.dsound_b, cfg.biosenable, cfg.biosfastboot,
       cfg.skipintros, cfg.autorun, cfg.flashid, cfg.state_slot,
       cfg.video_backend, cfg.sound_engine, cfg.smooth, cfg.scalemode, cfg.reverse_stereo,
-      cfg.vol_pct, cfg.owncaption, cfg.lastdir) < 0) ok = 0;
+      cfg.vol_pct, cfg.mix_headroom, cfg.owncaption, cfg.lastdir) < 0) ok = 0;
     for (int i = 0; i < KP_COUNT; i++)
         if (fprintf(f, "Key_%s %d\n", KP_NAME[i], cfg.keymap[i]) < 0) ok = 0;
     for (int i = 0; i < KP_COUNT; i++)
@@ -1127,6 +1129,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdline, int show) {
 
     cfg_load_best();
     apu_set_volume(cfg.vol_pct);
+    apu_set_headroom(cfg.mix_headroom);
     const char *rom_arg = NULL;
     {
         LPWSTR w = GetCommandLineW();
